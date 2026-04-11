@@ -1,0 +1,24 @@
+{
+  "name": "oh-my-pwn",
+  "version": "0.1.0",
+  "description": "CTF pwnable auto-solve multi-agent harness",
+  "type": "module",
+  "bin": {
+    "omp": "bin/omp"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "bun test",
+    "build": "bun build src/cli/index.ts --outdir dist --target bun --format esm"
+  },
+  "dependencies": {
+    "@anthropic-ai/claude-agent-sdk": "^0.1.0",
+    "@anthropic-ai/sdk": "^0.52.0",
+    "@modelcontextprotocol/sdk": "^1.12.1",
+    "zod": "^3.24.4"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.2.14",
+    "typescript": "^5.8.3"
+  }
+}
