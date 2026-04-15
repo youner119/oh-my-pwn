@@ -2,5 +2,21 @@ node_modules/
 dist/
 *.log
 .DS_Store
-.omc/
 reference/
+
+# Personal tool configs (not useful for other machines)
+.claude/
+.codex
+
+# Manual test fixtures (local CTF binaries + run artifacts)
+test_challenge/
+
+# .omc/ — whitelist only the real OmP spec/state/research artifacts;
+# exclude ephemeral OMC tooling byproducts (test sessions, hud state, ralph
+# state, delegation audit logs, etc.) that leak in from other OMC usage.
+.omc/*
+!.omc/research/
+!.omc/specs/
+!.omc/state/
+.omc/state/*
+!.omc/state/current-task.md
