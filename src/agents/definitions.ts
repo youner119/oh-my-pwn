@@ -1,34 +1,22 @@
 /**
- * OmP agent definitions registry.
+ * OmP agent sources registry.
  *
- * Maps all OmP agents to the oh-my-claudecode AgentConfig shape so they can
- * be registered with the Claude Agent SDK agent registry.
+ * MVP: factory를 하드코딩된 기본 모델로 호출.
+ * T18에서 model resolution layer 추가 시 factories를 직접 노출.
  */
 
 import type { AgentConfig } from "./types"
-import { ompOrchestratorAgent } from "./omp-orchestrator"
-import { ompReverserAgent } from "./omp-reverser"
+import { createOmpOrchestratorAgent } from "./omp-orchestrator"
+import { createOmpReverserAgent } from "./omp-reverser"
+
+/** MVP default model. T18 model resolution layer 추가 시 교체. */
+const DEFAULT_MODEL = "openai/gpt-5.4"
 
 /**
- * Returns all OmP agent definitions keyed by agent name.
- *
- * The returned shape matches the subset expected by the Claude Agent SDK
- * (description, prompt, model — tools/disallowedTools are optional and
- * omitted here until downstream agents require them).
+ * agent name → AgentConfig 매핑.
+ * plugin.ts의 config hook에서 opencode Config.agent에 주입.
  */
-export function getOmpAgentDefinitions(): Record<
-  string,
-  { description: string; prompt: string; model?: string }
-> {
-  const agents: AgentConfig[] = [ompOrchestratorAgent, ompReverserAgent]
-
-  const result: Record<string, { description: string; prompt: string; model?: string }> = {}
-  for (const agent of agents) {
-    result[agent.name] = {
-      description: agent.description,
-      prompt: agent.prompt,
-      model: agent.model,
-    }
-  }
-  return result
+export const ompAgentConfigs: Record<string, AgentConfig> = {
+  "omp-orchestrator": createOmpOrchestratorAgent(DEFAULT_MODEL),
+  "omp-reverser": createOmpReverserAgent(DEFAULT_MODEL),
 }

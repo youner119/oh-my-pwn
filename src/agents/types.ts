@@ -1,26 +1,18 @@
+import type { AgentConfig } from "@opencode-ai/sdk"
+
+export type { AgentConfig }
+
 /**
- * OmP agent types — aligned with oh-my-claudecode AgentConfig pattern.
+ * Agent mode determines UI model selection behavior:
+ * - "primary": UI-selected model 따름
+ * - "subagent": 자체 fallback chain, UI 선택 무시
+ * - "all": 두 컨텍스트 모두 사용 가능
  */
-
-export interface AgentConfig {
-  name: string
-  description: string
-  prompt: string
-  model?: string
-  defaultModel?: string
-  tools?: string[]
-  disallowedTools?: string[]
-}
-
-// ---------------------------------------------------------------------------
-// Backward-compatibility aliases (kept for src/index.ts re-exports)
-// ---------------------------------------------------------------------------
-
-/** @deprecated Not used in the new AgentConfig shape. */
 export type AgentMode = "primary" | "subagent" | "all"
 
-/** @deprecated Factory pattern replaced by exported AgentConfig constants. */
-export type AgentFactory = {
-  (model: string): AgentConfig
+/**
+ * Agent factory — (model: string) => AgentConfig, with static .mode property
+ */
+export type AgentFactory = ((model: string) => AgentConfig) & {
   mode: AgentMode
 }

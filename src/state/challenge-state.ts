@@ -197,12 +197,28 @@ export const ChallengeStateSchema = z.object({
   /* ── Reverser (T07) ────────────────────────────────────────────────────── */
 
   /**
-   * Path to the Reverser's analysis JSON under `.omp/artifacts/`.
-   * The file contains full decompilations, function map with addresses,
-   * imports, and dangerous call entries. Other agents (VulnHunter, Exploiter)
-   * read this file to access analysis results on demand.
+   * Path to the Reverser's structured analysis markdown under
+   * `.omp/artifacts/reverser-analysis.md`. Contains program overview,
+   * function map, per-function sections (renamed pseudocode + stack
+   * frame + key annotations), imports, exports. VulnHunter (T10) reads
+   * this file as its primary context input.
    */
   reverser_summary_path: z.string().optional(),
+  /**
+   * Path to the Reverser's narrative research report (English) under
+   * `.omp/artifacts/reverser-research.md`. A prose-form summary of what
+   * the Reverser found — for human reading and as a quick-orient
+   * document for downstream agents. Distinct from the structured
+   * analysis artifact; this one tells the story, not the reference.
+   */
+  reverser_research_path: z.string().optional(),
+  /**
+   * Path to the Korean version of the narrative research report under
+   * `.omp/artifacts/reverser-research.ko.md`. Translation of
+   * `reverser_research_path` into natural Korean prose with technical
+   * terms kept in English per project convention.
+   */
+  reverser_research_ko_path: z.string().optional(),
   /** When the Reverser last completed analysis. */
   reverser_analyzed_at: IsoTimestampSchema.optional(),
 

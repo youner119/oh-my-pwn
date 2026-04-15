@@ -19,12 +19,9 @@ export type {
   GhidraImport,
   GhidraExport,
   GhidraXref,
-  GhidraStructuralSummary,
-  DangerousCallEntry,
   McpToolCallResult,
   McpContentBlock,
   McpToolInfo,
-  ReverserAnalysis,
 } from "./types"
 
 // errors
@@ -46,13 +43,6 @@ export {
   createDefaultGhidraConfig,
   type GhidraServerMetadata,
 } from "./server"
-
-// constants (agent prompt knowledge)
-export {
-  DANGEROUS_FUNCTION_REASONS,
-  DANGEROUS_FUNCTIONS,
-  formatDangerousFunctionsForPrompt,
-} from "./constants"
 
 // headless launcher
 export {

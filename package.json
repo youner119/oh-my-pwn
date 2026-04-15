@@ -3,18 +3,21 @@
   "version": "0.1.0",
   "description": "CTF pwnable auto-solve multi-agent harness",
   "type": "module",
+  "main": "dist/plugin.js",
   "bin": {
     "omp": "bin/omp"
   },
   "scripts": {
     "typecheck": "tsc --noEmit",
     "test": "bun test",
-    "build": "bun build src/cli/index.ts --outdir dist --target bun --format esm"
+    "build:plugin": "bun build src/plugin.ts --outdir dist --target bun --format esm --external @opencode-ai/plugin --external @opencode-ai/sdk --external @modelcontextprotocol/sdk --external @anthropic-ai/sdk --external zod",
+    "build": "bun run build:plugin && bun build src/cli/index.ts --outdir dist --target bun --format esm"
   },
   "dependencies": {
-    "@anthropic-ai/claude-agent-sdk": "^0.1.0",
     "@anthropic-ai/sdk": "^0.52.0",
     "@modelcontextprotocol/sdk": "^1.12.1",
+    "@opencode-ai/plugin": "^1.4.0",
+    "@opencode-ai/sdk": "^1.4.0",
     "zod": "^3.24.4"
   },
   "devDependencies": {

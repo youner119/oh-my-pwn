@@ -107,63 +107,14 @@ export interface GhidraXref {
  * ghidra-mcp tool calls. This is the main output the Reverser agent writes
  * into the journal.
  */
-export interface GhidraStructuralSummary {
-  /** All discovered functions (may be large — caller should trim for journal). */
-  functions: GhidraFunction[]
-  /** Imported symbols — key signal for VulnHunter (dangerous calls). */
-  imports: GhidraImport[]
-  /** Exported symbols. */
-  exports: GhidraExport[]
-  /** Interesting strings (filtered by bridge heuristics). */
-  strings: GhidraString[]
-  /** Functions whose names or bodies match known-dangerous patterns. */
-  dangerousCalls: DangerousCallEntry[]
-}
-
-/**
- * An invocation of a known-dangerous function (e.g. `gets`, `printf` with
- * user-controlled format, `free` without null-check).
- */
-export interface DangerousCallEntry {
-  /** The dangerous function name (e.g. "gets", "printf", "system"). */
-  callee: string
-  /** The function that calls the dangerous function. */
-  caller: string
-  callerAddress: string
-  /** Why this is flagged. */
-  reason: string
-}
-
-// ---------------------------------------------------------------------------
-// On-disk analysis file (written by Reverser, read by VulnHunter et al.)
-// ---------------------------------------------------------------------------
-
-/**
- * The Reverser agent writes this structure to
- * `<challenge-dir>/.omp/artifacts/reverser-analysis.json`.
- *
- * Downstream agents (VulnHunter, Exploiter) read this file to access
- * decompilations, function addresses (for breakpoints), and dangerous call
- * info without needing a live ghidra-mcp connection.
- */
-export interface ReverserAnalysis {
-  /** All discovered functions (full map with addresses). */
-  functions: GhidraFunction[]
-  /**
-   * Full decompilation results keyed by address.
-   * Only "key" user-defined functions are decompiled — the Reverser AI
-   * decides which by following entry → main → callees, skipping externals.
-   */
-  decompilations: Record<string, GhidraDecompilation>
-  /** Imported symbols. */
-  imports: GhidraImport[]
-  /** Exported symbols. */
-  exports: GhidraExport[]
-  /** Dangerous function call sites identified by cross-reference analysis. */
-  dangerousCalls: DangerousCallEntry[]
-  /** When this analysis was produced. */
-  analyzedAt: string
-}
+// Note: The prior `GhidraStructuralSummary` and `ReverserAnalysis` types
+// were removed in the 2026-04-15 Reverser redesign. The new Reverser writes
+// a self-contained markdown artifact (`reverser-analysis.md`) instead of a
+// structured JSON file, and downstream agents read the markdown directly.
+// See `.omc/specs/deep-interview-reverser-redesign.md` for the rationale.
+// The atomic Ghidra shape types below (GhidraFunction, GhidraDecompilation,
+// GhidraImport, GhidraExport, GhidraString, GhidraXref) are kept as generic
+// typings that may be useful if a future MCP client wants typed responses.
 
 // ---------------------------------------------------------------------------
 // MCP client abstraction (DI seam)

@@ -37,7 +37,7 @@ import {
   EnvSetupError,
   loadChallengeFolder,
   runEnvSetup,
-} from "../src/features/omp"
+} from "../src"
 
 interface CliArgs {
   challengeDir: string
