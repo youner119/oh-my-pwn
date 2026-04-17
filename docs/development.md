@@ -246,9 +246,11 @@ oh-my-pwn/
 │   │   ├── types.ts              ← AgentConfig, AgentFactory 타입
 │   │   ├── definitions.ts        ← ompAgentConfigs registry (DEFAULT_MODEL)
 │   │   ├── omp-orchestrator.ts   ← Orchestrator factory + prompt
-│   │   ├── omp-orchestrator.test.ts
-│   │   ├── omp-reverser.ts       ← Reverser factory + prompt (가장 복잡)
-│   │   └── omp-reverser.test.ts
+│   │   ├── omp-reverser.ts       ← Reverser factory + prompt
+│   │   ├── omp-vulnhunter.ts    ← VulnHunter factory + prompt (T10)
+│   │   ├── omp-strategist.ts    ← StrategyAgent factory + prompt (T14)
+│   │   ├── omp-exploiter.ts     ← Exploiter factory + prompt (T16)
+│   │   └── *.test.ts
 │   ├── tools/
 │   │   ├── index.ts              ← 7 tool re-exports
 │   │   ├── omp-load-challenge.ts
@@ -476,13 +478,13 @@ MVP 단계라 CI 파이프라인이 아직 설정되지 않았습니다. 개인 
 - ✅ **M2 Reverser** — T06, T07, T08 모두 완료. Ghidra setup + type mutation +
   3-pass self-review + research reports + template infrastructure 구현.
   T08 user test gate 통과 (2026-04-17).
-- ▶ **M3 VulnHunter** — T09 TechniqueKB 완료 (knowledge/techniques/ 카탈로그 +
-  5개 상세 MD). T10 VulnHunter agent 구현 대기.
-- ⏸ **M4 StrategyAgent + Exploiter** — T12~T17 대기. **Exploit pipeline
-  redesign (2026-04-17):** 3-agent 모델 (VulnHunter → StrategyAgent → Exploiter),
-  Verifier는 Exploiter에 통합, stage_map.yaml 폐지 (동적 stage 생성),
-  pwno-mcp MVP 승격. Spec: `.omc/specs/deep-interview-exploit-pipeline.md`
-- ⏸ **M5 Orchestrator + Loop Integration** — T18~T21 대기
+- ✅ **M3 VulnHunter** — T09 TechniqueKB (knowledge/techniques/ 카탈로그 +
+  5개 상세 MD) + T10 VulnHunter agent + T11 gate 통과 (challenge2).
+- ✅ **M4 StrategyAgent + Exploiter** — T12/T13 skip (패치된 binary 직접 실행,
+  별도 tool 불필요). T14 StrategyAgent (verify + combine, retry 3회) +
+  T16 Exploiter (pwntools + pwno-mcp Docker gdb 관찰, process()/remote() 두 모드) +
+  T15/T17 gate 통과. 248 tests, plugin 161KB.
+- ▶ **M5 Orchestrator + Loop Integration** — T18~T21 진행 중
 - ⏸ **M6 Benchmark harness + metric** — T22~T24 대기 (MVP 완료 지점)
 
 각 milestone의 끝에는 **User test gate** 가 있어서 사용자가 직접 품질

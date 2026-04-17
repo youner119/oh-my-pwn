@@ -92,9 +92,12 @@ opencode config에 주입됩니다. 결과적으로 opencode TUI agent picker에
 | `subagent` | 다른 agent가 delegation으로만 호출하는 내부 agent |
 | `all` | 양쪽 다 가능 (디버깅용) |
 
-**현재 상태 (2026-04):**
+**현재 상태 (2026-04-17):**
 - `omp-orchestrator`: `mode: "all"`
 - `omp-reverser`: `mode: "all"`
+- `omp-vulnhunter`: `mode: "all"` (T10)
+- `omp-strategist`: `mode: "all"` (T14)
+- `omp-exploiter`: `mode: "all"` (T16)
 
 **향후 운영 모드:**
 - `omp-orchestrator` → `primary` (사용자 진입점)
@@ -178,7 +181,7 @@ Ghidra-MCP를 통해 함수/변수 rename, inline comment 주입, 타입 refinem
 
 ---
 
-## 미래 agent: 3-agent exploit pipeline (T10 ~ T17)
+## Exploit pipeline agents (T10 ~ T17, 구현 완료)
 
 > **Exploit pipeline redesign (2026-04-17).** Deep Interview 10라운드로 결정화.
 > Spec: `.omc/specs/deep-interview-exploit-pipeline.md`
@@ -204,7 +207,7 @@ Orchestrator
 - **역할 분리 = 실패 귀인:** VulnHunter 틀림 = 잘못된 candidate, StrategyAgent 틀림 = 잘못된 plan, Exploiter 틀림 = 잘못된 script
 - **Staged escalation:** Exploiter → StrategyAgent → VulnHunter → user 단계적 복귀
 
-### omp-vulnhunter (T10)
+### omp-vulnhunter (T10) ✅
 
 - **역할:** Reverser artifact를 읽고 vulnerability candidate 발견 + 랭킹.
   **Bug finder로서 exploit 전략 설계는 하지 않음** — 전략은 StrategyAgent의 몫.
@@ -217,7 +220,7 @@ Orchestrator
   loader 없이 file read로 직접 소비.**
 - **출력:** `state.json`의 `vuln_candidates` 필드에 candidate list 기록.
 
-### omp-strategist (T14) — StrategyAgent
+### omp-strategist (T14) ✅ — StrategyAgent
 
 - **역할:** VulnHunter candidate를 받아 **step-by-step exploit plan 설계**.
   "이 BOF로 뭘 할 수 있는가? → padding 확인 → ret 제어 → libc leak → ROP"
@@ -229,10 +232,10 @@ Orchestrator
 - **출력:** `state.json`의 `stages` 필드에 plan steps 기록 (기존
   StageEntrySchema에 `goal`, `expected_result` 확장).
 
-### omp-exploiter (T16) — Exploiter (+ Verifier 통합)
+### omp-exploiter (T16) ✅ — Exploiter (+ Verifier 통합)
 
-- **역할:** StrategyAgent의 step을 받아 **pwntools script 작성 + Docker 실행
-  + 결과 검증**. 원래 별도 agent이던 Verifier가 여기 통합됨.
+- **역할:** StrategyAgent의 step을 받아 **pwntools script 작성 + 실행
+  + pwno-mcp로 관찰 + 결과 검증**. 원래 별도 agent이던 Verifier가 여기 통합됨.
 - **Incremental proof 관찰:** pwno-mcp를 통해 gdb breakpoint 설정, 메모리/
   레지스터/heap 상태를 읽어 step의 성공/실패를 판정. 예: "ret에 0xdeadbeef를
   넣었는데 rip가 실제로 0xdeadbeef인지" 확인.
@@ -443,7 +446,10 @@ Agent가 "특정 형태의 markdown"을 작성해야 할 때, structure와 local
 | `src/agents/types.ts` | `AgentConfig`, `AgentFactory` 타입 |
 | `src/agents/definitions.ts` | `ompAgentConfigs` registry, 기본 모델 |
 | `src/agents/omp-orchestrator.ts` | Orchestrator factory + prompt |
-| `src/agents/omp-reverser.ts` | Reverser factory + prompt (가장 복잡) |
+| `src/agents/omp-reverser.ts` | Reverser factory + prompt |
+| `src/agents/omp-vulnhunter.ts` | VulnHunter factory + prompt (T10) |
+| `src/agents/omp-strategist.ts` | StrategyAgent factory + prompt (T14) |
+| `src/agents/omp-exploiter.ts` | Exploiter factory + prompt (T16, 가장 복잡) |
 | `src/agents/*.test.ts` | Agent 단위 테스트 (프롬프트 핵심 문자열 검증) |
 
 다음 문서에서 **state와 artifact 레이아웃**을 다룹니다 →

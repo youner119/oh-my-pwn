@@ -97,10 +97,19 @@
 | 필드 | 설명 |
 |---|---|
 | `vuln_candidates` | Candidate 배열. 각 항목: id, primitive, location, confidence, rationale, libc_range |
-| `vuln_candidates[].verified` | **(확장)** Exploiter가 검증 완료 여부 (boolean) |
-| `vuln_candidates[].verification_result` | **(확장)** "confirmed" / "disproved" / "inconclusive" |
+| `vuln_candidates[].verified` | Exploiter가 검증 완료 여부 (boolean) |
+| `vuln_candidates[].verification_result` | "confirmed" / "disproved" / "inconclusive" |
+| `vulnhunter_analysis_path` | `vulnhunter-analysis.md` 절대경로 |
+| `vulnhunter_analyzed_at` | ISO timestamp |
 
-**StrategyAgent plan + Exploiter execution (T14~T17):**
+**StrategyAgent plan (T14):**
+
+| 필드 | 설명 |
+|---|---|
+| `strategist_plan_path` | `strategist-plan.md` 절대경로 |
+| `strategist_planned_at` | ISO timestamp |
+
+**Exploit steps + execution (T14~T16):**
 
 | 필드 | 설명 |
 |---|---|

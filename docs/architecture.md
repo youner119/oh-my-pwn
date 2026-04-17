@@ -75,6 +75,16 @@ config: async (cfg) => {
   } else {
     // env var 없거나 파일 부재 → stderr 경고 + MCP 등록 skip
   }
+
+  // 1-4. pwno-mcp 등록 (Docker HTTP remote — Exploiter의 gdb 관찰용)
+  const pwnoUrl = process.env["OMP_PWNO_MCP_URL"] || "http://127.0.0.1:5500/mcp"
+  if (process.env["OMP_PWNO_MCP_DISABLED"] !== "1") {
+    cfg.mcp["pwno"] = {
+      type: "remote",
+      url: pwnoUrl,
+      enabled: true,
+    }
+  }
 }
 ```
 
@@ -83,8 +93,13 @@ config: async (cfg) => {
   `disable: true`로 숨김. TUI agent picker에 OmP agent만 보이게.
 - `ompAgentConfigs`는 `src/agents/definitions.ts`에 정의된 agent registry
   (자세한 내용은 [agents.md](agents.md)).
-- Ghidra MCP는 **환경변수로만** 설정. 하드코딩 경로 없음. `setup-omp.sh`가
-  자동 탐지하거나 사용자에게 물어서 `omp` alias에 env var를 baked-in.
+- **Ghidra MCP:** `OMP_GHIDRA_BRIDGE_PATH` 환경변수로 설정. stdio 모드
+  (Python bridge subprocess). Reverser가 사용. `setup-omp.sh`가 자동 탐지.
+- **pwno-mcp:** `OMP_PWNO_MCP_URL` 환경변수로 override 가능 (기본
+  `http://127.0.0.1:5500/mcp`). HTTP remote 모드 (Docker container).
+  Exploiter가 gdb breakpoint/memory/register/heap 관찰에 사용.
+  `OMP_PWNO_MCP_DISABLED=1`로 opt-out. Exploiter agent가 Docker container를
+  직접 시작/종료.
 
 ### 2. `tool` map — OmP 전용 tool 7개 등록
 
