@@ -242,7 +242,14 @@ export const ChallengeStateSchema = z.object({
   /** When VulnHunter last completed analysis. */
   vulnhunter_analyzed_at: IsoTimestampSchema.optional(),
 
-  /* ── Stage map + exploitation progress (T14 / T15 / T17) ──────────────── */
+  /* ── StrategyAgent (T14) ────────────────────────────────────────────────── */
+
+  /** Path to StrategyAgent's plan artifact (strategist-plan.md). */
+  strategist_plan_path: z.string().optional(),
+  /** When StrategyAgent last designed/updated the plan. */
+  strategist_planned_at: IsoTimestampSchema.optional(),
+
+  /* ── Stage map + exploitation progress (T14 / T16) ─────────────────────── */
 
   stages: z.array(StageEntrySchema).default([]),
   current_stage_index: z.number().int().nonnegative().optional(),
