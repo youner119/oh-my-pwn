@@ -415,9 +415,14 @@ Bun 내부 이슈로 추정. 영구 fix 전까지 `cd src` workaround 사용.
 OmP는 여러 session에 걸쳐 개발됩니다. 세션 간 연속성은
 **`.omc/state/current-task.md`** 가 single source of truth:
 
-- 완료된 task / 진행중 task / 대기 task
-- 각 task에서 locked된 설계 결정
-- T05 / T08 user test gate 상태
+- 현재 phase / active task / next action
+- 완료된 task 요약 (날짜 + 한 줄)
+- Task catalog (T00–T24 상태)
+
+**설계 결정 기록은 current-task.md에 넣지 않음:**
+- docs/ 에 반영된 내용 → docs/가 정본
+- docs/에 없는 architectural reasoning → `.omc/decisions.md`
+- 구현 상세 → git history
 
 새 Claude Code 세션 시작 시 `CLAUDE.md`와 `.omc/state/current-task.md`를
 **반드시 먼저 읽습니다**. 그래야 이전 세션의 맥락을 유지할 수 있음.
