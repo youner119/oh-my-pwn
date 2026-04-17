@@ -1,14 +1,18 @@
 /**
  * oh-my-pwn (OmP) — opencode Plugin entry point.
  *
- * opencode의 config hook을 통해 omp-orchestrator, omp-reverser를
- * Config.agent에 주입. opencode TUI의 agent picker에서 선택 가능.
+ * opencode의 config hook을 통해 omp agents를 Config.agent에 주입.
+ * opencode TUI의 agent picker에서 선택 가능.
  *
  * MCP:
  *   - ghidra: bridge_mcp_ghidra.py (stdio) — reverser agent가 사용.
  *     브릿지 경로는 OMP_GHIDRA_BRIDGE_PATH 환경변수로만 지정 (하드코딩 없음).
  *     env var가 비어 있거나 파일이 존재하지 않으면 ghidra MCP 등록을 skip하고
  *     stderr에 경고를 남긴다. setup-omp.sh가 경로 탐지/alias 설정을 담당.
+ *
+ *   - pwno: pwno-mcp Docker (HTTP remote) — exploiter agent가 사용.
+ *     http://127.0.0.1:5500/mcp 기본. OMP_PWNO_MCP_URL 환경변수로 override.
+ *     Docker container가 실행 중이어야 동작. 없으면 skip + 경고.
  */
 
 import { existsSync } from "node:fs"
@@ -55,6 +59,25 @@ const OmpPlugin: Plugin = async (_input) => {
           `[omp] ghidra MCP not registered — ${reason}. ` +
             `Run ./scripts/setup-omp.sh (it auto-detects ~/Tools/ghidra_*_PUBLIC/bridge_mcp_ghidra.py, ` +
             `prompts if missing, and bakes the path into your omp alias).\n`,
+        )
+      }
+
+      // pwno-mcp: Docker HTTP remote — exploiter agent의 gdb/pwndbg 관찰용.
+      // docker run --rm -p 5500:5500 --cap-add=SYS_PTRACE --cap-add=SYS_ADMIN \
+      //   --security-opt seccomp=unconfined -v "$PWD/workspace:/workspace" \
+      //   ghcr.io/pwno-io/pwno-mcp:latest
+      const pwnoUrl = process.env["OMP_PWNO_MCP_URL"] || "http://127.0.0.1:5500/mcp"
+      const pwnoEnabled = process.env["OMP_PWNO_MCP_DISABLED"] !== "1"
+      if (pwnoEnabled) {
+        ;(cfg.mcp as Record<string, unknown>)["pwno"] = {
+          type: "remote",
+          url: pwnoUrl,
+          enabled: true,
+        }
+      } else {
+        process.stderr.write(
+          `[omp] pwno MCP not registered — OMP_PWNO_MCP_DISABLED=1. ` +
+            `Exploiter will not have gdb/memory inspection capabilities.\n`,
         )
       }
     },
