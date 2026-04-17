@@ -56,10 +56,10 @@ const DEFAULT_MODEL = "openai/gpt-5.4"
 export const ompAgentConfigs: Record<string, AgentConfig> = {
   "omp-orchestrator": createOmpOrchestratorAgent(DEFAULT_MODEL),
   "omp-reverser": createOmpReverserAgent(DEFAULT_MODEL),
-  // 추후 추가:
+  // 추�� 추가 (3-agent exploit pipeline):
   // "omp-vulnhunter": createOmpVulnhunterAgent(DEFAULT_MODEL),
+  // "omp-strategist": createOmpStrategistAgent(DEFAULT_MODEL),
   // "omp-exploiter": createOmpExploiterAgent(DEFAULT_MODEL),
-  // "omp-verifier": createOmpVerifierAgent(DEFAULT_MODEL),
 }
 ```
 
@@ -120,7 +120,7 @@ correction을 받아 state를 고치고 재계획.
 - ✅ Stage 0 (Load) — `omp_load_challenge` tool 호출
 - ✅ EnvSetup stage — `omp_run_envsetup` tool 호출
 - ✅ Reverse stage — `omp-reverser` delegation
-- ⏸ VulnHunt / Exploit / Verify — sub-agent 미구현, 플레이스홀더만
+- ⏸ VulnHunt / Strategy / Exploit — sub-agent 미구현, 플레이스홀더만 (3-agent exploit pipeline, Verifier는 Exploiter에 통합)
 
 **Tool 사용:**
 - `omp_load_challenge` (첫 stage)
@@ -178,39 +178,75 @@ Ghidra-MCP를 통해 함수/변수 rename, inline comment 주입, 타입 refinem
 
 ---
 
-## 미래 agent (T09 ~ T16)
+## 미래 agent: 3-agent exploit pipeline (T10 ~ T17)
+
+> **Exploit pipeline redesign (2026-04-17).** Deep Interview 10라운드로 결정화.
+> Spec: `.omc/specs/deep-interview-exploit-pipeline.md`
+
+### Pipeline 구조
+
+```
+Orchestrator
+  └→ VulnHunter: find candidates [C1, C2, C3]
+       └→ for each candidate (순차, MVP):
+            StrategyAgent: design plan [Step1, Step2, Step3]
+              └→ for each step:
+                   Exploiter: write script → execute → observe (pwno-mcp) → verify
+                     ├→ success: next step
+                     └→ failure → StrategyAgent redesign (max N retries)
+                          └→ exhausted → VulnHunter: next candidate
+  └→ all exhausted → user intervention
+  └→ shell/flag → DONE
+```
+
+**핵심 원칙:**
+- **Incremental proof:** 각 step은 하나만 증명 (bof 존재 → ret offset → ROP → shell)
+- **역할 분리 = 실패 귀인:** VulnHunter 틀림 = 잘못된 candidate, StrategyAgent 틀림 = 잘못된 plan, Exploiter 틀림 = 잘못된 script
+- **Staged escalation:** Exploiter → StrategyAgent → VulnHunter → user 단계적 복귀
 
 ### omp-vulnhunter (T10)
 
-- **역할:** Reverser artifact를 읽고 vulnerability candidate 랭킹 작성.
-  각 candidate는 exploitation primitive 태그 (`stack_bof`, `fmt_string_read`,
-  `tcache_poison`, `fastbin_dup`, `house_of_*` 등)와 libc 버전 range로
-  filter됨.
+- **역할:** Reverser artifact를 읽고 vulnerability candidate 발견 + 랭킹.
+  **Bug finder로서 exploit 전략 설계는 하지 않음** — 전략은 StrategyAgent의 몫.
 - **핵심 contract (Reverser redesign spec에 locked):** **Reverser output을
-  hint로 취급하되 filter로 취급 금지.** 함수 이름이 `safe_input_copy`라도,
-  purpose가 "안전하다"고 적혀 있어도 VulnHunter는 모든 함수를 전수 분석해야
-  함. Reverser annotation은 attention ordering guide일 뿐, skip decision의
-  근거 아님.
-- **출력:** `<challenge-dir>/.omp/artifacts/vulnhunter-candidates.json` (또는
-  markdown. 구체 포맷 T10 설계 시 결정).
+  hint로 취급하되 filter로 취급 금지.** 함수 이름이 `safe_input_copy`라도
+  VulnHunter는 모든 함수를 전수 분석해야 함.
+- **TechniqueKB 참조 (T09):** 자체 분석으로 후보를 찾지 못하면
+  `knowledge/techniques/index.md`를 스캔해서 놓친 패턴을 탐색. 관심
+  technique은 개별 상세 MD (e.g., `stack_bof.md`)를 읽어 확인. **Tool이나
+  loader 없이 file read로 직접 소비.**
+- **출력:** `state.json`의 `vuln_candidates` 필드에 candidate list 기록.
 
-### omp-exploiter (T14)
+### omp-strategist (T14) — StrategyAgent
 
-- **역할:** VulnHunter candidate + target stage → pwntools script 작성
-  + iterate until stage pass.
-- **접근 방식:** stage-scoped — 한 번에 하나의 exploitation primitive만
-  다룸. 예: stage 1에서 libc leak, stage 2에서 AAW, stage 3에서 shell.
+- **역할:** VulnHunter candidate를 받아 **step-by-step exploit plan 설계**.
+  "이 BOF로 뭘 할 수 있는가? → padding 확인 → ret 제어 → libc leak → ROP"
+  식의 incremental proof 계획을 수립.
+- **Retry logic:** Exploiter 실패 시 결과(디버깅 정보, 메모리 상태)를 받아
+  plan을 수정. Max N회 재시도 후 VulnHunter에게 복귀 (다음 candidate 요청).
+- **TechniqueKB 활용:** `index.md`의 `chain` 필드로 "이 primitive 다음에
+  뭘 할 수 있는지" 참조. 상세 MD의 "typical step plan" 섹션 참고.
+- **출력:** `state.json`의 `stages` 필드에 plan steps 기록 (기존
+  StageEntrySchema에 `goal`, `expected_result` 확장).
+
+### omp-exploiter (T16) — Exploiter (+ Verifier 통합)
+
+- **역할:** StrategyAgent의 step을 받아 **pwntools script 작성 + Docker 실행
+  + 결과 검증**. 원래 별도 agent이던 Verifier가 여기 통합됨.
+- **Incremental proof 관찰:** pwno-mcp를 통해 gdb breakpoint 설정, 메모리/
+  레지스터/heap 상태를 읽어 step의 성공/실패를 판정. 예: "ret에 0xdeadbeef를
+  넣었는데 rip가 실제로 0xdeadbeef인지" 확인.
+- **결과 보고:** 성공 시 step passed + leak 캡처 → 다음 step. 실패 시
+  observed state (레지스터, 메모리 덤프)를 포함한 상세 보고 → StrategyAgent.
 - **디버깅 지원:** Reverser artifact의 function map + key annotation의
   Ghidra instruction address를 보고 breakpoint 설정. Mid-function /
-  instruction-level 질의는 `ghidra-mcp` tool 직접 호출 (Reverser에 delegate
-  안 함 — 자세한 근거는 reverser redesign spec 참조).
+  instruction-level 질의는 `ghidra-mcp` tool 직접 호출.
 
-### omp-verifier (T15)
+### ~~omp-verifier~~ (삭제)
 
-- **역할:** Exploiter가 만든 pwntools script를 로컬 Docker에서 실행,
-  stage별 pass/fail 판정.
-- **환경:** `envsetup` 결과로 만들어진 docker image를 그대로 재사용.
-  flag 포맷 매칭 + 종료 코드 / 출력 패턴으로 성공 판정.
+> Verifier는 Exploiter에 통합됨 (2026-04-17 exploit pipeline redesign).
+> Script 작성 + 실행 + 결과 판정을 한 agent가 수행. 역할 분리의 이점보다
+> agent 간 통신 오버헤드 감소가 더 큼.
 
 ### omp-discoverer (T18 sub-step)
 
@@ -376,10 +412,10 @@ Agent가 "특정 형태의 markdown"을 작성해야 할 때, structure와 local
 - `reverser-research-en` — 영문 narrative 연구 보고서
 - `reverser-research-ko` — 한국어 연구 보고서
 
-미래 추가 예정:
+미래 추가 예정 (3-agent pipeline):
 - VulnHunter candidate 표
-- Exploiter exploit memo
-- Verifier stage 판정 보고서
+- StrategyAgent exploit plan memo
+- Exploiter stage execution 보고서 (Verifier 통합)
 
 ---
 

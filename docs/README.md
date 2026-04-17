@@ -14,13 +14,21 @@
 Dockerfile 한 쌍만 있으면 다음 파이프라인을 agent들이 순차적으로 실행합니다:
 
 ```
-Load → EnvSetup → Reverse → VulnHunt → Exploit → Verify → Flag
+Load → EnvSetup → Reverse → VulnHunt → [Strategy ↔ Exploit loop] → Flag
 ```
 
 각 단계는 전용 agent가 담당하며, 상태는 challenge 폴더 내부의 `.omp/`에
 persistent하게 저장됩니다. 사람은 언제든지 **prompt 채널**로 개입해서
 잘못된 판단을 교정할 수 있습니다 (`journal.md`는 read-only, 수정은
 agent에게 말로).
+
+**Exploit pipeline (3-agent model, 2026-04-17 redesign):**
+- **VulnHunter** — bug finder. Reverser output에서 취약점 후보 발견
+- **StrategyAgent** — exploit designer. 후보를 받아 incremental proof plan 설계
+- **Exploiter** — executor + verifier (통합). Script 작성 → 실행 → pwno-mcp로 관찰 → 판정
+
+실패 시 staged escalation: Exploiter → StrategyAgent 재설계 → VulnHunter
+다음 candidate → 전체 소진 시 사용자 개입.
 
 ### 핵심 설계 원칙
 
@@ -33,6 +41,11 @@ agent에게 말로).
   build, ELF parsing, glibc detection, patchelf 같은 고정 작업은 TypeScript
   library (envsetup/, loader/, state/). 함수 이름 짓기, vuln primitive 판단,
   exploit 작성 같은 판단 작업은 agent prompt.
+- **Incremental proof.** 각 exploit step은 최소 단위만 증명. "bof 존재 확인
+  → ret offset 확인 → ROP chain 동작 확인 → shell". 한 번에 monolithic
+  exploit을 작성하지 않고, 단계별로 검증하며 쌓아감.
+- **역할 분리로 실패 귀인 명확화.** VulnHunter 틀림 = 잘못된 candidate,
+  StrategyAgent 틀림 = 잘못된 plan, Exploiter 틀림 = 잘못된 script.
 - **Neutrality discipline.** Reverser는 "취약점 같다"는 판단을 하지 않음.
   사실만 기록. 취약점 판단은 VulnHunter 전용. 프롬프트에 forbidden-words
   list로 강제.

@@ -398,13 +398,19 @@ handle.
 
 ## 향후 추가될 템플릿 (예정)
 
+> 3-agent exploit pipeline redesign (2026-04-17) 반영.
+
 | 템플릿 kind | 사용 agent | 목적 |
 |---|---|---|
 | `vulnhunter-candidates` | VulnHunter (T10) | Vulnerability candidate 랭킹 표 (primitive 태그, libc range, confidence) |
 | `vulnhunter-candidates-ko` | VulnHunter | 한국어 버전 |
-| `exploiter-memo` | Exploiter (T14) | Exploit 설계 memo (스테이지별 전략, 필요한 leak, 계산된 offset) |
-| `exploiter-memo-ko` | Exploiter | 한국어 버전 |
-| `verifier-stage-report` | Verifier (T15) | Stage 판정 결과 (pass/fail, 관측된 output, flag match) |
+| `strategist-plan` | StrategyAgent (T14) | Exploit step plan (각 step의 goal, expected result, technique 참조) |
+| `strategist-plan-ko` | StrategyAgent | 한국어 버전 |
+| `exploiter-stage-report` | Exploiter (T16) | Stage execution 결과 (pass/fail, observed state, leak captures, pwno-mcp 관찰 결과) |
+| `exploiter-stage-report-ko` | Exploiter | 한국어 버전 |
+
+> ~~`verifier-stage-report`~~ — Verifier가 Exploiter에 통합됨 (2026-04-17).
+> `exploiter-stage-report`가 대체.
 
 이들은 해당 agent 구현 시점에 추가. 지금은 `reverser-research-{en,ko}`만
 존재.

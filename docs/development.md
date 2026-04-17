@@ -310,14 +310,23 @@ oh-my-pwn/
 │   ├── tools.md
 │   ├── templates.md
 │   └── development.md
+├── knowledge/                    ← TechniqueKB (T09)
+│   └── techniques/
+│       ├── index.md              ← 전체 카탈로그 (tags/gives/needs/mitigations/glibc/chain)
+│       ├── stack_bof.md          ← 상세: 동작 원리, 코드 패턴, exploit 절차
+│       ├── ret2win.md
+│       ├── fmt_string_read.md
+│       ├── fmt_string_write.md
+│       └── tcache_poison.md
 ├── .omc/                         ← 세션 / 스펙 상태 (dotfile)
 │   ├── state/
 │   │   └── current-task.md       ← session 연속성 single source of truth
 │   ├── specs/
-│   │   ├── deep-interview-oh-my-pwn.md       ← 원본 요구사항
-│   │   └── deep-interview-reverser-redesign.md ← Reverser 재설계
+│   │   ├── deep-interview-oh-my-pwn.md           ← 원본 요구사항
+│   │   ├── deep-interview-reverser-redesign.md   ← Reverser 재설계
+│   │   └── deep-interview-exploit-pipeline.md    ← Exploit pipeline redesign (3-agent)
 │   └── research/
-│       └── reverser-future-ideas.md          ← post-MVP 아이디어
+│       └── reverser-future-ideas.md              ← post-MVP 아이디어
 ├── reference/                    ← (gitignored) OmO clone — 패턴 참조용
 │   └── oh-my-openagent/
 ├── test_challenge/               ← (gitignored) 수동 테스트용 CTF
@@ -459,17 +468,21 @@ MVP 단계라 CI 파이프라인이 아직 설정되지 않았습니다. 개인 
 ## 개발 진행 상황
 
 현재 completed / pending task 전체 리스트는 `.omc/state/current-task.md`의
-"Task catalog (T00–T24, MVP)" 섹션 참조. 요약 (2026-04-15 기준):
+"Task catalog (T00–T24, MVP)" 섹션 참조. 요약 (2026-04-17 기준):
 
 - ✅ **M0 Bootstrap** — T00, T01 (dev env + plugin scaffold)
 - ✅ **M1 Input contract + EnvSetup** — T02~T05 (state schema, loader,
   envsetup, user test gate 통과)
-- ▶ **M2 Reverser** — T06, T07 구현 완료. T08 user test gate 진입 (재설계 후
-  재검증 필요). Ghidra setup + type mutation + 3-pass self-review + research
-  reports + template infrastructure 모두 구현됨.
-- ⏸ **M3 VulnHunter** — T09, T10, T11 대기
-- ⏸ **M4 Exploiter + Verifier** — T12~T16 대기
-- ⏸ **M5 Orchestrator + Stage tracking** — T17~T21 대기
+- ✅ **M2 Reverser** — T06, T07, T08 모두 완료. Ghidra setup + type mutation +
+  3-pass self-review + research reports + template infrastructure 구현.
+  T08 user test gate 통과 (2026-04-17).
+- ▶ **M3 VulnHunter** — T09 TechniqueKB 완료 (knowledge/techniques/ 카탈로그 +
+  5개 상세 MD). T10 VulnHunter agent 구현 대기.
+- ⏸ **M4 StrategyAgent + Exploiter** — T12~T17 대기. **Exploit pipeline
+  redesign (2026-04-17):** 3-agent 모델 (VulnHunter → StrategyAgent → Exploiter),
+  Verifier는 Exploiter에 통합, stage_map.yaml 폐지 (동적 stage 생성),
+  pwno-mcp MVP 승격. Spec: `.omc/specs/deep-interview-exploit-pipeline.md`
+- ⏸ **M5 Orchestrator + Loop Integration** — T18~T21 대기
 - ⏸ **M6 Benchmark harness + metric** — T22~T24 대기 (MVP 완료 지점)
 
 각 milestone의 끝에는 **User test gate** 가 있어서 사용자가 직접 품질

@@ -87,16 +87,39 @@
 | `reverser_research_ko_path` | `reverser-research.ko.md` 절대경로 (한국어 narrative) |
 | `reverser_analyzed_at` | ISO timestamp |
 
-### Downstream fields (future)
+### Downstream fields (3-agent exploit pipeline)
+
+> Exploit pipeline redesign (2026-04-17) 반영.
+> Spec: `.omc/specs/deep-interview-exploit-pipeline.md`
+
+**VulnHunter output (T10):**
 
 | 필드 | 설명 |
 |---|---|
-| `vuln_candidates` | VulnHunter output (T10) |
-| `stages` | Stage ledger (T17) — 각 stage의 status / attempts / timestamps |
+| `vuln_candidates` | Candidate 배열. 각 항목: id, primitive, location, confidence, rationale, libc_range |
+| `vuln_candidates[].verified` | **(확장)** Exploiter가 검증 완료 여부 (boolean) |
+| `vuln_candidates[].verification_result` | **(확장)** "confirmed" / "disproved" / "inconclusive" |
+
+**StrategyAgent plan + Exploiter execution (T14~T17):**
+
+| 필드 | 설명 |
+|---|---|
+| `stages` | StrategyAgent가 설계한 exploit step plan. 각 항목: id, status, attempts, timestamps |
+| `stages[].goal` | **(확장)** 이 step이 증명할 것 (e.g., "ret address를 0xdeadbeef로 제어") |
+| `stages[].expected_result` | **(확장)** 성공 시 관찰 기대값 (e.g., "rip == 0xdeadbeef") |
+| `stages[].candidate_id` | **(확장)** 대응하는 vuln_candidates[].id |
 | `current_stage_index` | 현재 진행 중 stage |
 | `current_exploit_script` | Exploiter가 이터레이트 중인 pwntools 경로 |
-| `leaks` | leak ledger — exploitation 중 확보한 주소들 |
-| `corrections` | user correction audit log (T20) |
+
+**Exploitation 중 수집된 데이터:**
+
+| 필드 | 설명 |
+|---|---|
+| `leaks` | Leak ledger — exploitation 중 확보한 주소 (name, value, stage, discovered_at) |
+| `corrections` | User correction audit log (T20) |
+
+**stage_map.yaml은 폐지됨.** Stages는 StrategyAgent가 동적으로 생성.
+`autonomous_stage_rate`는 StrategyAgent 생성 stages 기준으로 계산.
 
 ### Meta
 
