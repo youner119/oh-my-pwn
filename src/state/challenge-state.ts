@@ -94,6 +94,12 @@ export const VulnCandidateSchema = z.object({
   rationale: z.string().optional(),
   /** Optional libc range this candidate requires ("2.31-2.35"). */
   libc_range: z.string().optional(),
+  /** Whether Exploiter has verified this candidate. */
+  verified: z.boolean().optional(),
+  /** Verification outcome: "confirmed", "disproved", or "inconclusive". */
+  verification_result: z
+    .enum(["confirmed", "disproved", "inconclusive"])
+    .optional(),
 })
 export type VulnCandidate = z.infer<typeof VulnCandidateSchema>
 
@@ -107,7 +113,7 @@ export const StageStatusSchema = z.enum([
 ])
 export type StageStatus = z.infer<typeof StageStatusSchema>
 
-/** One stage in the per-challenge stage map (populated at load / by T17). */
+/** One stage (exploit step) in the plan. StrategyAgent generates, Exploiter executes. */
 export const StageEntrySchema = z.object({
   id: z.string().min(1),
   description: z.string().optional(),
@@ -118,6 +124,12 @@ export const StageEntrySchema = z.object({
   finished_at: IsoTimestampSchema.optional(),
   /** Short failure reason if `status === "failed"`. */
   failure_reason: z.string().optional(),
+  /** What this step proves (e.g., "ret address controllable at offset 0xa8"). */
+  goal: z.string().optional(),
+  /** Expected observation on success (e.g., "rip == 0xdeadbeef"). */
+  expected_result: z.string().optional(),
+  /** Link to vuln_candidates[].id this step is derived from. */
+  candidate_id: z.string().optional(),
 })
 export type StageEntry = z.infer<typeof StageEntrySchema>
 
@@ -225,6 +237,10 @@ export const ChallengeStateSchema = z.object({
   /* ── VulnHunter (T10) ──────────────────────────────────────────────────── */
 
   vuln_candidates: z.array(VulnCandidateSchema).default([]),
+  /** Path to VulnHunter's analysis artifact (vulnhunter-analysis.md). */
+  vulnhunter_analysis_path: z.string().optional(),
+  /** When VulnHunter last completed analysis. */
+  vulnhunter_analyzed_at: IsoTimestampSchema.optional(),
 
   /* ── Stage map + exploitation progress (T14 / T15 / T17) ──────────────── */
 
