@@ -81,6 +81,17 @@ export const LeakEntrySchema = z.object({
 })
 export type LeakEntry = z.infer<typeof LeakEntrySchema>
 
+/** How a vulnerability candidate was discovered. */
+export const CandidateOriginSchema = z.enum([
+  /** Found during initial VulnHunter analysis pass. */
+  "initial",
+  /** Derived from a confirmed candidate via VulnHunter 2nd-pass analysis. */
+  "derived",
+  /** Discovered incidentally by Exploiter during verification (unexpected leak, heap state, etc.). */
+  "incidental",
+])
+export type CandidateOrigin = z.infer<typeof CandidateOriginSchema>
+
 /** VulnHunter's ranked candidate entry. */
 export const VulnCandidateSchema = z.object({
   id: z.string().min(1),
@@ -100,6 +111,18 @@ export const VulnCandidateSchema = z.object({
   verification_result: z
     .enum(["confirmed", "disproved", "inconclusive"])
     .optional(),
+  /** How this candidate was discovered. Defaults to "initial" for backward compat. */
+  origin_type: CandidateOriginSchema.optional(),
+  /** For derived/incidental candidates: the confirmed candidate id that triggered discovery. */
+  derived_from: z.string().optional(),
+  /** Path to the PoC script that proves this primitive works. */
+  poc_script_path: z.string().optional(),
+  /** What this verified primitive provides (e.g., "libc_base", "arbitrary_write", "rip_control"). */
+  gives: z.array(z.string()).optional(),
+  /** What this primitive requires from other verified primitives (e.g., "libc_base" for ROP). */
+  needs: z.array(z.string()).optional(),
+  /** For combined primitives: IDs of candidates that were combined to create this one. */
+  combined_from: z.array(z.string()).optional(),
 })
 export type VulnCandidate = z.infer<typeof VulnCandidateSchema>
 
@@ -132,6 +155,38 @@ export const StageEntrySchema = z.object({
   candidate_id: z.string().optional(),
 })
 export type StageEntry = z.infer<typeof StageEntrySchema>
+
+/** Parallel pipeline configuration. Orchestrator reads this to decide instance counts and budget. */
+export const ParallelConfigSchema = z.object({
+  /** Number of VulnHunter ensemble instances to spawn. */
+  vh_instance_count: z.number().int().min(1).default(3),
+  /** Number of StrategyAgent+Exploiter pairs to run in parallel (one per candidate). */
+  sa_instance_count: z.number().int().min(1).default(3),
+  /** Max VH→SA→Exploiter→cascading cycles before stopping. */
+  max_cycles: z.number().int().min(1).default(5),
+  /** Max retries per candidate before escalating to next candidate. */
+  max_retries_per_candidate: z.number().int().min(1).default(3),
+})
+export type ParallelConfig = z.infer<typeof ParallelConfigSchema>
+
+/** Current phase of the parallel pipeline. */
+export const PipelinePhaseSchema = z.enum([
+  "idle",
+  "vh_ensemble",
+  "strategy_exploit",
+  "cascading",
+  "terminated",
+])
+export type PipelinePhase = z.infer<typeof PipelinePhaseSchema>
+
+/** Why the pipeline terminated. */
+export const TerminationReasonSchema = z.enum([
+  "flag_found",
+  "exhausted",
+  "budget_exceeded",
+  "user_intervention",
+])
+export type TerminationReason = z.infer<typeof TerminationReasonSchema>
 
 /** Correction block appended to the journal + applied to this state. */
 export const UserCorrectionSchema = z.object({
@@ -259,6 +314,17 @@ export const ChallengeStateSchema = z.object({
   /* ── Leak ledger (Exploiter fills mid-run) ─────────────────────────────── */
 
   leaks: z.array(LeakEntrySchema).default([]),
+
+  /* ── Parallel pipeline state (T18 parallel orchestration) ────────────── */
+
+  /** Parallel execution configuration. Orchestrator sole writer sets this. */
+  parallel_config: ParallelConfigSchema.optional(),
+  /** Current phase of the parallel pipeline. */
+  pipeline_phase: PipelinePhaseSchema.optional(),
+  /** Current VH→SA→Exploiter→cascading cycle number (1-based). */
+  pipeline_cycle: z.number().int().nonnegative().optional(),
+  /** Why the pipeline terminated (set when pipeline_phase === "terminated"). */
+  pipeline_termination_reason: TerminationReasonSchema.optional(),
 
   /* ── Correction audit log (T20 prompt-driven correction protocol) ─────── */
 

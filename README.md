@@ -31,7 +31,7 @@ omp
 - [docs/architecture.md](docs/architecture.md) — opencode 플러그인 구조, config/tool hook, 빌드/배포
 - [docs/agents.md](docs/agents.md) — agent 설계, factory 패턴, 프롬프트 구성 원칙
 - [docs/state-and-io.md](docs/state-and-io.md) — `.omp/` 레이아웃, 상태 관리, human intervention
-- [docs/tools.md](docs/tools.md) — `omp_*` tool 7개
+- [docs/tools.md](docs/tools.md) — `omp_*` tool 10개
 - [docs/templates.md](docs/templates.md) — 재사용 가능 템플릿 시스템
 - [docs/development.md](docs/development.md) — 개발 환경 / 빌드 / 테스트 workflow
 

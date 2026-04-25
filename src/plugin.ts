@@ -26,9 +26,80 @@ import {
   ompLoadChallengeTool,
   ompGetTemplateTool,
   ompVerifyTemplateOutputTool,
+  ompSaveDecompiledTool,
 } from "./tools"
+import {
+  BackgroundManager,
+  PwnoContainerManager,
+  createOmpTaskTool,
+  createOmpTaskAllTool,
+  createOmpTaskPoolTool,
+  createOmpBackgroundOutputTool,
+  createOmpPwnoContainerTool,
+} from "./orchestration"
+import type { OmpSessionClient } from "./orchestration"
 
-const OmpPlugin: Plugin = async (_input) => {
+const OmpPlugin: Plugin = async (input) => {
+  // Capture SDK client for parallel orchestration infrastructure.
+  // PluginInput.client is the OpencodeClient provided by opencode runtime.
+  // We use client.session as our OmpSessionClient (subset of the SDK).
+  // Cast through unknown because SDK generated types are more complex than
+  // our minimal OmpSessionClient interface (union types, Request/Response wrappers).
+  const pluginInput = input as unknown as {
+    client?: { session: unknown }
+    directory?: string
+    serverUrl?: { toString(): string }
+  }
+  const sessionClient = pluginInput.client?.session as
+    | OmpSessionClient
+    | undefined
+  const directory = pluginInput.directory ?? process.cwd()
+
+  // Resolve the real server URL for tmux attach.
+  // opencode starts with --port 0 (default), so the OS assigns an ephemeral port.
+  // PluginInput.serverUrl may carry port 0 (pre-bind) — unusable for external attach.
+  // Fallback: OPENCODE_PORT env var, or default 4096 (same pattern as OmO).
+  const rawServerUrl = pluginInput.serverUrl?.toString()
+  let serverUrl: string | undefined
+  if (rawServerUrl) {
+    try {
+      const parsed = new URL(rawServerUrl)
+      const port = parsed.port || (parsed.protocol === "https:" ? "443" : "80")
+      if (port === "0") {
+        const fallbackPort = process.env.OPENCODE_PORT ?? "4096"
+        serverUrl = `http://localhost:${fallbackPort}`
+      } else {
+        serverUrl = rawServerUrl.replace(/\/+$/u, "")
+      }
+    } catch {
+      serverUrl = rawServerUrl.replace(/\/+$/u, "")
+    }
+  }
+
+  // Initialize BackgroundManager (parallel task lifecycle).
+  // If no client available (e.g., test/debug), orchestration tools are still
+  // registered but will fail with a clear error on invocation.
+  if (serverUrl) {
+    process.stderr.write(`[omp] serverUrl: ${serverUrl}\n`)
+  } else {
+    process.stderr.write(`[omp] WARNING: serverUrl not available — tmux panes will not work\n`)
+  }
+
+  const manager = sessionClient
+    ? new BackgroundManager({ client: sessionClient, directory, serverUrl })
+    : undefined
+
+  const ompTaskTool = manager ? createOmpTaskTool(manager) : undefined
+  const ompTaskAllTool = manager ? createOmpTaskAllTool(manager) : undefined
+  const ompTaskPoolTool = manager ? createOmpTaskPoolTool(manager) : undefined
+  const ompBackgroundOutputTool = manager
+    ? createOmpBackgroundOutputTool(manager)
+    : undefined
+
+  // pwno-mcp container manager (single container, multi-session).
+  const pwnoManager = new PwnoContainerManager()
+  const ompPwnoContainerTool = createOmpPwnoContainerTool(pwnoManager)
+
   return {
     config: async (cfg) => {
       // ── agents ────────────────────────────────────────────────────────────
@@ -69,6 +140,7 @@ const OmpPlugin: Plugin = async (_input) => {
       const pwnoUrl = process.env["OMP_PWNO_MCP_URL"] || "http://127.0.0.1:5500/mcp"
       const pwnoEnabled = process.env["OMP_PWNO_MCP_DISABLED"] !== "1"
       if (pwnoEnabled) {
+        cfg.mcp ??= {}
         ;(cfg.mcp as Record<string, unknown>)["pwno"] = {
           type: "remote",
           url: pwnoUrl,
@@ -93,6 +165,14 @@ const OmpPlugin: Plugin = async (_input) => {
       omp_run_envsetup: ompRunEnvsetupTool,
       omp_get_template: ompGetTemplateTool,
       omp_verify_template_output: ompVerifyTemplateOutputTool,
+      omp_save_decompiled: ompSaveDecompiledTool,
+      ...(ompTaskTool ? { omp_task: ompTaskTool } : {}),
+      ...(ompTaskAllTool ? { omp_task_all: ompTaskAllTool } : {}),
+      ...(ompTaskPoolTool ? { omp_task_pool: ompTaskPoolTool } : {}),
+      ...(ompBackgroundOutputTool
+        ? { omp_background_output: ompBackgroundOutputTool }
+        : {}),
+      omp_pwno_container: ompPwnoContainerTool,
     },
   }
 }

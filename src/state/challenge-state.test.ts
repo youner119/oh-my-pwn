@@ -145,4 +145,163 @@ describe("ChallengeStateSchema", () => {
     }
     expect(() => ChallengeStateSchema.parse(bad)).toThrow()
   })
+
+  test("accepts vuln_candidates with origin_type and derived_from", () => {
+    const state = {
+      ...createInitialChallengeState(baseInput),
+      vuln_candidates: [
+        {
+          id: "vuln_bof_main",
+          primitive: "stack_bof",
+          confidence: 0.9,
+          origin_type: "initial",
+        },
+        {
+          id: "vuln_bof_leak",
+          primitive: "bof_libc_leak",
+          confidence: 0.7,
+          origin_type: "derived",
+          derived_from: "vuln_bof_main",
+        },
+        {
+          id: "vuln_heap_obs",
+          primitive: "heap_uaf",
+          confidence: 0.5,
+          origin_type: "incidental",
+          derived_from: "vuln_bof_main",
+        },
+      ],
+    }
+    const parsed = ChallengeStateSchema.parse(state)
+    expect(parsed.vuln_candidates).toHaveLength(3)
+    expect(parsed.vuln_candidates[0]?.origin_type).toBe("initial")
+    expect(parsed.vuln_candidates[1]?.origin_type).toBe("derived")
+    expect(parsed.vuln_candidates[1]?.derived_from).toBe("vuln_bof_main")
+    expect(parsed.vuln_candidates[2]?.origin_type).toBe("incidental")
+  })
+
+  test("accepts vuln_candidates with poc_script_path, gives, needs, combined_from", () => {
+    const state = {
+      ...createInitialChallengeState(baseInput),
+      vuln_candidates: [
+        {
+          id: "vuln_1",
+          primitive: "stack_bof",
+          verified: true,
+          verification_result: "confirmed",
+          poc_script_path: "/c/.omp/exploit/vuln_1/verify.py",
+          gives: ["rip_control"],
+          needs: ["canary"],
+        },
+        {
+          id: "vuln_2",
+          primitive: "fmt_string_leak",
+          verified: true,
+          verification_result: "confirmed",
+          poc_script_path: "/c/.omp/exploit/vuln_2/verify.py",
+          gives: ["libc_base", "canary"],
+          needs: [],
+        },
+        {
+          id: "vuln_3",
+          primitive: "rop_shell",
+          verified: true,
+          verification_result: "confirmed",
+          poc_script_path: "/c/.omp/exploit/vuln_3/exploit.py",
+          gives: ["shell"],
+          needs: ["rip_control", "libc_base"],
+          combined_from: ["vuln_1", "vuln_2"],
+          origin_type: "derived",
+        },
+      ],
+    }
+    const parsed = ChallengeStateSchema.parse(state)
+    expect(parsed.vuln_candidates[0]?.gives).toEqual(["rip_control"])
+    expect(parsed.vuln_candidates[0]?.needs).toEqual(["canary"])
+    expect(parsed.vuln_candidates[0]?.poc_script_path).toContain("verify.py")
+    expect(parsed.vuln_candidates[2]?.combined_from).toEqual(["vuln_1", "vuln_2"])
+    expect(parsed.vuln_candidates[2]?.gives).toEqual(["shell"])
+  })
+
+  test("rejects invalid origin_type", () => {
+    const bad = {
+      ...createInitialChallengeState(baseInput),
+      vuln_candidates: [
+        { id: "v1", primitive: "bof", origin_type: "magic" },
+      ],
+    }
+    expect(() => ChallengeStateSchema.parse(bad)).toThrow()
+  })
+
+  test("accepts parallel_config with defaults", () => {
+    const state = {
+      ...createInitialChallengeState(baseInput),
+      parallel_config: {},
+    }
+    const parsed = ChallengeStateSchema.parse(state)
+    expect(parsed.parallel_config?.vh_instance_count).toBe(3)
+    expect(parsed.parallel_config?.sa_instance_count).toBe(3)
+    expect(parsed.parallel_config?.max_cycles).toBe(5)
+    expect(parsed.parallel_config?.max_retries_per_candidate).toBe(3)
+  })
+
+  test("accepts parallel_config with user overrides", () => {
+    const state = {
+      ...createInitialChallengeState(baseInput),
+      parallel_config: { vh_instance_count: 5, sa_instance_count: 5 },
+    }
+    const parsed = ChallengeStateSchema.parse(state)
+    expect(parsed.parallel_config?.vh_instance_count).toBe(5)
+    expect(parsed.parallel_config?.sa_instance_count).toBe(5)
+  })
+
+  test("accepts pipeline phase and termination reason", () => {
+    const state = {
+      ...createInitialChallengeState(baseInput),
+      pipeline_phase: "terminated",
+      pipeline_cycle: 2,
+      pipeline_termination_reason: "flag_found",
+    }
+    const parsed = ChallengeStateSchema.parse(state)
+    expect(parsed.pipeline_phase).toBe("terminated")
+    expect(parsed.pipeline_cycle).toBe(2)
+    expect(parsed.pipeline_termination_reason).toBe("flag_found")
+  })
+
+  test("rejects invalid pipeline_phase", () => {
+    const bad = {
+      ...createInitialChallengeState(baseInput),
+      pipeline_phase: "running",
+    }
+    expect(() => ChallengeStateSchema.parse(bad)).toThrow()
+  })
+
+  test("rejects invalid termination_reason", () => {
+    const bad = {
+      ...createInitialChallengeState(baseInput),
+      pipeline_termination_reason: "timeout",
+    }
+    expect(() => ChallengeStateSchema.parse(bad)).toThrow()
+  })
+
+  test("backward compat: existing state without parallel fields still parses", () => {
+    const oldState = {
+      schema_version: "1",
+      challenge_dir: "/c",
+      binary_path: "/c/bin",
+      dockerfile_path: "/c/Dockerfile",
+      vuln_candidates: [
+        { id: "v1", primitive: "stack_bof", confidence: 0.8 },
+      ],
+      created_at: "2026-04-10T00:00:00.000Z",
+      updated_at: "2026-04-10T00:00:00.000Z",
+    }
+    const parsed = ChallengeStateSchema.parse(oldState)
+    expect(parsed.parallel_config).toBeUndefined()
+    expect(parsed.pipeline_phase).toBeUndefined()
+    expect(parsed.pipeline_cycle).toBeUndefined()
+    expect(parsed.pipeline_termination_reason).toBeUndefined()
+    expect(parsed.vuln_candidates[0]?.origin_type).toBeUndefined()
+    expect(parsed.vuln_candidates[0]?.derived_from).toBeUndefined()
+  })
 })

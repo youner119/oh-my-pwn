@@ -10,7 +10,7 @@
 #      - --skip-ghidra 로 opt-out 가능 (나중에 수동 설정)
 #   3) ~/.config/omp/opencode/opencode.json 생성 (plugin file:// 경로 등록)
 #   4) ~/.zshrc 에 omp alias 추가:
-#        alias omp="OMP_GHIDRA_BRIDGE_PATH=... XDG_CONFIG_HOME=$HOME/.config/omp opencode"
+#        alias omp="OMP_GHIDRA_BRIDGE_PATH=... XDG_CONFIG_HOME=$HOME/.config/omp opencode --port 4096"
 #      이미 있으면 교체 (bridge 경로가 바뀔 수 있으므로 갱신).
 #   5) opencode debug config 로 플러그인 로드 확인
 #
@@ -190,10 +190,13 @@ fi
 
 # ── 4) zshrc alias ────────────────────────────────────────────────────────────
 build_alias_line() {
+  # --port 4096: fix the server port so tmux panes can attach via opencode attach.
+  # Without this, opencode defaults to --port 0 (OS-assigned ephemeral port),
+  # and opencode attach can't find the server.
   if [[ -n "$BRIDGE_PATH" ]]; then
-    printf 'alias omp="OMP_GHIDRA_BRIDGE_PATH=%q XDG_CONFIG_HOME=$HOME/.config/omp opencode"' "$BRIDGE_PATH"
+    printf 'alias omp="OMP_GHIDRA_BRIDGE_PATH=%q XDG_CONFIG_HOME=$HOME/.config/omp opencode --port 4096"' "$BRIDGE_PATH"
   else
-    printf 'alias omp="XDG_CONFIG_HOME=$HOME/.config/omp opencode"'
+    printf 'alias omp="XDG_CONFIG_HOME=$HOME/.config/omp opencode --port 4096"'
   fi
 }
 ALIAS_LINE="$(build_alias_line)"

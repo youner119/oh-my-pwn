@@ -118,6 +118,14 @@ opencode config에 주입됩니다. 결과적으로 opencode TUI agent picker에
 순서로 sub-agent / tool을 호출하고, 각 단계 결과를 state에 반영, 사용자
 correction을 받아 state를 고치고 재계획.
 
+**병렬 실행 단계별 역할 (새 설계):**
+- **Phase 1:** VH ensemble을 병렬로 spawn (각 VH가 독립 관점으로 분석) → 모든 VH 완료 후 결과 merge/dedup → candidate list 확정
+- **Phase 2:** candidate별로 SA+Exploiter 쌍을 병렬로 spawn (SA가 Exploiter를 sub-agent로 spawn) → 각 쌍이 독립 실행
+- **Phase 3:** 모든 결과 수집 → `omp_patch_state` 호출 (sole writer). 성공 candidate 있으면 파생 primitive 탐색용 VH 2차 분석 가능. Exploiter의 부수 발견(새 leak/heap primitive) → 새 candidate로 등록 후 Phase 2 재진입
+- **Phase 4:** flag/shell 획득 → SUCCESS. 전체 소진 + cascading 없음 → 사용자 handoff. Budget 초과 → 사용자 handoff.
+
+> **인프라 노트:** 병렬 spawn은 OmO의 `task` tool + BackgroundManager + ConcurrencyManager 인프라 포팅 필요. 현재 미구현. 세부 사항은 아래 "병렬 실행 인프라" 섹션 참조.
+
 **현재 구현 상태 (2026-04):**
 - ✅ 파이프라인 skeleton 프롬프트
 - ✅ Stage 0 (Load) — `omp_load_challenge` tool 호출
@@ -128,7 +136,7 @@ correction을 받아 state를 고치고 재계획.
 **Tool 사용:**
 - `omp_load_challenge` (첫 stage)
 - `omp_read_state` (매 stage 시작)
-- `omp_patch_state` (수동 상태 교정 시)
+- `omp_patch_state` (수동 상태 교정 시 + Phase 3 결과 기록 — sole writer)
 - `omp_append_journal` (user correction 기록)
 - `omp_run_envsetup` (EnvSetup stage)
 
@@ -190,27 +198,51 @@ Ghidra-MCP를 통해 함수/변수 rename, inline comment 주입, 타입 refinem
 
 ```
 Orchestrator
-  └→ VulnHunter: find candidates [C1, C2, C3]
-       └→ for each candidate (순차, MVP):
-            StrategyAgent: design plan [Step1, Step2, Step3]
-              └→ for each step:
-                   Exploiter: write script → execute → observe (pwno-mcp) → verify
-                     ├→ success: next step
-                     └→ failure → StrategyAgent redesign (max N retries)
-                          └→ exhausted → VulnHunter: next candidate
-  └→ all exhausted → user intervention
-  └→ shell/flag → DONE
+  │
+  ├─── Phase 1: VulnHunter Ensemble (병렬)
+  │      ├─ VH-1 (관점 A) ──┐
+  │      ├─ VH-2 (관점 B) ──┼→ Orchestrator merge/dedup → candidate list
+  │      └─ VH-N (관점 N) ──┘
+  │
+  ├─── Phase 2: Iterative Rounds (반복 루프, state.json = blackboard)
+  │      Round 1:
+  │        ├─ SA-1 (VERIFY candidate A) → Exploiter-1 (session_id=1)
+  │        ├─ SA-2 (VERIFY candidate B) → Exploiter-2 (session_id=2)
+  │        └─ SA-3 (VERIFY candidate C) → Exploiter-3 (session_id=3)
+  │               verified 결과 (poc_script_path, gives, needs) → blackboard
+  │      Round N:
+  │        └─ SA-N (COMBINE verified A+B) → Exploiter-N (session_id=N)
+  │              source PoC scripts 합성 → single connection exploit
+  │      * 임의 SA가 flag 획득 → 나머지 즉시 취소 (early-exit)
+  │
+  ├─── Phase 3: Result Collection + Cascading
+  │      Orchestrator가 결과 수집 → state 기록 (sole writer)
+  │      경로 A: verified candidate → VH 2차 분석 (파생 primitive)
+  │      경로 B: Exploiter 부수 발견 → 새 candidate 등록
+  │      → Phase 2 다음 Round로 재진입
+  │
+  └─── Phase 4: Termination
+         Flag/shell 획득 → SUCCESS (early-exit 포함)
+         전체 소진 + cascading 없음 → 사용자 handoff
+         Budget 초과 → 사용자 handoff
 ```
 
 **핵심 원칙:**
 - **Incremental proof:** 각 step은 하나만 증명 (bof 존재 → ret offset → ROP → shell)
 - **역할 분리 = 실패 귀인:** VulnHunter 틀림 = 잘못된 candidate, StrategyAgent 틀림 = 잘못된 plan, Exploiter 틀림 = 잘못된 script
-- **Staged escalation:** Exploiter → StrategyAgent → VulnHunter → user 단계적 복귀
+- **Staged escalation:** Exploiter → SA → Orchestrator(cascading 재진입 or VulnHunter 2차) → user 단계적 복귀
+- **Ensemble consensus:** VulnHunter는 ensemble 병렬로 분석, Orchestrator가 merge/dedup
+- **Sole writer:** Orchestrator만 state를 쓰고 SA/Exploiter는 결과 반환만
+- **Single container + session_id:** pwno-mcp 1개 container, Exploiter마다 다른 session_id로 격리
+- **Shared blackboard:** state.json의 poc_script_path / gives / needs가 라운드 간 지식 이전 수단
+- **PoC code as knowledge transfer:** Leak 값 저장 안 함 (ASLR). Leak 획득 코드를 합성.
+- **Early-exit:** 임의 SA가 flag 획득 시 나머지 SA 즉시 취소
 
 ### omp-vulnhunter (T10) ✅
 
 - **역할:** Reverser artifact를 읽고 vulnerability candidate 발견 + 랭킹.
   **Bug finder로서 exploit 전략 설계는 하지 않음** — 전략은 StrategyAgent의 몫.
+- **Ensemble 모드:** Orchestrator가 여러 VH 인스턴스를 병렬로 spawn해서 독립적으로 분석. 각 VH는 **다른 VH의 결과를 참조하지 않음** — 관점 오염 방지를 위해 인스턴스 간 격리 필수.
 - **핵심 contract (Reverser redesign spec에 locked):** **Reverser output을
   hint로 취급하되 filter로 취급 금지.** 함수 이름이 `safe_input_copy`라도
   VulnHunter는 모든 함수를 전수 분석해야 함.
@@ -218,29 +250,37 @@ Orchestrator
   `knowledge/techniques/index.md`를 스캔해서 놓친 패턴을 탐색. 관심
   technique은 개별 상세 MD (e.g., `stack_bof.md`)를 읽어 확인. **Tool이나
   loader 없이 file read로 직접 소비.**
-- **출력:** `state.json`의 `vuln_candidates` 필드에 candidate list 기록.
+- **출력:** candidate list를 Orchestrator에 반환 (state 직접 기록 금지 — Orchestrator가 merge/dedup 후 `omp_patch_state` 호출).
 
 ### omp-strategist (T14) ✅ — StrategyAgent
 
-- **역할:** VulnHunter candidate를 받아 **step-by-step exploit plan 설계**.
+- **역할:** VulnHunter candidate를 받아 **step-by-step exploit plan 설계 + 실행**.
   "이 BOF로 뭘 할 수 있는가? → padding 확인 → ret 제어 → libc leak → ROP"
   식의 incremental proof 계획을 수립.
+- **두 가지 task type (Orchestrator가 지정):**
+  - **VERIFY:** 단일 primitive를 증명. 하나의 PoC script 작성 + Exploiter로 실행. 성공 시 `poc_script_path` + `gives` 반환. 하나의 SA invocation = 하나의 primitive.
+  - **COMBINE:** 이미 verified된 primitive들을 합산. `omp_read_state`로 blackboard를 읽어 source PoC scripts를 파악하고, leak 획득 **로직(코드)**를 합성. **단일 `io = process()` 연결**로 전체 exploit 실행 (multi-connection 금지 — ASLR).
+- **Candidate별 병렬 실행:** Orchestrator가 각 라운드에 SA들을 병렬로 spawn. 각 SA는 자기 task에 집중.
+- **SA가 Exploiter spawn:** SA는 자기 plan을 실행할 Exploiter를 직접 sub-agent로 spawn (Orchestrator가 아닌 SA가 부모). Exploiter의 실행 결과를 직접 수집해서 retry 여부 결정.
 - **Retry logic:** Exploiter 실패 시 결과(디버깅 정보, 메모리 상태)를 받아
-  plan을 수정. Max N회 재시도 후 VulnHunter에게 복귀 (다음 candidate 요청).
+  plan을 수정. Max N회 재시도 후 Orchestrator에 실패 보고.
 - **TechniqueKB 활용:** `index.md`의 `chain` 필드로 "이 primitive 다음에
   뭘 할 수 있는지" 참조. 상세 MD의 "typical step plan" 섹션 참고.
-- **출력:** `state.json`의 `stages` 필드에 plan steps 기록 (기존
-  StageEntrySchema에 `goal`, `expected_result` 확장).
+- **State 직접 쓰기 제거:** plan 결과를 Orchestrator에 반환. `omp_patch_state` 호출 금지 — state 기록은 Orchestrator(sole writer)가 담당.
 
 ### omp-exploiter (T16) ✅ — Exploiter (+ Verifier 통합)
 
 - **역할:** StrategyAgent의 step을 받아 **pwntools script 작성 + 실행
   + pwno-mcp로 관찰 + 결과 검증**. 원래 별도 agent이던 Verifier가 여기 통합됨.
+- **Spawn 관계:** SA의 sub-agent로 spawn됨 (Orchestrator가 아닌 SA가 부모). SA에서 plan steps를 받아 실행.
+- **단일 pwno-mcp container + session_id:** 모든 Exploiter가 1개 container를 공유하되 **서로 다른 session_id**를 사용. pwno-mcp가 session_id별로 GDB 프로세스를 격리 관리. port 분리 불필요.
 - **Incremental proof 관찰:** pwno-mcp를 통해 gdb breakpoint 설정, 메모리/
   레지스터/heap 상태를 읽어 step의 성공/실패를 판정. 예: "ret에 0xdeadbeef를
   넣었는데 rip가 실제로 0xdeadbeef인지" 확인.
-- **결과 보고:** 성공 시 step passed + leak 캡처 → 다음 step. 실패 시
-  observed state (레지스터, 메모리 덤프)를 포함한 상세 보고 → StrategyAgent.
+- **State 직접 쓰기 제거:** 결과를 SA를 통해 Orchestrator에 반환. `omp_patch_state` 호출 금지. `omp_read_state`는 시작 시 context 파악용으로 허용.
+- **결과 보고:** 성공 시 step passed → SA에 보고 (SA가 `poc_script_path` + `gives` 결과로 Orchestrator에 반환). 실패 시 observed state (레지스터, 메모리 덤프)를 포함한 상세 보고 → SA.
+- **Leak 값 저장 안 함:** libc_base, canary 등 런타임 주소는 ASLR로 실행마다 달라짐 → state에 저장하지 않음. 대신 leak을 **획득하는 코드**(PoC script)가 지식 단위. COMBINE SA가 source PoC를 읽어 단일 connection 안에서 합성.
+- **부수 발견 보고:** 예상 못한 leak / heap 상태 / 추가 primitive 발견 시 → 새 candidate로 SA를 통해 Orchestrator에 보고 (Orchestrator가 다음 라운드 cascading 재진입 결정).
 - **디버깅 지원:** Reverser artifact의 function map + key annotation의
   Ghidra instruction address를 보고 breakpoint 설정. Mid-function /
   instruction-level 질의는 `ghidra-mcp` tool 직접 호출.
@@ -258,6 +298,60 @@ Orchestrator
   판단.
 - **현재 대체:** 사람이 `omp_load_challenge({ binary, dockerfile })` hint를
   직접 전달 (Orchestrator prompt에 지시).
+
+---
+
+## 병렬 실행 인프라 (OmO 포팅)
+
+병렬 agent 실행은 opencode의 내장 기능이 아니라 **OmO(oh-my-openagent)가
+자체 구축한 인프라**입니다. OmP는 이 패턴을 포팅해야 합니다.
+
+### 핵심 컴포넌트
+
+| 컴포넌트 | 역할 | OmO 참고 파일 |
+|----------|------|--------------|
+| `task` tool | LLM이 호출하는 delegation tool. `run_in_background=true`로 병렬 실행 | `reference/oh-my-openagent/src/tools/delegate-task/` |
+| BackgroundManager | 실행 중 task 추적, session polling, 완료 감지, parent 알림 | `reference/oh-my-openagent/src/features/background-agent/manager.ts` |
+| ConcurrencyManager | 모델별 동시 실행 제한 (기본 5개) | `reference/oh-my-openagent/src/features/background-agent/concurrency.ts` |
+| ContainerManager | (OmP 전용) 단일 pwno-mcp Docker container lifecycle + session_id 할당 | 새로 구현 |
+
+### 통신 흐름
+
+```
+Forward:  Orchestrator → task(run_in_background=true) → session.create(parentID) + promptAsync → sub-agent
+Backward: sub-agent 완료 → BackgroundManager polling → parent에 notification 주입
+          → Orchestrator가 background_output(task_id)로 결과 조회
+```
+
+### Session 계층
+
+```
+Orchestrator session (depth 0)
+  ├─ VH-1 session (depth 1)
+  ├─ VH-2 session (depth 1)
+  ├─ SA-1 session (depth 1)
+  │    └─ Exploiter-1 session (depth 2)
+  ├─ SA-2 session (depth 1)
+  │    └─ Exploiter-2 session (depth 2)
+  └─ SA-3 session (depth 1)
+       └─ Exploiter-3 session (depth 2)
+```
+
+Max depth = 3 (OmO 기본값). Orchestrator → SA → Exploiter.
+
+### State 동시성 — Sole Writer 패턴 + Blackboard
+
+병렬 agent들이 동시에 `state.json`을 쓰면 충돌. 해결:
+
+- **SA/Exploiter는 state를 직접 쓰지 않음** — `omp_patch_state` 호출 금지
+- **SA/Exploiter는 결과를 반환** — session 출력으로 structured result 전달
+- **Orchestrator만 `omp_patch_state` 호출** — 결과 수집 후 순차 기록
+- **SA/Exploiter는 `omp_read_state`로 읽기만 가능** (시작 시 context 파악용)
+
+**Blackboard 활용:** 각 라운드 후 Orchestrator가 verified primitive의
+`poc_script_path` / `gives` / `needs` / `combined_from`을 state에 기록.
+다음 라운드 SA는 `omp_read_state`로 blackboard를 읽어 어떤 primitive가
+증명됐고 어떤 것을 COMBINE할 수 있는지 파악.
 
 ---
 

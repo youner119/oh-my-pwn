@@ -10,127 +10,97 @@ describe("createOmpStrategistAgent", () => {
   test("description frames as plan designer, not code writer", () => {
     const agent = createOmpStrategistAgent("test-model")
     const desc = agent.description as string
-    expect(desc.toLowerCase()).toContain("plan")
+    expect(desc.toLowerCase()).toContain("primitive")
     expect(desc).toContain("Exploiter")
     expect(desc.toLowerCase()).not.toContain("pwntools")
   })
 
-  test("prompt declares scope: design strategy, not write code", () => {
+  test("prompt declares scope: verify/combine, not write code", () => {
     const agent = createOmpStrategistAgent("test-model")
     const p = agent.prompt ?? ""
     expect(p).toContain("DO NOT")
-    expect(p).toContain("pwntools")
     expect(p).toContain("Exploiter writes all code")
+    expect(p).toContain("sole writer")
   })
 
-  test("prompt uses state tools", () => {
+  test("prompt has two task types: VERIFY and COMBINE", () => {
+    const agent = createOmpStrategistAgent("test-model")
+    const p = agent.prompt ?? ""
+    expect(p).toContain("Type 1: VERIFY")
+    expect(p).toContain("Type 2: COMBINE")
+    expect(p).toContain("gives")
+    expect(p).toContain("needs")
+  })
+
+  test("prompt reads state as shared blackboard", () => {
     const agent = createOmpStrategistAgent("test-model")
     const p = agent.prompt ?? ""
     expect(p).toContain("omp_read_state")
-    expect(p).toContain("omp_patch_state")
-    expect(p).toContain("omp_append_journal")
+    expect(p).toContain("shared blackboard")
+    expect(p).toContain("vuln_candidates")
+    expect(p).toContain("poc_script_path")
   })
 
-  test("prompt reads reverser analysis for structural context", () => {
+  test("prompt reads reverser analysis", () => {
     const agent = createOmpStrategistAgent("test-model")
     const p = agent.prompt ?? ""
     expect(p).toContain("reverser_summary_path")
-    expect(p).toContain("Stack frame")
-    expect(p).toContain("Function Map")
-    expect(p).toContain("Ghidra instruction addresses")
+    expect(p).toContain("stack frames")
+    expect(p).toContain("function addresses")
   })
 
-  test("prompt reads vuln_candidates from state", () => {
-    const agent = createOmpStrategistAgent("test-model")
-    const p = agent.prompt ?? ""
-    expect(p).toContain("vuln_candidates")
-    expect(p).toContain("candidate")
-    expect(p).toContain("primitive")
-    expect(p).toContain("confidence")
-  })
-
-  test("prompt supports two modes: verification and exploit chain", () => {
-    const agent = createOmpStrategistAgent("test-model")
-    const p = agent.prompt ?? ""
-    expect(p).toContain("Mode A")
-    expect(p).toContain("Mode B")
-    expect(p).toContain("verification")
-    expect(p).toContain("Exploit chain")
-  })
-
-  test("prompt supports multi-candidate combination", () => {
-    const agent = createOmpStrategistAgent("test-model")
-    const p = agent.prompt ?? ""
-    expect(p).toContain("Candidate combination")
-    expect(p).toContain("Verify before combine")
-    expect(p).toContain("Dependency ordering")
-    expect(p).toContain("Multi-candidate steps")
-  })
-
-  test("prompt specifies step structure with goal and expected_result", () => {
-    const agent = createOmpStrategistAgent("test-model")
-    const p = agent.prompt ?? ""
-    expect(p).toContain("goal")
-    expect(p).toContain("expected_result")
-    expect(p).toContain("candidate_id")
-    expect(p).toContain("stages")
-  })
-
-  test("prompt references TechniqueKB for chain field", () => {
+  test("prompt references TechniqueKB", () => {
     const agent = createOmpStrategistAgent("test-model")
     const p = agent.prompt ?? ""
     expect(p).toContain("knowledge/techniques/index.md")
     expect(p).toContain("chain")
   })
 
-  test("prompt specifies retry logic with budget of 3", () => {
+  test("prompt spawns Exploiter via omp_task (sync)", () => {
     const agent = createOmpStrategistAgent("test-model")
     const p = agent.prompt ?? ""
-    expect(p).toContain("Retry")
-    expect(p).toContain("3")
-    expect(p).toContain("exhausted")
-    expect(p).toContain("escalate")
-    expect(p).toContain("VulnHunter")
+    expect(p).toContain("omp_task")
+    expect(p).toContain("omp-exploiter")
+    expect(p).toContain("run_in_background: false")
   })
 
-  test("prompt specifies failure diagnosis before retry", () => {
+  test("prompt returns structured JSON with gives/needs/poc_script_path", () => {
     const agent = createOmpStrategistAgent("test-model")
     const p = agent.prompt ?? ""
-    expect(p).toContain("failure_reason")
-    expect(p).toContain("Diagnose")
-    expect(p).toContain("offset wrong")
+    expect(p).toContain('"gives"')
+    expect(p).toContain('"needs"')
+    expect(p).toContain('"poc_script_path"')
+    expect(p).toContain('"combined_from"')
+    expect(p).toContain('"flag"')
+    expect(p).toContain('"status"')
   })
 
-  test("prompt cross-references mitigations for chaining", () => {
+  test("prompt specifies retry with max 3", () => {
     const agent = createOmpStrategistAgent("test-model")
     const p = agent.prompt ?? ""
-    expect(p).toContain("Mitigation-driven chaining")
-    expect(p).toContain("Canary on")
-    expect(p).toContain("PIE on")
-    expect(p).toContain("NX on")
-    expect(p).toContain("Full RELRO")
+    expect(p).toContain("3 retries")
+    expect(p).toContain("inconclusive")
   })
 
-  test("prompt specifies strategist-plan.md artifact", () => {
+  test("prompt specifies mitigation awareness", () => {
     const agent = createOmpStrategistAgent("test-model")
     const p = agent.prompt ?? ""
-    expect(p).toContain("strategist-plan.md")
-    expect(p).toContain("strategist_plan_path")
-    expect(p).toContain("strategist_planned_at")
+    expect(p).toContain("Mitigation-aware")
+    expect(p).toContain("Canary")
+    expect(p).toContain("PIE")
+    expect(p).toContain("NX")
   })
 
-  test("prompt specifies incremental proof principle", () => {
+  test("prompt enforces one primitive per invocation", () => {
     const agent = createOmpStrategistAgent("test-model")
     const p = agent.prompt ?? ""
-    expect(p).toContain("Incremental proof")
-    expect(p).toContain("one thing")
+    expect(p).toContain("One primitive per invocation")
+    expect(p).toContain("Orchestrator manages")
   })
 
-  test("prompt mentions process() and remote() execution modes", () => {
+  test("prompt does not write state", () => {
     const agent = createOmpStrategistAgent("test-model")
     const p = agent.prompt ?? ""
-    expect(p).toContain("process()")
-    expect(p).toContain("remote()")
-    expect(p).toContain("Docker")
+    expect(p).toContain("DO NOT: call `omp_patch_state`")
   })
 })

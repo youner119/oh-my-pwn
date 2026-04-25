@@ -18,6 +18,10 @@
    블록을 append.
 4. **Agent는 state file을 직접 쓰지 않음.** 반드시 `omp_read_state` /
    `omp_patch_state` / `omp_append_journal` tool 경유.
+5. **병렬 환경에서 Orchestrator가 sole writer.** 병렬 실행되는
+   StrategyAgent/Exploiter는 `omp_patch_state`를 호출하지 않고 결과만
+   반환. Orchestrator가 수집 후 순차적으로 state에 반영. 동시 쓰기
+   충돌 방지. (`omp_read_state`로 읽기는 가능.)
 
 ---
 
@@ -40,7 +44,7 @@
     │   └── reverser-research.ko.md ← Reverser 한국어 연구 보고서
     ├── logs/                     ← 빌드 / 실행 로그
     │   └── docker-build-*.log
-    └── exploit/                  ← (future) Exploiter pwntools scripts
+    └── exploit/                  ← Exploiter pwntools scripts (병렬 시 candidate별 서브디렉토리)
 ```
 
 각 서브디렉토리는 T02 `initializeOmpDir`가 load 시 자동으로 생성합니다.
@@ -99,6 +103,10 @@
 | `vuln_candidates` | Candidate 배열. 각 항목: id, primitive, location, confidence, rationale, libc_range |
 | `vuln_candidates[].verified` | Exploiter가 검증 완료 여부 (boolean) |
 | `vuln_candidates[].verification_result` | "confirmed" / "disproved" / "inconclusive" |
+| `vuln_candidates[].poc_script_path` | **(parallel model)** verified primitive를 증명하는 PoC script 절대경로. Orchestrator가 COMBINE SA에게 지식 전달에 사용. |
+| `vuln_candidates[].gives` | **(parallel model)** 이 primitive가 제공하는 것 (예: `["libc_base", "rip_control"]`). COMBINE 가능성 판단에 사용. |
+| `vuln_candidates[].needs` | **(parallel model)** 이 primitive가 전제하는 것 (예: `["canary"]`). COMBINE 순서 결정에 사용. |
+| `vuln_candidates[].combined_from` | **(parallel model)** COMBINE으로 생성된 경우 원본 candidate ID 목록. |
 | `vulnhunter_analysis_path` | `vulnhunter-analysis.md` 절대경로 |
 | `vulnhunter_analyzed_at` | ISO timestamp |
 
@@ -124,8 +132,14 @@
 
 | 필드 | 설명 |
 |---|---|
-| `leaks` | Leak ledger — exploitation 중 확보한 주소 (name, value, stage, discovered_at) |
+| `leaks` | Leak ledger — exploitation 중 확보한 주소 (name, value, stage, discovered_at). **주의: ASLR으로 실행마다 달라지므로 재실행에 재사용 금지. Human-readable 참고용.** |
 | `corrections` | User correction audit log (T20) |
+
+> **PoC code as knowledge transfer (parallel model):** Leak 값(libc_base,
+> canary 등)은 ASLR로 실행마다 달라져서 state에 저장해도 재사용 불가.
+> 대신 `poc_script_path`가 지식 단위 — leak을 획득하는 코드가 다음 라운드
+> SA에게 전달된다. COMBINE SA는 source PoC scripts를 파일로 읽어 leak
+> 획득 로직을 단일 `io = process()` 연결에 합성한다.
 
 **stage_map.yaml은 폐지됨.** Stages는 StrategyAgent가 동적으로 생성.
 `autonomous_stage_rate`는 StrategyAgent 생성 stages 기준으로 계산.
@@ -310,9 +324,11 @@ timestamped 파일로 저장. 빌드 실패 시 사용자가 이 로그를 직�
 | 주체 | 쓸 수 있는 것 | 금지 |
 |---|---|---|
 | **library** (loader, envsetup) | `state.json` (`saveChallengeState`), `journal.md` (`appendJournalSection`), `artifacts/*` | 직접 사용자 입력 읽기 |
-| **agent** (orchestrator, reverser) | `omp_patch_state` / `omp_append_journal` tool 경유만 | `write` / `edit` tool로 state.json / journal.md 직접 수정 |
+| **agent (Orchestrator)** | `omp_patch_state` / `omp_append_journal` tool 경유. **병렬 환경의 sole writer** | `write` / `edit` tool로 state.json / journal.md 직접 수정 |
+| **agent (Reverser, VulnHunter)** | `omp_patch_state` / `omp_append_journal` tool 경유 (순차 실행 시) | state.json 직접 쓰기 |
+| **agent (SA, Exploiter — 병렬)** | `omp_read_state`로 읽기만. 결과는 session 출력으로 반환 | `omp_patch_state` / `omp_append_journal` 호출 금지 (sole writer 위반) |
 | **agent (Reverser)** | `write` tool로 `artifacts/reverser-*.md` 생성 | `state.json` / `journal.md` 직접 쓰기 |
-| **사용자** | prompt 채널로 agent에게 correction 지시 | 파일 직접 수정 (기술적으로 가능하지만 agent는 그걸 재파싱하지 않음) |
+| **사용자** | prompt 채널로 agent에게 correction 지시 | 파일 직접 수정 |
 | **`omp_patch_state`** | `state.json` 부분 필드 (Zod validated) | `challenge_dir` / `schema_version` / `binary_path` — 핵심 identity |
 
 **protected fields:** `omp_patch_state`는 patch 객체에서 `challenge_dir`,

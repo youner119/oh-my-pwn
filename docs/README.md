@@ -14,7 +14,7 @@
 Dockerfile 한 쌍만 있으면 다음 파이프라인을 agent들이 순차적으로 실행합니다:
 
 ```
-Load → EnvSetup → Reverse → VulnHunt → [Strategy ↔ Exploit loop] → Flag
+Load → EnvSetup → Reverse → VulnHunt (ensemble) → [Strategy ↔ Exploit (parallel)] → Flag
 ```
 
 각 단계는 전용 agent가 담당하며, 상태는 challenge 폴더 내부의 `.omp/`에
@@ -22,13 +22,24 @@ persistent하게 저장됩니다. 사람은 언제든지 **prompt 채널**로 �
 잘못된 판단을 교정할 수 있습니다 (`journal.md`는 read-only, 수정은
 agent에게 말로).
 
-**Exploit pipeline (3-agent model, 2026-04-17 redesign):**
-- **VulnHunter** — bug finder. Reverser output에서 취약점 후보 발견
-- **StrategyAgent** — exploit designer. 후보를 받아 incremental proof plan 설계
-- **Exploiter** — executor + verifier (통합). Script 작성 → 실행 → pwno-mcp로 관찰 → 판정
+**Exploit pipeline (3-agent model, 2026-04-17 redesign, parallel orchestration 2026-04-25):**
+- **VulnHunter** — bug finder. Reverser output에서 취약점 후보 발견.
+  ensemble 병렬 분석, Orchestrator가 merge/dedup
+- **StrategyAgent** — exploit designer. 두 가지 task type:
+  - **VERIFY**: 단일 primitive를 증명하는 PoC script 작성 + 실행. 성공 시 `poc_script_path` + `gives` 반환.
+  - **COMBINE**: verified primitives를 합산. source PoC scripts의 leak **logic(코드)**을 합성하여 단일 connection exploit 완성.
+- **Exploiter** — executor + verifier (통합). Script 작성 → 실행 → pwno-mcp로 관찰 → 판정.
+  SA가 직접 spawn. 단일 pwno-mcp container, session_id로 격리.
+
+Phase 2는 **반복 라운드 모델**: 각 라운드에서 SA들이 병렬로 VERIFY/COMBINE 실행.
+`state.json`이 shared blackboard — verified primitives (poc_script_path, gives, needs)가
+라운드 간에 누적되며 다음 라운드 SA가 참조. Orchestrator가 임의 SA의 flag 획득 시
+나머지 즉시 취소 (early-exit). **Leak 값은 저장 안 함** (ASLR으로 무의미) —
+PoC code가 knowledge transfer 메커니즘.
 
 실패 시 staged escalation: Exploiter → StrategyAgent 재설계 → VulnHunter
-다음 candidate → 전체 소진 시 사용자 개입.
+다음 candidate → 전체 소진 시 사용자 개입. Cascading: 확인된 취약점에서
+파생 primitive 발견 + Exploiter 부수 발견 → 새 candidate로 재진입.
 
 ### 핵심 설계 원칙
 
@@ -44,6 +55,17 @@ agent에게 말로).
 - **Incremental proof.** 각 exploit step은 최소 단위만 증명. "bof 존재 확인
   → ret offset 확인 → ROP chain 동작 확인 → shell". 한 번에 monolithic
   exploit을 작성하지 않고, 단계별로 검증하며 쌓아감.
+- **Parallel-first with ensemble consensus.** VulnHunter는 ensemble로
+  병렬 분석하여 합의 기반 candidate list 생성. StrategyAgent는 반복 라운드
+  모델로 병렬 실행. Orchestrator만 state를 쓰는 sole-writer 패턴으로 동시
+  쓰기 충돌 회피.
+- **Shared blackboard.** `state.json`이 라운드 간 공유 blackboard.
+  verified primitive의 `poc_script_path` / `gives` / `needs` 필드가
+  다음 라운드 SA에게 노출되어 COMBINE 전략 수립에 활용.
+- **PoC code as knowledge transfer.** Leak 값(libc_base, canary 등)은
+  ASLR으로 실행마다 달라지므로 저장 안 함. 대신 leak을 **획득하는 코드**
+  (PoC script)를 지식 단위로 관리. COMBINE SA는 source PoC를 읽어 단일
+  connection으로 합성.
 - **역할 분리로 실패 귀인 명확화.** VulnHunter 틀림 = 잘못된 candidate,
   StrategyAgent 틀림 = 잘못된 plan, Exploiter 틀림 = 잘못된 script.
 - **Neutrality discipline.** Reverser는 "취약점 같다"는 판단을 하지 않음.
@@ -108,7 +130,7 @@ omp
    `state.json` (ChallengeState Zod schema), `journal.md` (append-only),
    `artifacts/` (reverser-analysis, research reports, libc/ld, patched
    binary). 상태 mutation 원칙.
-4. **[tools.md](tools.md)** — 현재 7개 `omp_*` tool의 역할과 시그니처.
+4. **[tools.md](tools.md)** — 현재 10개 `omp_*` tool의 역할과 시그니처.
    왜 tool로 뽑았는지 (deterministic ops는 LLM이 아닌 library).
 5. **[templates.md](templates.md)** — 템플릿 시스템. Reverser research
    report가 어떻게 template 파일 + tool을 통해 생성되는지. 향후
@@ -125,6 +147,9 @@ omp
   research reports / Ghidra setup 결정 과정).
 - **`.omc/state/current-task.md`** — 세션 간 task 연속성의 single source
   of truth. 완료/진행중/대기 task 전부 여기에.
+- **`.omc/specs/deep-interview-parallel-orchestration.md`** — 병렬
+  오케스트레이션 파이프라인 재설계 spec (VH ensemble, 병렬 SA+Exploiter,
+  cascading, sole-writer 패턴).
 - **`research.md`** — OmO 아키텍처 분석 (포팅 시 참고).
 - **`CLAUDE.md`** — Claude Code 세션 규칙 (이 repo에 들어왔을 때 반드시
   먼저 읽을 파일).

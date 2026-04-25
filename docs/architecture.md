@@ -101,7 +101,7 @@ config: async (cfg) => {
   `OMP_PWNO_MCP_DISABLED=1`로 opt-out. Exploiter agent가 Docker container를
   직접 시작/종료.
 
-### 2. `tool` map — OmP 전용 tool 7개 등록
+### 2. `tool` map — OmP 전용 tool 11개 등록
 
 ```ts
 tool: {
@@ -112,12 +112,22 @@ tool: {
   omp_run_envsetup: ompRunEnvsetupTool,
   omp_get_template: ompGetTemplateTool,
   omp_verify_template_output: ompVerifyTemplateOutputTool,
+  // 병렬 인프라 tool (M5):
+  omp_task: ompTaskTool,                         // 병렬 sub-agent spawn
+  omp_background_output: ompBackgroundOutputTool, // task 결과 조회
+  omp_pwno_container: ompPwnoContainerTool,       // pwno-mcp container lifecycle
 }
 ```
 
 이 tool들은 **session 레벨**로 등록됩니다 — 즉 모든 agent가 접근 가능.
 Per-agent tool 제한은 T18 Orchestrator 구현 시 `session.prompt tools`
 파라미터로 처리 예정 (현재는 freedom > safety).
+
+> **병렬 인프라 tool (계획 중):** OmO의 `delegate-task` tool 패턴을 포팅하여
+> Orchestrator가 병렬로 sub-agent를 spawn하는 `task` tool + background output
+> 조회 tool을 추가 예정. 이 tool들은 `session.create(parentID)` +
+> `session.promptAsync()` API 기반으로 동작.
+> Spec: `.omc/specs/deep-interview-parallel-orchestration.md`
 
 각 tool의 상세는 [tools.md](tools.md) 참조.
 
@@ -169,25 +179,83 @@ opencode (omp alias, XDG_CONFIG_HOME=~/.config/omp)
   ↓ file:// 로 dist/plugin.js 로드
   ↓ OmpPlugin() 호출
   ↓
-  ├── config hook → cfg.agent에 omp-orchestrator/omp-reverser 주입
-  │                 cfg.mcp에 ghidra (bridge_mcp_ghidra.py) 등록
+  ├── config hook → cfg.agent에 5 agent 주입
+  │                 cfg.mcp에 ghidra + pwno-mcp 등록
   │
-  └── tool map → 7개 omp_* tool을 session 레벨로 노출
+  └── tool map → 10개 omp_* tool + 병렬 인프라 tool을 session 레벨로 노출
   ↓
 TUI agent picker → 사용자가 omp-orchestrator 선택
   ↓
-Orchestrator agent 시작 (system prompt = definitions.ts의 ompAgentConfigs["omp-orchestrator"].prompt)
+Orchestrator agent 시작
   ↓
-orchestrator가 tool 호출 → omp_load_challenge → omp_run_envsetup → ...
+Stage 1: Load + EnvSetup + Reverse (순차)
   ↓
-orchestrator가 sub-agent delegation → omp-reverser 실행
+Stage 2: VulnHunter ensemble (병렬)
+  ├─ VH-1 ──┐
+  ├─ VH-2 ──┼→ Orchestrator merge/dedup → candidate list → state 기록
+  └─ VH-N ──┘
   ↓
-reverser가 ghidra MCP 호출 + omp_* tool 호출 → 작업 산출물 생성
+Stage 3: Strategy+Exploit (iterative rounds, state.json = blackboard)
+  Round 1:
+  ├─ SA-1 (VERIFY A) → Exploiter-1 (session_id=1) ──┐
+  ├─ SA-2 (VERIFY B) → Exploiter-2 (session_id=2) ──┼→ Orchestrator 수집 → state 기록
+  └─ SA-3 (VERIFY C) → Exploiter-3 (session_id=3) ──┘
+  모두 동일한 pwno-mcp container (port 5500)
+  Round N:
+  └─ SA-N (COMBINE A+B) → Exploiter-N (session_id=N) → flag?
+  * 임의 SA 성공 시 early-exit (나머지 취소)
+  ↓
+Stage 4: Cascading (조건부 재진입) 또는 종료
   ↓
 <challenge-dir>/.omp/ 내부로 state/journal/artifacts 저장
   ↓
 사용자가 journal.md / artifacts/ 읽고 판단, 필요하면 prompt로 correction
 ```
+
+---
+
+## 병렬 실행 아키텍처
+
+> Spec: `.omc/specs/deep-interview-parallel-orchestration.md`
+
+OmP의 병렬 agent 실행은 opencode 내장 기능이 아닌 **OmO(oh-my-openagent)의
+자체 인프라 패턴을 포팅**해서 구현합니다.
+
+### 메커니즘
+
+```
+Orchestrator (LLM)
+  ├─ task(agent="omp-vulnhunter", run_in_background=true) → task_id_1
+  ├─ task(agent="omp-vulnhunter", run_in_background=true) → task_id_2
+  └─ task(agent="omp-vulnhunter", run_in_background=true) → task_id_3
+      ↑ 한 턴에 여러 개 호출 → 동시 실행
+```
+
+내부적으로:
+1. `session.create({ parentID: orchestratorSessionID })` — 자식 세션 생성
+2. `session.promptAsync({ agent: "omp-vulnhunter", parts: [prompt] })` — 비동기 실행
+3. BackgroundManager가 polling으로 완료 감지
+4. 완료 시 parent session에 notification 주입
+5. Orchestrator가 `background_output(task_id)` 호출로 결과 조회
+
+### Sole Writer 패턴
+
+병렬 agent들의 state 동시 쓰기 충돌 방지:
+- SA/Exploiter는 `omp_patch_state` **호출 금지** — 결과만 반환
+- Orchestrator가 결과를 수집하여 **순차적으로** state 기록
+- SA/Exploiter는 `omp_read_state`로 읽기만 가능
+
+### Single pwno-mcp Container + session_id
+
+모든 Exploiter 인스턴스가 **1개 Docker container를 공유**하며 session_id로 격리:
+```
+Exploiter-1 → pwno-mcp container (session_id=1)  ┐
+Exploiter-2 → pwno-mcp container (session_id=2)  ├─ 동일 container, 포트 5500
+Exploiter-3 → pwno-mcp container (session_id=3)  ┘
+```
+pwno-mcp가 session_id별로 GDB 프로세스를 격리 관리 (네이티브 multi-session).
+ContainerManager가 단일 container 시작/종료 + session_id 할당을 관리.
+port 분리 불필요.
 
 ---
 
@@ -313,7 +381,7 @@ one-shot 스크립트입니다. Repo 위치가 바뀌었거나 새 머신에서 
 | `src/agents/definitions.ts` | Agent registry (`ompAgentConfigs`). |
 | `src/agents/omp-orchestrator.ts` | Orchestrator agent factory + prompt. |
 | `src/agents/omp-reverser.ts` | Reverser agent factory + prompt. |
-| `src/tools/*.ts` | 7개 OmP tool 구현. |
+| `src/tools/*.ts` | 11개 OmP tool 구현. |
 | `src/templates/*.ts` | Agent가 tool로 로드하는 템플릿 string. |
 | `scripts/setup-omp.sh` | 머신 세팅 one-shot 스크립트. |
 | `~/.config/omp/opencode/opencode.json` | 플러그인 등록 파일 (사용자 config). |

@@ -110,7 +110,7 @@ cd src && bun test
 (repo 루트에서 `bun test`가 간혹 segfault로 터지는 이슈가 있어서 대안.
 원인은 bun 내부 bug로 추정, 영구 fix 전까지 `cd src` workaround 유효.)
 
-현재 테스트 수: **199 passed / 0 failed** (2026-04-15 기준). 테스트 파일은
+현재 테스트 수: **282 passed / 0 failed** (2026-04-25 기준). 테스트 파일은
 source 파일과 co-located (`src/loader/load-challenge-folder.test.ts` 등).
 
 ### 부분 실행
@@ -252,7 +252,7 @@ oh-my-pwn/
 │   │   ├── omp-exploiter.ts     ← Exploiter factory + prompt (T16)
 │   │   └── *.test.ts
 │   ├── tools/
-│   │   ├── index.ts              ← 7 tool re-exports
+│   │   ├── index.ts              ← 10 tool re-exports
 │   │   ├── omp-load-challenge.ts
 │   │   ├── omp-run-envsetup.ts
 │   │   ├── omp-read-state.ts
@@ -296,6 +296,11 @@ oh-my-pwn/
 │   │   ├── connection.ts         ← GUI probe + headless fallback
 │   │   ├── headless.ts
 │   │   └── *.test.ts
+│   ├── orchestration/            ← (계획) 병렬 인프라 (OmO 포팅)
+│   │   ├── task-tool.ts          ← delegate-task tool (병렬 agent spawn)
+│   │   ├── background-manager.ts ← session polling + completion notification
+│   │   ├── concurrency.ts        ← 모델별 동시 실행 제한
+│   │   └── container-manager.ts  ← pwno-mcp Docker container lifecycle
 │   ├── llm/                      ← (reserved, 현재 비어 있음)
 │   └── cli/                      ← (reserved, CLI mode future)
 ├── dist/
@@ -326,7 +331,8 @@ oh-my-pwn/
 │   ├── specs/
 │   │   ├── deep-interview-oh-my-pwn.md           ← 원본 요구사항
 │   │   ├── deep-interview-reverser-redesign.md   ← Reverser 재설계
-│   │   └── deep-interview-exploit-pipeline.md    ← Exploit pipeline redesign (3-agent)
+│   │   ├── deep-interview-exploit-pipeline.md    ← Exploit pipeline redesign (3-agent)
+│   │   └── deep-interview-parallel-orchestration.md  ← 병렬 오케스트레이션 재설계
 │   └── research/
 │       └── reverser-future-ideas.md              ← post-MVP 아이디어
 ├── reference/                    ← (gitignored) OmO clone — 패턴 참조용
@@ -484,7 +490,14 @@ MVP 단계라 CI 파이프라인이 아직 설정되지 않았습니다. 개인 
   별도 tool 불필요). T14 StrategyAgent (verify + combine, retry 3회) +
   T16 Exploiter (pwntools + pwno-mcp Docker gdb 관찰, process()/remote() 두 모드) +
   T15/T17 gate 통과. 248 tests, plugin 161KB.
-- ▶ **M5 Orchestrator + Loop Integration** — T18~T21 진행 중
+- ▶ **M5 Orchestrator + Parallel Pipeline** — T18~T21 진행 중.
+  병렬 오케스트레이션 재설계: iterative round model, state.json blackboard,
+  SA VERIFY/COMBINE task types, single pwno-mcp container + session_id,
+  early-exit, PoC code as knowledge transfer.
+  OmO 인프라 포팅 (omp_task, omp_background_output, omp_pwno_container tools,
+  BackgroundManager, ConcurrencyManager).
+  Spec: `.omc/specs/deep-interview-parallel-orchestration.md`
+  282 tests, plugin 161KB.
 - ⏸ **M6 Benchmark harness + metric** — T22~T24 대기 (MVP 완료 지점)
 
 각 milestone의 끝에는 **User test gate** 가 있어서 사용자가 직접 품질
