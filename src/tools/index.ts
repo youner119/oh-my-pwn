@@ -5,4 +5,4 @@ export { ompRunEnvsetupTool } from "./omp-run-envsetup"
 export { ompLoadChallengeTool } from "./omp-load-challenge"
 export { ompGetTemplateTool } from "./omp-get-template"
 export { ompVerifyTemplateOutputTool } from "./omp-verify-template-output"
-export { ompSaveDecompiledTool } from "./omp-save-decompiled"
+// omp_save_decompiled removed — BN MCP tool `decompile_to_file` replaces it.

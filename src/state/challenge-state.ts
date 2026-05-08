@@ -288,8 +288,8 @@ export const ChallengeStateSchema = z.object({
   reverser_research_ko_path: z.string().optional(),
   /**
    * Directory containing raw decompiled pseudocode files saved by
-   * `omp_save_decompiled`. Path: `<challenge-dir>/.omp/artifacts/pseudocode/`.
-   * Each file is `<function_name>.txt` with the full Ghidra/BN output —
+   * BN MCP `decompile_to_file` tool. Path: `<challenge-dir>/.omp/artifacts/pseudocode/`.
+   * Each file is `<function_name>.txt` with the full BN HLIL output —
    * no LLM intermediation. VulnHunter reads these for detailed analysis
    * beyond the Reverser summary.
    */

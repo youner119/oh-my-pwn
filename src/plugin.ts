@@ -26,7 +26,6 @@ import {
   ompLoadChallengeTool,
   ompGetTemplateTool,
   ompVerifyTemplateOutputTool,
-  ompSaveDecompiledTool,
 } from "./tools"
 import {
   BackgroundManager,
@@ -165,7 +164,7 @@ const OmpPlugin: Plugin = async (input) => {
       omp_run_envsetup: ompRunEnvsetupTool,
       omp_get_template: ompGetTemplateTool,
       omp_verify_template_output: ompVerifyTemplateOutputTool,
-      omp_save_decompiled: ompSaveDecompiledTool,
+      // omp_save_decompiled removed — use BN MCP tool `decompile_to_file` instead.
       ...(ompTaskTool ? { omp_task: ompTaskTool } : {}),
       ...(ompTaskAllTool ? { omp_task_all: ompTaskAllTool } : {}),
       ...(ompTaskPoolTool ? { omp_task_pool: ompTaskPoolTool } : {}),
