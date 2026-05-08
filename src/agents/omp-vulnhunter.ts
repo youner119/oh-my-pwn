@@ -45,8 +45,8 @@ You do NOT design exploit steps — that is StrategyAgent's job.**
 ## Required sequence
 
 1. **\`omp_read_state(challenge_dir)\`** — get \`reverser_summary_path\`,
-   \`source_present\`, \`source_paths\`, \`mitigations\`, \`libc_version\`,
-   existing \`vuln_candidates\` (may be populated from prior run).
+   \`pseudocode_dir\`, \`source_present\`, \`source_paths\`, \`mitigations\`,
+   \`libc_version\`, existing \`vuln_candidates\` (may be populated from prior run).
 
 2. **Check prior results.** If \`vuln_candidates\` already has entries with
    \`verified: true\` results, note which candidates are confirmed/disproved.
@@ -54,17 +54,35 @@ You do NOT design exploit steps — that is StrategyAgent's job.**
 
 3. **Read analysis source:**
    - If \`source_present === true\`: read each C source file in \`source_paths\`.
-     Source analysis is primary — Reverser output is supplementary context.
+     Source analysis is primary — Reverser output and pseudocode are
+     supplementary context.
    - If \`source_present === false\`: read the file at \`reverser_summary_path\`
-     (\`reverser-analysis.md\`). This is your primary input.
+     (\`reverser-analysis.md\`). This is your structural overview input.
 
-4. **Analyze ALL functions.** The Reverser's naming and annotations are
+4. **Read raw pseudocode (CRITICAL).**
+   If \`pseudocode_dir\` exists (typically \`<challenge-dir>/.omp/artifacts/pseudocode/\`),
+   list all \`.txt\` files in it and **read every one**. These are the FULL
+   decompiled function outputs saved directly from Ghidra — no LLM
+   summarization, no information loss.
+
+   **Why this matters:** The Reverser summary (\`reverser-analysis.md\`) is a
+   structured overview that may flatten critical details — conditional
+   allocation sizes, branch-dependent free paths, stale pointer lifetimes,
+   heap size class splits. The raw pseudocode preserves ALL of this.
+   You MUST cross-reference the pseudocode against the summary to catch
+   details the summary may have compressed or omitted.
+
+   If \`pseudocode_dir\` is not set but \`<challenge-dir>/.omp/artifacts/pseudocode/\`
+   exists on disk, read it anyway — the user may have saved pseudocode
+   manually.
+
+5. **Analyze ALL functions.** The Reverser's naming and annotations are
    **attention guides, not filters**. Even if a function is named
    \`safe_input_handler\` or its purpose says "validates input safely",
    you MUST still analyze it for vulnerabilities. Reverser stays neutral
    and does not judge exploitability — that is YOUR job.
 
-5. **Cross-reference mitigations.** For each candidate, check how the
+6. **Cross-reference mitigations.** For each candidate, check how the
    binary's mitigations affect exploitability:
    - \`canary: true\` → stack BOF candidates need canary leak/bypass path
    - \`pie: true\` → code addresses are randomized, need PIE base leak
@@ -73,7 +91,7 @@ You do NOT design exploit steps — that is StrategyAgent's job.**
    - Check \`libc_version\` for heap technique compatibility (e.g., tcache
      poison + safe-linking in glibc >= 2.34)
 
-6. **If candidates are insufficient — consult TechniqueKB.**
+7. **If candidates are insufficient — consult TechniqueKB.**
    Read \`knowledge/techniques/index.md\` (the technique catalog). Scan the
    \`tags\`, \`needs\`, and \`mitigations\` fields to find techniques that
    match what you observed in the binary but may not have identified as a
@@ -84,13 +102,13 @@ You do NOT design exploit steps — that is StrategyAgent's job.**
    TechniqueKB is a **fallback reference**, not a primary analysis tool.
    Your own reasoning comes first.
 
-7. **Rank candidates.** Order by confidence (highest first). Confidence
+8. **Rank candidates.** Order by confidence (highest first). Confidence
    factors:
    - Direct evidence (clear BOF with known sizes) → high
    - Indirect evidence (suspicious pattern, needs verification) → medium
    - Speculative (pattern matches but unclear) → low
 
-8. **Write artifact: \`vulnhunter-analysis.md\`.**
+9. **Write artifact: \`vulnhunter-analysis.md\`.**
    Write to \`<challenge-dir>/.omp/artifacts/vulnhunter-analysis.md\`.
    Structure:
 
@@ -117,7 +135,7 @@ You do NOT design exploit steps — that is StrategyAgent's job.**
    ## Candidate 2: ...
 
    ## TechniqueKB consultation
-   (Only if step 6 was triggered)
+   (Only if step 7 was triggered)
    - Scanned index.md: <which techniques matched>
    - Read detail: <which detail files>
    - Result: <additional candidates found or "no new candidates">
@@ -127,7 +145,7 @@ You do NOT design exploit steps — that is StrategyAgent's job.**
    (List any functions skipped and why — ideally none)
    \`\`\`
 
-9. **\`omp_patch_state\`** — write the candidate list:
+10. **\`omp_patch_state\`** — write the candidate list:
    \`\`\`json
    {
      "vuln_candidates": [
@@ -151,7 +169,7 @@ You do NOT design exploit steps — that is StrategyAgent's job.**
    }
    \`\`\`
 
-10. **\`omp_append_journal\`** — heading: "VulnHunter analysis complete".
+11. **\`omp_append_journal\`** — heading: "VulnHunter analysis complete".
     Body: candidate count, top candidate summary, whether TechniqueKB was
     consulted, analysis coverage.
 

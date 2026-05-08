@@ -91,6 +91,7 @@ export const ompSaveDecompiledTool: ToolDefinition = tool({
     return JSON.stringify({
       ok: true,
       path: outPath,
+      pseudocode_dir: outDir,
       lines: lineCount,
       function_address,
       code: body,

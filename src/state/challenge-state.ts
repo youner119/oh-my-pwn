@@ -286,6 +286,14 @@ export const ChallengeStateSchema = z.object({
    * terms kept in English per project convention.
    */
   reverser_research_ko_path: z.string().optional(),
+  /**
+   * Directory containing raw decompiled pseudocode files saved by
+   * `omp_save_decompiled`. Path: `<challenge-dir>/.omp/artifacts/pseudocode/`.
+   * Each file is `<function_name>.txt` with the full Ghidra/BN output —
+   * no LLM intermediation. VulnHunter reads these for detailed analysis
+   * beyond the Reverser summary.
+   */
+  pseudocode_dir: z.string().optional(),
   /** When the Reverser last completed analysis. */
   reverser_analyzed_at: IsoTimestampSchema.optional(),
 

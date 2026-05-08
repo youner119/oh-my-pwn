@@ -21,4 +21,5 @@ test_challenge/
 !.omc/decisions.md
 .omc/state/*
 !.omc/state/current-task.md
+!.omc/state/prev-task.md
 .omx/
