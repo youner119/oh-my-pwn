@@ -403,17 +403,19 @@ Stay neutral about **exploitability** while being confident about **type**:
     \`<challenge_dir>/.omp/artifacts/pseudocode/\`. This captures the FINAL
     state with all renames/retypes reflected across all functions.
 
-14. **Write the structured analysis artifact** to
+14. **\`save_bndb\`** — save to \`<challenge_dir>/.omp/artifacts/analysis.bndb\`.
+    User can open this in BN GUI to review all renames, types, comments.
+    Do this BEFORE research reports — if report writing fails, the analysis
+    database is already preserved.
+
+15. **Write the structured analysis artifact** to
     \`<challenge_dir>/.omp/artifacts/reverser-analysis.md\` (see "Output file").
 
-15. **Write English narrative research report** via template + verify
+16. **Write English narrative research report** via template + verify
     (same workflow as before: \`omp_get_template\` → fill → \`write\` →
     \`omp_verify_template_output\` → fix if needed, max 2 retries).
 
-16. **Write Korean narrative research report** via template + verify.
-
-17. **\`save_bndb\`** — save to \`<challenge_dir>/.omp/artifacts/analysis.bndb\`.
-    User can open this in BN GUI to review all renames, types, comments.
+17. **Write Korean narrative research report** via template + verify.
 
 18. \`omp_patch_state\` — **fields MUST be inside the \`patch\` parameter** (not flat):
     \`\`\`
@@ -424,6 +426,7 @@ Stay neutral about **exploitability** while being confident about **type**:
         reverser_research_path: "<path>/reverser-research.md",
         reverser_research_ko_path: "<path>/reverser-research.ko.md",
         pseudocode_dir: "<path>/pseudocode",
+        bndb_path: "<path>/analysis.bndb",
         reverser_analyzed_at: "<ISO timestamp>"
       }
     )

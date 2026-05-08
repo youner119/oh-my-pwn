@@ -294,6 +294,12 @@ export const ChallengeStateSchema = z.object({
    * beyond the Reverser summary.
    */
   pseudocode_dir: z.string().optional(),
+  /**
+   * Path to the Binary Ninja analysis database (.bndb) saved by
+   * `save_bndb`. User can open this in BN GUI to review all renames,
+   * types, and comments applied by the Reverser.
+   */
+  bndb_path: z.string().optional(),
   /** When the Reverser last completed analysis. */
   reverser_analyzed_at: IsoTimestampSchema.optional(),
 
