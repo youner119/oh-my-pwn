@@ -110,26 +110,26 @@ const OmpPlugin: Plugin = async (input) => {
       Object.assign(cfg.agent, ompAgentConfigs)
 
       // ── mcp ───────────────────────────────────────────────────────────────
-      // ghidra-mcp: bridge_mcp_ghidra.py를 stdio subprocess로 spawn.
-      // Ghidra GUI를 열고 Tools > GhidraMCP > Start server (port 8089) 후 사용.
+      // binary-ninja-mcp: bridge (Node.js stdio) → BN plugin HTTP (port 9009).
+      // BN GUI를 열면 MCP plugin이 자동 시작. POST /load로 바이너리 로드.
       // per-agent tool 제한은 T18 Orchestrator 구현 시 session.prompt tools 파라미터로 처리.
-      const bridgePath = process.env["OMP_GHIDRA_BRIDGE_PATH"]
-      if (bridgePath !== undefined && bridgePath !== "" && existsSync(bridgePath)) {
+      const bnBridgePath = process.env["OMP_BN_BRIDGE_PATH"]
+      const bnPort = process.env["OMP_BN_PORT"] || "9009"
+      if (bnBridgePath !== undefined && bnBridgePath !== "" && existsSync(bnBridgePath)) {
         cfg.mcp ??= {}
-        ;(cfg.mcp as Record<string, unknown>)["ghidra"] = {
+        ;(cfg.mcp as Record<string, unknown>)["binja"] = {
           type: "local",
-          command: ["python3", bridgePath],
+          command: ["node", bnBridgePath, "--host", "localhost", "--port", bnPort],
           enabled: true,
         }
       } else {
         const reason =
-          bridgePath === undefined || bridgePath === ""
-            ? "OMP_GHIDRA_BRIDGE_PATH is not set"
-            : `OMP_GHIDRA_BRIDGE_PATH points to missing file: ${bridgePath}`
+          bnBridgePath === undefined || bnBridgePath === ""
+            ? "OMP_BN_BRIDGE_PATH is not set"
+            : `OMP_BN_BRIDGE_PATH points to missing file: ${bnBridgePath}`
         process.stderr.write(
-          `[omp] ghidra MCP not registered — ${reason}. ` +
-            `Run ./scripts/setup-omp.sh (it auto-detects ~/Tools/ghidra_*_PUBLIC/bridge_mcp_ghidra.py, ` +
-            `prompts if missing, and bakes the path into your omp alias).\n`,
+          `[omp] binja MCP not registered — ${reason}. ` +
+            `Set OMP_BN_BRIDGE_PATH to ~/Tools/binary_ninja_mcp/bridge/dist/index.js\n`,
         )
       }
 
