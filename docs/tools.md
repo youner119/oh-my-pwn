@@ -1,4 +1,4 @@
-# Tools — OmP가 제공하는 `omp_*` tool 11개
+# Tools — OmP가 제공하는 `omp_*` tool 10개
 
 이 문서는 OmP agent들이 사용하는 **tool 목록**과 각 tool의 **역할 / 시그니처 /
 에러 케이스**를 정리합니다.
@@ -26,7 +26,7 @@ tool로 만들지 않고 agent prompt에서 자연어로 처리합니다.
 
 ---
 
-## 현재 tool 11개 — 한 눈에
+## 현재 tool 10개 — 한 눈에
 
 | Tool | 역할 | Library-backed? | 읽기/쓰기 |
 |---|---|---|---|
@@ -37,13 +37,12 @@ tool로 만들지 않고 agent prompt에서 자연어로 처리합니다.
 | `omp_append_journal` | `journal.md` append | Yes | 쓰기 |
 | `omp_get_template` | 템플릿 문자열 로드 | Yes (src/templates) | 읽기 |
 | `omp_verify_template_output` | 템플릿 작성물 구조 검증 | Yes | 읽기 (idempotent) |
-| `omp_save_decompiled` | Ghidra HTTP API로 decompile_function 호출 → pseudocode를 LLM 경유 없이 직접 파일로 저장. Reverser가 사용. | No (직접 HTTP) | 쓰기 |
 | `omp_task` | 병렬 sub-agent spawn. `run_in_background=true`로 fire-and-forget 실행. task_id 반환. OmO delegate-task 포팅. | Yes (orchestration/) | 쓰기 |
 | `omp_background_output` | task_id로 완료된 background task 결과 조회. Orchestrator가 라운드 결과 수집에 사용. | Yes (orchestration/) | 읽기 |
 | `omp_pwno_container` | pwno-mcp Docker container lifecycle 관리 (start/stop) + session_id 할당. Exploiter가 사용. | Yes (orchestration/) | 쓰기 |
 
 모두 `src/tools/*.ts`에 구현돼 있고 `src/plugin.ts`에서 session 레벨로
-등록됩니다. 원래 7개에서 M5 병렬 인프라 구현으로 3개, pseudocode 저장용 1개 추가됨.
+등록됩니다. 원래 7개에서 M5 병렬 인프라 구현으로 3개 추가됨 (BN 전환으로 omp_save_decompiled 제거).
 
 ---
 
@@ -253,7 +252,7 @@ ISO timestamp는 tool이 자동 주입 (agent가 위조 불가).
 - Reverser 분석 완료 후
 - User correction 발생 시 (heading: "User correction")
 - 실패 케이스: "Reverser skipped — cached" / "Reverser self-review failed at Pass A"
-- Ghidra 셋업 실패: "Ghidra 'omp' project not running"
+- BN MCP 연결 실패: "BN MCP not reachable on port 9009"
 
 **주의:** Agent는 절대 `write` / `edit` tool로 `journal.md`를 직접 건드리지
 않음. 이 tool 경유만.
@@ -402,60 +401,6 @@ kind에 맞는 config (다른 forbidden words — VulnHunter는 exploit 언어 *
 
 ---
 
-## `omp_save_decompiled`
-
-**용도:** Ghidra HTTP API에 직접 연결해서 `decompile_function`을 호출하고,
-결과 pseudocode를 LLM 출력을 경유하지 않고 파일로 직접 저장. LLM이 긴
-pseudocode를 `...`으로 축약하는 문제를 방지.
-
-**Arguments:**
-```ts
-{
-  challenge_dir: string        // 절대경로
-  function_address: string     // hex 주소 (예: "0x00152700")
-  filename: string             // 확장자 없는 파일명 (예: "afterimage_main")
-}
-```
-
-**출력 경로:** `<challenge_dir>/.omp/artifacts/pseudocode/<filename>.txt`
-
-**성공 응답:**
-```json
-{
-  "ok": true,
-  "path": "/tmp/ctf/chall1/.omp/artifacts/pseudocode/afterimage_main.txt",
-  "lines": 782,
-  "function_address": "0x00152700",
-  "code": "/* full pseudocode ... */"
-}
-```
-
-`code` 필드에 전체 pseudocode가 포함되어 반환됩니다. Reverser는 이
-응답의 `code`를 분석용(purpose paragraph, stack frame, key annotations)으로
-사용하고, 파일은 이미 직접 저장되었으므로 `write` tool로 따로 쓸 필요 없음.
-
-**데이터 흐름:**
-```
-Ghidra HTTP API (port 8089) → omp_save_decompiled tool → 파일 직접 저장
-                                                        → LLM에 code 반환 (분석용)
-```
-LLM 출력을 경유하지 않으므로 truncation 불가능.
-
-**에러 케이스:**
-- `connection_failed` — Ghidra GUI가 port 8089에서 응답하지 않음
-- `decompile_failed` — Ghidra가 해당 주소의 함수를 찾지 못함
-- `empty_result` — decompile 결과가 비어있음
-
-**환경변수:** `OMP_GHIDRA_GUI_PORT` (기본 8089)
-
-**사용 맥락:** Reverser Analysis strategy step 7. `decompile_function` +
-`write` 조합을 대체. Reverser 프롬프트에 "Do NOT call `decompile_function` +
-`write` manually for step 7" 명시.
-
-**파일:** `src/tools/omp-save-decompiled.ts`
-
----
-
 ## Tool 추가하려면?
 
 1. **`src/tools/<tool-name>.ts` 생성** — `tool()` helper로 `ToolDefinition`
@@ -505,7 +450,7 @@ export const ompSomethingTool: ToolDefinition = tool({
 
 | 파일 | 역할 |
 |---|---|
-| `src/tools/index.ts` | 11개 tool re-export |
+| `src/tools/index.ts` | 10개 tool re-export |
 | `src/tools/omp-*.ts` | 각 tool 구현 (thin wrapper over library) |
 | `src/plugin.ts` | tool map 등록 (session 레벨) |
 | `src/loader/` | T03 library (load_challenge backed) |

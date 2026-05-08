@@ -99,7 +99,7 @@ PoC code가 knowledge transfer 메커니즘.
 
 # 이 스크립트가 하는 일:
 #   - dist/plugin.js 빌드
-#   - ~/Tools/ghidra_*_PUBLIC/bridge_mcp_ghidra.py 자동 탐지 (또는 interactive prompt)
+#   - ~/Tools/binary_ninja_mcp/dist/index.js 자동 탐지 (또는 interactive prompt)
 #   - ~/.config/omp/opencode/opencode.json 생성 (file:// 경로로 플러그인 등록)
 #   - ~/.zshrc에 alias omp 추가
 #   - opencode debug config로 플러그인 로드 확인
@@ -107,7 +107,8 @@ PoC code가 knowledge transfer 메커니즘.
 # 2. 새 쉘 시작
 source ~/.zshrc
 
-# 3. Ghidra GUI 실행 + "omp"라는 이름의 project 생성/열기 + MCP server 시작 (port 8089)
+# 3. Binary Ninja 실행 + BN HTTP plugin 활성화 (port 9009)
+#    BN MCP bridge 시작: cd ~/Tools/binary_ninja_mcp && node dist/index.js
 
 # 4. OmP 전용 opencode TUI 시작
 omp
@@ -144,7 +145,7 @@ omp
   spec (deep-interview 6라운드 transcript, ontology, acceptance criteria).
 - **`.omc/specs/deep-interview-reverser-redesign.md`** — Reverser agent
   재설계 spec (추가 6라운드 interview, type mutation / stack frame /
-  research reports / Ghidra setup 결정 과정).
+  research reports / BN MCP 연동 결정 과정).
 - **`.omc/state/current-task.md`** — 세션 간 task 연속성의 single source
   of truth. 완료/진행중/대기 task 전부 여기에.
 - **`.omc/specs/deep-interview-parallel-orchestration.md`** — 병렬

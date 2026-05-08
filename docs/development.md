@@ -13,9 +13,9 @@
 |---|---|---|
 | **Bun** | ≥ 1.3 | TypeScript runtime + bundler + test runner |
 | **Docker** | ≥ 20.x | envsetup이 challenge Dockerfile을 빌드/실행 |
-| **Python** | 3.x | pwntools (exploit runtime), ghidra-mcp bridge |
+| **Python** | 3.x | pwntools (exploit runtime) |
 | **patchelf** | 0.18+ | binary의 interpreter / rpath rewrite |
-| **Ghidra** | 12.x | Reverser의 decompiler + MCP 서버 |
+| **Binary Ninja** | 최신 | Reverser의 decompiler + MCP 서버 (port 9009) |
 | **gdb** | 정상 버전 | (나중에 Exploiter 디버깅용) |
 
 ### 선택
@@ -36,13 +36,14 @@ cd /abs/path/to/oh-my-pwn
 # 2. Bun 의존성 설치
 bun install
 
-# 3. 플러그인 / alias / Ghidra bridge 탐지 한 방에 세팅
+# 3. 플러그인 / alias / BN bridge 탐지 한 방에 세팅
 ./scripts/setup-omp.sh
 
 # 4. 새 shell 열기 (alias 반영)
 exec zsh   # 또는 `source ~/.zshrc`
 
-# 5. Ghidra GUI 실행 + "omp"라는 이름의 project 열기/생성 + MCP server 시작
+# 5. Binary Ninja 실행 + binary 로드 + BN MCP plugin 활성화 (HTTP server port 9009)
+#    BN MCP bridge: cd ~/Tools/binary_ninja_mcp && node dist/index.js
 
 # 6. OmP 전용 opencode TUI 실행
 omp
@@ -110,7 +111,7 @@ cd src && bun test
 (repo 루트에서 `bun test`가 간혹 segfault로 터지는 이슈가 있어서 대안.
 원인은 bun 내부 bug로 추정, 영구 fix 전까지 `cd src` workaround 유효.)
 
-현재 테스트 수: **282 passed / 0 failed** (2026-04-25 기준). 테스트 파일은
+현재 테스트 수: **254 passed / 0 failed** (BN 전환 이후 기준). 테스트 파일은
 source 파일과 co-located (`src/loader/load-challenge-folder.test.ts` 등).
 
 ### 부분 실행
@@ -133,16 +134,15 @@ bun test -t "rename_function"
 | `src/state/` | ~22 | ChallengeState schema, io, journal, layout |
 | `src/loader/` | ~41 | challenge folder loader, binary detection |
 | `src/envsetup/` | ~74 | docker runner, ELF mitigations, glibc detect, patchelf, dockerfile parse, 통합 파이프라인 |
-| `src/ghidra/` | ~30 | MCP client, fake client, server lifecycle, connection management |
 | `src/agents/` | ~14 | agent prompt 핵심 문자열 assertion |
-| **Total** | **~199** | |
+| **Total** | **~151** | |
 
 ### 테스트 원칙
 
 - **각 library 모듈이 자기 테스트 파일을 co-host.** `src/state/io.ts` →
   `src/state/io.test.ts`
-- **DI seam 활용.** Docker runner, ghidra-mcp client는 fake implementation
-  주입 가능 → 외부 의존성 0으로 전체 파이프라인 통합 테스트 가능
+- **DI seam 활용.** Docker runner는 fake implementation 주입 가능 → 외부
+  의존성 0으로 전체 파이프라인 통합 테스트 가능
 - **Agent 테스트는 프롬프트 핵심 문자열 assertion만.** LLM 동작 자체는
   unit 테스트 불가 — 사용자가 `omp` TUI로 수동 검증
 - **Tool 단위 테스트 최소.** 대부분의 tool은 thin wrapper라 backing library
@@ -219,7 +219,7 @@ Template도 TypeScript 파일이라 같은 sync 필요.
 이 스크립트가:
 - `dist/plugin.js` 빌드
 - 현재 repo 경로로 `~/.config/omp/opencode/opencode.json` 재생성
-- `~/Tools/ghidra_*_PUBLIC/bridge_mcp_ghidra.py` 재탐지
+- `~/Tools/binary_ninja_mcp/` BN MCP bridge 경로 재탐지
 - `~/.zshrc`의 `omp` alias 갱신
 
 Dry-run 모드:
@@ -230,8 +230,8 @@ Dry-run 모드:
 옵션:
 - `--no-build` — dist/plugin.js 재사용
 - `--no-alias` — zshrc 건드리지 않음
-- `--skip-ghidra` — ghidra bridge 탐지 skip
-- `--ghidra-bridge <path>` — bridge 경로 명시
+- `--skip-bn` — BN bridge 탐지 skip
+- `--bn-bridge <path>` — bridge 경로 명시
 
 ---
 
@@ -286,15 +286,6 @@ oh-my-pwn/
 │   │   ├── glibc-detect.ts
 │   │   ├── patch-elf.ts
 │   │   ├── run-envsetup.ts       ← high-level entry
-│   │   └── *.test.ts
-│   ├── ghidra/                   ← T06 — ghidra-mcp bridge client
-│   │   ├── types.ts
-│   │   ├── errors.ts
-│   │   ├── client.ts             ← real client (MCP SDK wrapper)
-│   │   ├── fake-client.ts        ← test-only fake
-│   │   ├── server.ts             ← lifecycle helpers
-│   │   ├── connection.ts         ← GUI probe + headless fallback
-│   │   ├── headless.ts
 │   │   └── *.test.ts
 │   ├── orchestration/            ← (계획) 병렬 인프라 (OmO 포팅)
 │   │   ├── task-tool.ts          ← delegate-task tool (병렬 agent spawn)
@@ -397,7 +388,7 @@ XDG_CONFIG_HOME=$HOME/.config/omp opencode debug config 2>&1 | grep -i omp
 2. `~/.config/omp/opencode/opencode.json` 내용 확인 — `plugin` 배열의
    `file://` 경로가 실제 `dist/plugin.js`를 가리키는지
 3. `./scripts/setup-omp.sh` 재실행
-4. `stderr`에 "ghidra MCP not registered" 같은 경고가 있는지 — env var
+4. `stderr`에 "BN MCP not registered" 같은 경고가 있는지 — env var
    설정 누락일 수 있음
 
 ### 플러그인이 로드되는데 agent/tool이 안 보일 때
@@ -415,14 +406,14 @@ cd src && bun test   # src 디렉토리에서 실행하면 회피됨
 
 Bun 내부 이슈로 추정. 영구 fix 전까지 `cd src` workaround 사용.
 
-### Ghidra MCP 연결 실패
+### BN MCP 연결 실패
 
-1. Ghidra GUI 켜져 있는지
-2. Project 이름이 **정확히 `omp`** 인지 (대소문자, 특수문자)
-3. GhidraMCP plugin이 활성화되어 있고 server가 port 8089에 listening 인지
-4. `OMP_GHIDRA_BRIDGE_PATH` 환경변수가 설정되어 있는지:
+1. Binary Ninja 켜져 있는지
+2. BN HTTP plugin이 활성화되어 있고 server가 port 9009에 listening 인지
+3. BN MCP bridge가 실행 중인지 (`node ~/Tools/binary_ninja_mcp/dist/index.js`)
+4. `OMP_BN_BRIDGE_PATH` 환경변수가 설정되어 있는지:
    ```bash
-   alias omp   # 출력에 OMP_GHIDRA_BRIDGE_PATH=... 포함되어야 함
+   alias omp   # 출력에 OMP_BN_BRIDGE_PATH=... 포함되어야 함
    ```
 
 ---
@@ -481,7 +472,7 @@ MVP 단계라 CI 파이프라인이 아직 설정되지 않았습니다. 개인 
 - ✅ **M0 Bootstrap** — T00, T01 (dev env + plugin scaffold)
 - ✅ **M1 Input contract + EnvSetup** — T02~T05 (state schema, loader,
   envsetup, user test gate 통과)
-- ✅ **M2 Reverser** — T06, T07, T08 모두 완료. Ghidra setup + type mutation +
+- ✅ **M2 Reverser** — T06, T07, T08 모두 완료. BN MCP 연동 + type mutation +
   3-pass self-review + research reports + template infrastructure 구현.
   T08 user test gate 통과 (2026-04-17).
 - ✅ **M3 VulnHunter** — T09 TechniqueKB (knowledge/techniques/ 카탈로그 +
@@ -497,7 +488,7 @@ MVP 단계라 CI 파이프라인이 아직 설정되지 않았습니다. 개인 
   OmO 인프라 포팅 (omp_task, omp_background_output, omp_pwno_container tools,
   BackgroundManager, ConcurrencyManager).
   Spec: `.omc/specs/deep-interview-parallel-orchestration.md`
-  282 tests, plugin 161KB.
+  254 tests (BN 전환으로 ghidra/ 테스트 제거), plugin 161KB.
 - ⏸ **M6 Benchmark harness + metric** — T22~T24 대기 (MVP 완료 지점)
 
 각 milestone의 끝에는 **User test gate** 가 있어서 사용자가 직접 품질

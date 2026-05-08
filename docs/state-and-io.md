@@ -253,7 +253,7 @@ VulnHunter의 주 입력. 다음 섹션 포함:
   - 함수별 Purpose paragraph
   - Stack frame (rbp-relative) 서브섹션 — canary, saved_rbp, return_address
     위치 + 거리 계산
-  - Renamed pseudocode (Ghidra가 rename + type 적용 후 decompile한 결과)
+  - Renamed pseudocode (BN MCP가 rename + type 적용 후 decompile한 결과)
   - Key annotations (Line N @ 0xADDR: ... 포맷)
 - Imports / Exports / Interesting strings (flat lists, no severity)
 
@@ -314,8 +314,8 @@ timestamped 파일로 저장. 빌드 실패 시 사용자가 이 로그를 직�
 
 - `state.reverser_summary_path` 존재 + binary sha match → skip 후 cached
   summary 반환
-- 사용자가 `force: true` 넘기면 강제 재실행. Ghidra mutation은 idempotent
-  (이미 renamed 함수에 대한 rename은 덮어쓰기).
+- 사용자가 `force: true` 넘기면 강제 재실행. BN mutation은 idempotent
+  (이미 renamed 함수에 대한 rename은 덮어쓰기). BN은 `.bndb` database에 변경사항 저장.
 
 ---
 
@@ -401,7 +401,7 @@ contrarian 해결과 Round 2 refinement에서 locked됨.
 
 `state.source_present === true`인 경우:
 
-- Reverser는 **early exit** — Ghidra를 열지 않고 3개 stub artifact 생성:
+- Reverser는 **early exit** — BN MCP를 사용하지 않고 3개 stub artifact 생성:
   - `reverser-analysis.md` (source file 목록만)
   - `reverser-research.md` (source-present 설명)
   - `reverser-research.ko.md` (한국어 버전)

@@ -20,11 +20,11 @@ OmP는 이 문제를 **규칙의 유효 범위별 분리**로 해결합니다:
 **예시 — Reverser:**
 
 Cross-cutting 규칙 (Reverser system prompt에 상주):
-- Neutrality + 전체 forbidden-words list (rename 이름, Ghidra 주석, purpose
+- Neutrality + 전체 forbidden-words list (rename 이름, BN comment, purpose
   paragraph 등 모든 산출물에 적용)
 - State management tool 사용법
 - Required sequence 개요
-- Ghidra tool 사용법
+- BN MCP tool 사용법
 - Type inference 4 규칙
 - 3-pass self-review
 
@@ -163,7 +163,7 @@ function extractRequiredSectionsFromTemplate(template: string): string[] {
 - Audience: Korean-speaking pwn operator
 - Tone: 자연스러운 한국어 prose (번역체 금지)
 - Full translation (영문판 축약 금지)
-- Technical terms 영문 유지 규칙 (ghidra-mcp tool names, C/libc function
+- Technical terms 영문 유지 규칙 (BN MCP tool names, C/libc function
   names, `stack`/`heap`/`canary`/`rbp`/`RELRO`/`PIE`/`NX` 등)
 - **Korean 기술용어 번역 금지 목록:** `스택`, `힙`, `캐나리`, `카나리`,
   `버퍼` — 이들이 등장하면 verification 실패

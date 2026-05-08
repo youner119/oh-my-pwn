@@ -70,7 +70,7 @@ opencode config에 주입됩니다. 결과적으로 opencode TUI agent picker에
 ### 기본 모델
 
 현재 기본값은 `openai/gpt-5.4`. 이유:
-- OmP는 JSON 스키마 정확도가 중요 (state patch, ghidra-mcp 호출 등) — GPT-5
+- OmP는 JSON 스키마 정확도가 중요 (state patch, BN MCP 호출 등) — GPT-5
   계열은 structured output에 강함
 - Claude Opus는 창의적 판단에 좋지만 script/tool 호출 정밀도는 GPT가 비등
 - 사용자가 TUI에서 per-session model 변경 가능하므로 기본값은 "안정적"인
@@ -145,8 +145,8 @@ correction을 받아 state를 고치고 재계획.
 ### omp-reverser
 
 **역할:** Challenge binary의 **semantic program understanding**을 생성.
-Ghidra-MCP를 통해 함수/변수 rename, inline comment 주입, 타입 refinement
-(array / pointer / struct / primitive)를 적용해서 Ghidra DB에 반영하고,
+BN MCP를 통해 함수/변수 rename, inline comment 주입, 타입 refinement
+(array / pointer / struct / primitive)를 적용해서 BN DB에 반영하고,
 3개의 산출물을 `<challenge-dir>/.omp/artifacts/`에 기록:
 
 1. `reverser-analysis.md` — 구조화된 reference (function map, per-function
@@ -161,8 +161,8 @@ Ghidra-MCP를 통해 함수/변수 rename, inline comment 주입, 타입 refinem
 "프롬프트 구성 원칙" 섹션 참조.
 
 **3-pass self-review (Option E):**
-- **Pass A (mechanical):** 모든 `rename_function` / `batch_rename_variables`
-  / `batch_set_comments` 호출이 성공했는지, 모든 함수에 purpose paragraph가
+- **Pass A (mechanical):** 모든 `rename_function` / `rename_multi_variables`
+  / `set_comment` 호출이 성공했는지, 모든 함수에 purpose paragraph가
   있는지, key annotation이 있는지 점검. LLM 호출 없음.
 - **Pass B (semantic consistency):** 자기가 만든 artifact를 다시 읽고
   "purpose paragraph가 정말 pseudocode와 일치하는가?" 점검. 불일치 시
@@ -171,19 +171,21 @@ Ghidra-MCP를 통해 함수/변수 rename, inline comment 주입, 타입 refinem
   각 함수를 재annotate. cross-function facts는 허용, cross-function
   judgments는 금지 (forbidden-words 규칙 유지).
 
-**Ghidra 사전 설정 요구사항:** Reverser는 Ghidra GUI에 **정확히 `omp`라는
-이름의 project**가 열려 있어야 동작. Step 0에서 `list_instances`로 찾지
-못하면 즉시 중단하고 사용자에게 안내.
+**BN 사전 설정 요구사항:** Reverser는 Binary Ninja에서 BN MCP HTTP server가
+port 9009에 실행 중이어야 동작. Step 0에서 `get_binary_status`가 실패하면
+`load_binary`로 binary 파일을 로드한 뒤 진행. BN은 `.bndb` database를 자동
+저장해서 사용자가 GUI에서 확인 가능.
 
 **Tool 사용:**
 - `omp_read_state`, `omp_patch_state`, `omp_append_journal`
 - `omp_get_template` — research report 템플릿 로드
 - `omp_verify_template_output` — 템플릿 작성물 구조 검증
-- Ghidra MCP tools: `list_instances`, `connect_instance`, `import_file`,
-  `open_program`, `get_metadata`, `list_functions_enhanced`, `decompile_function`,
-  `list_imports`, `list_exports`, `list_strings`, `rename_function`,
-  `batch_rename_variables`, `batch_set_variable_types`, `batch_set_comments`,
-  `set_function_prototype`, 등
+- BN MCP tools: `get_binary_status`, `load_binary`, `list_methods`,
+  `decompile_function`, `batch_decompile_to_file`, `rename_function`,
+  `rename_multi_variables`, `retype_variable`, `set_comment`,
+  `set_function_comment`, `set_function_prototype`, `define_types`,
+  `declare_c_type`, `get_stack_frame_vars`, `get_callers`, `get_callees`,
+  `save_bndb`, 등
 
 **파일:** `src/agents/omp-reverser.ts` (프롬프트 ~800줄, 가장 복잡한 agent)
 
@@ -282,8 +284,8 @@ Orchestrator
 - **Leak 값 저장 안 함:** libc_base, canary 등 런타임 주소는 ASLR로 실행마다 달라짐 → state에 저장하지 않음. 대신 leak을 **획득하는 코드**(PoC script)가 지식 단위. COMBINE SA가 source PoC를 읽어 단일 connection 안에서 합성.
 - **부수 발견 보고:** 예상 못한 leak / heap 상태 / 추가 primitive 발견 시 → 새 candidate로 SA를 통해 Orchestrator에 보고 (Orchestrator가 다음 라운드 cascading 재진입 결정).
 - **디버깅 지원:** Reverser artifact의 function map + key annotation의
-  Ghidra instruction address를 보고 breakpoint 설정. Mid-function /
-  instruction-level 질의는 `ghidra-mcp` tool 직접 호출.
+  BN instruction address를 보고 breakpoint 설정. Mid-function /
+  instruction-level 질의는 BN MCP tool 직접 호출.
 
 ### ~~omp-verifier~~ (삭제)
 
@@ -417,7 +419,7 @@ tool 사용 순서를 **required sequence**로 박아서 LLM이 빼먹지 않게
 ```
 ## Required sequence
 
-0. Ghidra project setup (step 0 of analysis strategy)
+0. BN binary setup (step 0: get_binary_status → load_binary if needed)
 1. omp_read_state(challenge_dir)
 2. Check cache
 3. Check source-present mode
@@ -434,10 +436,10 @@ tool 사용 순서를 **required sequence**로 박아서 LLM이 빼먹지 않게
 사용자에게 handoff할지":
 
 ```
-- open_program fails → stop, omp_append_journal with error, report to user
+- load_binary fails → stop, omp_append_journal with error, report to user
 - decompile_function fails for specific function → skip it, note in journal,
   continue
-- Ghidra MCP unreachable → stop, report
+- BN MCP unreachable → stop, report
 - Any partial failure → still call omp_patch_state with partial results
 ```
 
@@ -449,7 +451,7 @@ Agent의 핵심 원칙을 bullet list로 재확인. "자기검열" 역할:
 ## Key principles
 
 - Stay neutral always, including in Pass C.
-- Apply Ghidra mutations eagerly.
+- Apply BN mutations eagerly (rename, retype, comment).
 - Write the artifact AFTER Pass A succeeds.
 - Never speculate about exploitability — that's VulnHunter's job.
 - ...
@@ -476,7 +478,7 @@ Cross-cutting (system prompt 유지):
 - Neutrality + 전체 forbidden-words list
 - State management tool 사용법
 - Required sequence
-- Ghidra tool 사용법
+- BN MCP tool 목록 + 사용법
 - Type inference 4 규칙
 - 3-pass self-review
 

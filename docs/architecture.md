@@ -63,13 +63,13 @@ config: async (cfg) => {
   // 1-2. OmP agent들 주입
   Object.assign(cfg.agent, ompAgentConfigs)
 
-  // 1-3. Ghidra MCP 등록 (OMP_GHIDRA_BRIDGE_PATH env var로 설정)
-  const bridgePath = process.env["OMP_GHIDRA_BRIDGE_PATH"]
+  // 1-3. BN MCP 등록 (OMP_BN_BRIDGE_PATH env var로 설정)
+  const bridgePath = process.env["OMP_BN_BRIDGE_PATH"]
   if (bridgePath !== undefined && existsSync(bridgePath)) {
     cfg.mcp ??= {}
-    cfg.mcp["ghidra"] = {
+    cfg.mcp["bn"] = {
       type: "local",
-      command: ["python3", bridgePath],
+      command: ["node", bridgePath],
       enabled: true,
     }
   } else {
@@ -93,15 +93,17 @@ config: async (cfg) => {
   `disable: true`로 숨김. TUI agent picker에 OmP agent만 보이게.
 - `ompAgentConfigs`는 `src/agents/definitions.ts`에 정의된 agent registry
   (자세한 내용은 [agents.md](agents.md)).
-- **Ghidra MCP:** `OMP_GHIDRA_BRIDGE_PATH` 환경변수로 설정. stdio 모드
-  (Python bridge subprocess). Reverser가 사용. `setup-omp.sh`가 자동 탐지.
+- **BN MCP:** `OMP_BN_BRIDGE_PATH` 환경변수로 설정. stdio 모드
+  (Node.js bridge subprocess — `node dist/index.js`). Reverser가 사용.
+  `setup-omp.sh`가 `~/Tools/binary_ninja_mcp/` 경로에서 자동 탐지.
+  BN HTTP plugin이 port 9009에서 실행 중이어야 연결됨 (`OMP_BN_PORT` 기본 9009).
 - **pwno-mcp:** `OMP_PWNO_MCP_URL` 환경변수로 override 가능 (기본
   `http://127.0.0.1:5500/mcp`). HTTP remote 모드 (Docker container).
   Exploiter가 gdb breakpoint/memory/register/heap 관찰에 사용.
   `OMP_PWNO_MCP_DISABLED=1`로 opt-out. Exploiter agent가 Docker container를
   직접 시작/종료.
 
-### 2. `tool` map — OmP 전용 tool 11개 등록
+### 2. `tool` map — OmP 전용 tool 10개 등록
 
 ```ts
 tool: {
@@ -139,13 +141,13 @@ OmP는 `omp`라는 쉘 alias로 실행됩니다. alias는 `setup-omp.sh`가
 `~/.zshrc`에 다음과 같이 추가합니다:
 
 ```bash
-alias omp="OMP_GHIDRA_BRIDGE_PATH='/abs/path/to/bridge_mcp_ghidra.py' XDG_CONFIG_HOME='$HOME/.config/omp' opencode"
+alias omp="OMP_BN_BRIDGE_PATH='/abs/path/to/binary_ninja_mcp/dist/index.js' XDG_CONFIG_HOME='$HOME/.config/omp' opencode"
 ```
 
 이 alias는:
 
-1. **`OMP_GHIDRA_BRIDGE_PATH` env var**를 현재 머신에서 탐지한 ghidra-mcp
-   bridge 경로로 설정 (플러그인이 Ghidra MCP 등록 시 참조)
+1. **`OMP_BN_BRIDGE_PATH` env var**를 현재 머신에서 탐지한 BN MCP
+   bridge 경로로 설정 (플러그인이 BN MCP 등록 시 참조)
 2. **`XDG_CONFIG_HOME`을 별도 디렉토리로 override** — 기존 `opencode` 명령이
    쓰는 `~/.config/opencode`와 완전히 분리. OmO(원래 `opencode`)와
    간섭 0.
@@ -165,7 +167,7 @@ opencode가 시작되면서 `$XDG_CONFIG_HOME/opencode/opencode.json`을 읽습�
 함수를 호출해서 위에서 설명한 hook들을 돌립니다.
 
 **결과:** opencode TUI에 OmP agent들이 picker 목록에 나타나고,
-OmP tool들이 session 레벨로 활성화되고, Ghidra MCP가 연결 대기 상태가 됨.
+OmP tool들이 session 레벨로 활성화되고, BN MCP가 연결 대기 상태가 됨.
 
 ---
 
@@ -180,9 +182,9 @@ opencode (omp alias, XDG_CONFIG_HOME=~/.config/omp)
   ↓ OmpPlugin() 호출
   ↓
   ├── config hook → cfg.agent에 5 agent 주입
-  │                 cfg.mcp에 ghidra + pwno-mcp 등록
+  │                 cfg.mcp에 bn + pwno-mcp 등록
   │
-  └── tool map → 10개 omp_* tool + 병렬 인프라 tool을 session 레벨로 노출
+  └── tool map → 10개 omp_* tool을 session 레벨로 노출
   ↓
 TUI agent picker → 사용자가 omp-orchestrator 선택
   ↓
@@ -291,7 +293,6 @@ bun run build:plugin
 - `src/state/*.ts` (ChallengeState, journal, io, layout)
 - `src/loader/*.ts` (T03 challenge folder loader)
 - `src/envsetup/*.ts` (T04 docker + ELF + patchelf)
-- `src/ghidra/*.ts` (T06 ghidra-mcp bridge client)
 - `src/templates/*.ts` (research report 템플릿)
 
 결과물은 단일 `dist/plugin.js` 파일 (~130KB, 프로젝트 성장에 따라 증가).
@@ -348,18 +349,18 @@ one-shot 스크립트입니다. Repo 위치가 바뀌었거나 새 머신에서 
 단계:
 
 1. **Plugin build** — `bun run build:plugin` 실행 (`--no-build`로 skip 가능)
-2. **Ghidra bridge 탐지**
-   - `--ghidra-bridge <path>` 명시 우선
-   - 자동 glob `~/Tools/ghidra_*_PUBLIC/bridge_mcp_ghidra.py`
+2. **BN bridge 탐지**
+   - `--bn-bridge <path>` 명시 우선
+   - 자동 glob `~/Tools/binary_ninja_mcp/dist/index.js`
    - 복수 매치 시 interactive 선택
    - 0 매치 시 interactive prompt (경로 입력 또는 Enter로 skip)
-   - `--skip-ghidra`로 명시 opt-out
+   - `--skip-bn`으로 명시 opt-out
 3. **`opencode.json` 생성** — `$HOME/.config/omp/opencode/opencode.json`에
    현재 repo의 `dist/plugin.js`를 `file://` 경로로 등록
 4. **zshrc alias 갱신** — 기존 `alias omp=` 가 있으면 awk로 교체, 없으면
    append. alias 내용:
    ```
-   alias omp="OMP_GHIDRA_BRIDGE_PATH=<탐지경로> XDG_CONFIG_HOME=$HOME/.config/omp opencode"
+   alias omp="OMP_BN_BRIDGE_PATH=<탐지경로> XDG_CONFIG_HOME=$HOME/.config/omp opencode"
    ```
 5. **검증** — `opencode debug config`로 플러그인이 로드되는지 확인,
    OmP agent가 주입됐는지 grep
@@ -368,8 +369,8 @@ one-shot 스크립트입니다. Repo 위치가 바뀌었거나 새 머신에서 
 - `--dry-run` — 변경 없이 계획만 출력
 - `--no-build` — dist/plugin.js 재사용
 - `--no-alias` — zshrc 건드리지 않음
-- `--skip-ghidra` — bridge 설정 skip
-- `--ghidra-bridge <path>` — bridge 경로 명시
+- `--skip-bn` — bridge 설정 skip
+- `--bn-bridge <path>` — bridge 경로 명시
 
 ---
 
@@ -381,7 +382,7 @@ one-shot 스크립트입니다. Repo 위치가 바뀌었거나 새 머신에서 
 | `src/agents/definitions.ts` | Agent registry (`ompAgentConfigs`). |
 | `src/agents/omp-orchestrator.ts` | Orchestrator agent factory + prompt. |
 | `src/agents/omp-reverser.ts` | Reverser agent factory + prompt. |
-| `src/tools/*.ts` | 11개 OmP tool 구현. |
+| `src/tools/*.ts` | 10개 OmP tool 구현. |
 | `src/templates/*.ts` | Agent가 tool로 로드하는 템플릿 string. |
 | `scripts/setup-omp.sh` | 머신 세팅 one-shot 스크립트. |
 | `~/.config/omp/opencode/opencode.json` | 플러그인 등록 파일 (사용자 config). |
