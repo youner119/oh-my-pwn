@@ -104,37 +104,5 @@ export {
   type SpawnResult,
 } from "./envsetup"
 
-// Ghidra-MCP (T06)
-export {
-  createGhidraMcpClient,
-  launchGhidraServer,
-  checkGhidraHealth,
-  getGhidraMetadata,
-  listGhidraTools,
-  createDefaultGhidraConfig,
-  runHeadlessImport,
-  resolveGhidraHome,
-  resolveProjectPath,
-  buildHeadlessMcpConfig,
-  buildGuiMcpConfig,
-  type HeadlessConfig,
-  type HeadlessResult,
-  connectToGhidra,
-  type GhidraConnectionOptions,
-  type GhidraConnection,
-  type GhidraMcpConfig,
-  type GhidraMcpClient,
-  type GhidraFunction,
-  type GhidraDecompilation,
-  type GhidraString,
-  type GhidraImport,
-  type GhidraExport,
-  type GhidraXref,
-  type McpToolCallResult,
-  type McpContentBlock,
-  type McpToolInfo,
-  type GhidraServerMetadata,
-  GhidraBridgeError,
-  type GhidraBridgeErrorKind,
-  type GhidraBridgeErrorDetail,
-} from "./ghidra"
+// Ghidra-MCP (T06) — removed in feat/binary-ninja branch.
+// BN MCP is handled by opencode via stdio bridge; no custom client needed.
