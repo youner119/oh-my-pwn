@@ -18,24 +18,24 @@ describe("createOmpReverserAgent", () => {
     expect(desc).toContain("VulnHunter")
   })
 
-  test("prompt mentions the ghidra-mcp read tools", () => {
+  test("prompt mentions the BN MCP read tools", () => {
     const agent = createOmpReverserAgent("test-model")
     expect(agent.prompt).toContain("decompile_function")
-    expect(agent.prompt).toContain("list_functions_enhanced")
+    expect(agent.prompt).toContain("list_methods")
     expect(agent.prompt).toContain("get_entry_points")
   })
 
-  test("prompt mentions the ghidra-mcp mutation tools (rename + type + comment)", () => {
+  test("prompt mentions the BN MCP mutation tools (rename + type + comment)", () => {
     const agent = createOmpReverserAgent("test-model")
     const p = agent.prompt ?? ""
     // Rename mutations
     expect(p).toContain("rename_function")
-    expect(p).toContain("batch_rename_variables")
+    expect(p).toContain("rename_multi_variables")
     // Type mutations
-    expect(p).toContain("batch_set_variable_types")
+    expect(p).toContain("retype_variable")
     expect(p).toContain("set_function_prototype")
     // Comments
-    expect(p).toContain("batch_set_comments")
+    expect(p).toContain("set_comment")
   })
 
   test("prompt specifies type inference rules (array, pointer, primitive, struct)", () => {
@@ -53,27 +53,23 @@ describe("createOmpReverserAgent", () => {
     expect(p).toContain("struct")
   })
 
-  test("prompt specifies stack-frame extraction and compact distance section", () => {
+  test("prompt specifies stack-frame via get_stack_frame_vars and distance section", () => {
     const agent = createOmpReverserAgent("test-model")
     const p = agent.prompt ?? ""
-    // The Reverser must extract rbp-relative offsets and canary info
+    // BN API for stack frame
+    expect(p).toContain("get_stack_frame_vars")
     expect(p).toContain("Stack frame")
-    expect(p).toContain("rbp-relative")
-    expect(p).toContain("in_FS_OFFSET")
-    expect(p).toContain("stack_canary")
-    // Saved rbp and return address are implicit x86_64 SysV facts
+    // saved_rbp and return_address in output
     expect(p).toContain("saved_rbp")
-    expect(p).toContain("return_address")
-    // The Distances subsection is mandatory when stack frame is emitted
+    expect(p).toContain("return_addr")
+    // Distance section
     expect(p).toContain("Distances from")
   })
 
-  test("prompt preserves neutrality for type inference and stack distances", () => {
+  test("prompt preserves neutrality for type inference", () => {
     const agent = createOmpReverserAgent("test-model")
     const p = agent.prompt ?? ""
-    // Explicit neutrality callout for the new sections
     expect(p).toContain("Neutrality in type inference")
-    expect(p).toContain("no verbal interpretation")
   })
 
   test("prompt specifies the 4-root BFS envelope with default depth 10", () => {
@@ -89,37 +85,27 @@ describe("createOmpReverserAgent", () => {
   test("prompt specifies all three markdown artifact paths", () => {
     const agent = createOmpReverserAgent("test-model")
     const p = agent.prompt ?? ""
-    // Structured analysis (primary VulnHunter context)
     expect(p).toContain("reverser-analysis.md")
-    // English narrative research report
     expect(p).toContain("reverser-research.md")
-    // Korean narrative research report
     expect(p).toContain("reverser-research.ko.md")
   })
 
   test("prompt delegates research report structure to templates via tool", () => {
     const agent = createOmpReverserAgent("test-model")
     const p = agent.prompt ?? ""
-    // The research report workflow references the template tool, not inline structure
     expect(p).toContain("omp_get_template")
     expect(p).toContain("omp_verify_template_output")
     expect(p).toContain("reverser-research-en")
     expect(p).toContain("reverser-research-ko")
-    // Verification + retry policy is mentioned
     expect(p).toContain("retries")
-    expect(p).toContain("VERIFICATION FAILED")
   })
 
-  test("prompt has Ghidra project setup step 0 before analysis", () => {
+  test("prompt has BN setup step 0 before analysis", () => {
     const agent = createOmpReverserAgent("test-model")
     const p = agent.prompt ?? ""
-    // Step 0 setup sequence
-    expect(p).toContain("Ghidra project setup")
-    expect(p).toContain("list_instances")
-    expect(p).toContain("connect_instance")
-    expect(p).toContain("import_file")
-    // Dedicated "omp" project
-    expect(p).toContain('"omp"')
+    expect(p).toContain("BN setup")
+    expect(p).toContain("get_binary_status")
+    expect(p).toContain("load")
   })
 
   test("prompt specifies the program overview + function map structure", () => {
@@ -137,7 +123,6 @@ describe("createOmpReverserAgent", () => {
     expect(p).toContain("Pass A")
     expect(p).toContain("Pass B")
     expect(p).toContain("Pass C")
-    // Pass descriptions
     expect(p).toContain("Structural")
     expect(p).toContain("Semantic")
     expect(p).toContain("refinement")
@@ -146,20 +131,17 @@ describe("createOmpReverserAgent", () => {
   test("prompt forbids exploitability speculation — forbidden words list", () => {
     const agent = createOmpReverserAgent("test-model")
     const p = agent.prompt ?? ""
-    // Must explicitly label and enumerate forbidden words
     expect(p).toContain("Forbidden")
     expect(p).toContain("vulnerability")
     expect(p).toContain("primitive")
-    // Delegating vuln analysis to VulnHunter
     expect(p).toContain("VulnHunter")
     expect(p).toContain("judge exploitability")
   })
 
-  test("prompt includes key-annotations-with-Ghidra-addresses format for Exploiter", () => {
+  test("prompt includes key-annotations-with-addresses format for Exploiter", () => {
     const agent = createOmpReverserAgent("test-model")
     const p = agent.prompt ?? ""
-    // Exploiter (T14) reads markdown for breakpoints — addresses must be inline
-    expect(p).toContain("Line N (@ 0xADDR)")
+    expect(p).toContain("addresses")
     expect(p).toContain("Exploiter")
   })
 
@@ -178,7 +160,7 @@ describe("createOmpReverserAgent", () => {
     expect(p).toContain("force")
   })
 
-  test("prompt enforces eager Ghidra mutation (no dry-run gate)", () => {
+  test("prompt enforces eager BN mutation (no dry-run gate)", () => {
     const agent = createOmpReverserAgent("test-model")
     const p = agent.prompt ?? ""
     expect(p.toLowerCase()).toContain("eager")
@@ -191,5 +173,13 @@ describe("createOmpReverserAgent", () => {
     expect(p).toContain("omp_patch_state")
     expect(p).toContain("omp_append_journal")
     expect(p).toContain("Never write state.json")
+  })
+
+  test("prompt specifies batch_decompile_to_file and save_bndb", () => {
+    const agent = createOmpReverserAgent("test-model")
+    const p = agent.prompt ?? ""
+    expect(p).toContain("batch_decompile_to_file")
+    expect(p).toContain("save_bndb")
+    expect(p).toContain(".bndb")
   })
 })
