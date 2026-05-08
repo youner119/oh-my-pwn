@@ -150,8 +150,11 @@ function extractRequiredSectionsFromTemplate(template: string): string[] {
 }
 
 /**
- * Find forbidden words via case-insensitive substring match. Returns
- * the list of words that appeared at least once.
+ * Find forbidden words via case-insensitive **word-boundary** match.
+ * Uses `\b` regex boundaries so "rce" matches the standalone word "RCE"
+ * but NOT "percent_sign_count" or "source".
+ * Multi-word phrases (e.g. "format string bug") are matched as-is
+ * since the spaces act as natural boundaries.
  */
 function findForbiddenWords(
   content: string,
@@ -160,7 +163,9 @@ function findForbiddenWords(
   const lowered = content.toLowerCase()
   const hits: string[] = []
   for (const w of words) {
-    if (lowered.includes(w.toLowerCase())) {
+    const escaped = w.toLowerCase().replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
+    const pattern = new RegExp(`\\b${escaped}\\b`, "i")
+    if (pattern.test(lowered)) {
       hits.push(w)
     }
   }
