@@ -145,29 +145,27 @@ You do NOT design exploit steps — that is StrategyAgent's job.**
    (List any functions skipped and why — ideally none)
    \`\`\`
 
-10. **\`omp_patch_state\`** — write the candidate list:
-   \`\`\`json
-   {
-     "vuln_candidates": [
-       {
-         "id": "vuln_bof_main_read",
-         "primitive": "stack_bof",
-         "location": "main (read call at line 15)",
-         "confidence": 0.9,
-         "rationale": "read(0, buf, 0x100) where buf is char[0x40] on stack, no canary",
-         "libc_range": null
-       }
-     ]
-   }
+10. **\`omp_patch_state\`** — fields MUST be inside the \`patch\` parameter:
    \`\`\`
-
-   Also patch the artifact path:
-   \`\`\`json
-   {
-     "vulnhunter_analysis_path": "<challenge-dir>/.omp/artifacts/vulnhunter-analysis.md",
-     "vulnhunter_analyzed_at": "<ISO timestamp>"
-   }
+   omp_patch_state(
+     challenge_dir: "<challenge-dir>",
+     patch: {
+       vuln_candidates: [
+         {
+           id: "vuln_bof_main_read",
+           primitive: "stack_bof",
+           location: "main (read call at line 15)",
+           confidence: 0.9,
+           rationale: "read(0, buf, 0x100) where buf is char[0x40] on stack, no canary",
+           libc_range: null
+         }
+       ],
+       vulnhunter_analysis_path: "<challenge-dir>/.omp/artifacts/vulnhunter-analysis.md",
+       vulnhunter_analyzed_at: "<ISO timestamp>"
+     }
+   )
    \`\`\`
+   Do NOT pass these fields as top-level args — they will be silently ignored.
 
 11. **\`omp_append_journal\`** — heading: "VulnHunter analysis complete".
     Body: candidate count, top candidate summary, whether TechniqueKB was

@@ -145,7 +145,8 @@ artifact file). Never use \`write\` to edit state.json or journal.md.
    The artifact references pseudocode files by relative path (e.g.
    \`pseudocode/run_bof_loop.txt\`) instead of inlining the code.
 8. \`save_bndb\` — save analysis to \`<challenge_dir>/.omp/artifacts/analysis.bndb\`.
-9. \`omp_patch_state\` with \`reverser_summary_path\`, \`pseudocode_dir\`, and \`reverser_analyzed_at\`.
+9. \`omp_patch_state\` — fields go inside the \`patch\` parameter:
+   \`omp_patch_state(challenge_dir, patch: { reverser_summary_path, pseudocode_dir, reverser_analyzed_at })\`.
 10. \`omp_append_journal\` with heading \`"Reverser analysis complete"\` and a
    neutral summary body.
 
@@ -414,7 +415,20 @@ Stay neutral about **exploitability** while being confident about **type**:
 17. **\`save_bndb\`** — save to \`<challenge_dir>/.omp/artifacts/analysis.bndb\`.
     User can open this in BN GUI to review all renames, types, comments.
 
-18. \`omp_patch_state(challenge_dir, { reverser_summary_path, reverser_research_path, reverser_research_ko_path, pseudocode_dir, reverser_analyzed_at })\`.
+18. \`omp_patch_state\` — **fields MUST be inside the \`patch\` parameter** (not flat):
+    \`\`\`
+    omp_patch_state(
+      challenge_dir: "<challenge_dir>",
+      patch: {
+        reverser_summary_path: "<path>/reverser-analysis.md",
+        reverser_research_path: "<path>/reverser-research.md",
+        reverser_research_ko_path: "<path>/reverser-research.ko.md",
+        pseudocode_dir: "<path>/pseudocode",
+        reverser_analyzed_at: "<ISO timestamp>"
+      }
+    )
+    \`\`\`
+    Do NOT pass these fields as top-level args — they will be silently ignored.
 
 19. \`omp_append_journal(challenge_dir, "Reverser analysis complete", <neutral body>)\`.
 

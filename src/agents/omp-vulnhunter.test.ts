@@ -89,12 +89,12 @@ describe("createOmpVulnhunterAgent", () => {
     const agent = createOmpVulnhunterAgent("test-model")
     const p = agent.prompt ?? ""
     expect(p).toContain("vuln_candidates")
-    // Required candidate fields
-    expect(p).toContain('"id"')
-    expect(p).toContain('"primitive"')
-    expect(p).toContain('"location"')
-    expect(p).toContain('"confidence"')
-    expect(p).toContain('"rationale"')
+    // Required candidate fields (may appear as JSON keys or object keys)
+    expect(p).toContain("id:")
+    expect(p).toContain("primitive:")
+    expect(p).toContain("location:")
+    expect(p).toContain("confidence:")
+    expect(p).toContain("rationale:")
   })
 
   test("prompt specifies vulnhunter-analysis.md artifact", () => {
