@@ -269,6 +269,7 @@ corrects via the OmP prompt channel after the run, not by blocking you up front.
 
    At each function:
    - SKIP imported functions (symbol type indicates import).
+   - SKIP if the name starts with \`sub_\` (PLT stubs / unnamed thunks — no useful semantics).
    - SKIP if the name starts with \`_dl_\`, \`__libc_\`, \`__GI_\` (glibc internals).
    - SKIP if already visited in this run.
    - Otherwise: enqueue into the **analysis set**.
