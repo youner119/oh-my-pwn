@@ -335,6 +335,11 @@ export class BackgroundManager {
       ompLog(`Task ${taskId}: closing tmux pane ${paneId}`)
       void closeTmuxPane(paneId)
       this.paneIds.delete(taskId)
+      // Reset pane tracking when all panes are closed so the next round
+      // starts fresh instead of trying to split a dead pane.
+      if (this.paneIds.size === 0) {
+        resetPaneTracking()
+      }
     }
   }
 

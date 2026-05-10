@@ -33,12 +33,16 @@ export function getCurrentPaneId(): string | undefined {
 /** Track the last right-side pane for stacking layout. */
 let lastRightPaneId: string | undefined
 
-/** Serialize pane creation to prevent race conditions on lastRightPaneId. */
+/** Track all top-level right-column pane IDs for even-split layout. */
+let rightColumnPaneIds: string[] = []
+
+/** Serialize pane creation to prevent race conditions. */
 let paneCreationQueue: Promise<unknown> = Promise.resolve()
 
-/** Reset pane tracking (call on shutdown). */
+/** Reset pane tracking (call on shutdown or when all panes closed). */
 export function resetPaneTracking(): void {
   lastRightPaneId = undefined
+  rightColumnPaneIds = []
   paneCreationQueue = Promise.resolve()
 }
 
@@ -47,9 +51,11 @@ export function resetPaneTracking(): void {
  *
  * Layout rules:
  * - First top-level agent: vertical split (-h) → creates right column
- * - Additional top-level agents: horizontal split (-v) in right column → stack
+ * - Additional top-level agents: horizontal split (-v) in right column
+ * - After each top-level pane creation, re-layout the right column with
+ *   even-vertical so all panes get equal height (n-등분).
  * - Child of an agent with a pane (e.g., Exploiter of SA): vertical split (-h)
- *   of parent's pane → appears to the right of its parent
+ *   of parent's pane → appears to the right of its parent.
  *
  * @param parentPaneId — if the parent session has a tmux pane, split it
  *   horizontally to place this agent to its right.
@@ -60,9 +66,6 @@ export async function spawnSubagentPane(options: {
   title: string
   parentPaneId?: string
 }): Promise<string | undefined> {
-  // Serialize pane creation to prevent race conditions on lastRightPaneId.
-  // Without this, concurrent launchAll/launchPool calls all read
-  // lastRightPaneId as undefined and every agent does -h (left/right split).
   const result = paneCreationQueue.then(() => doSpawnPane(options))
   paneCreationQueue = result.catch(() => {})
   return result
@@ -105,10 +108,11 @@ async function doSpawnPane(options: {
     await proc.exited
 
     if (paneId) {
-      // Only track top-level panes for the right-column stacking layout.
-      // Child panes (Exploiter next to SA) don't affect the column layout.
       if (!parentPaneId) {
         lastRightPaneId = paneId
+        rightColumnPaneIds.push(paneId)
+        // Re-layout right column panes to equal height after each addition
+        await rebalanceRightColumn()
       }
 
       const shortTitle = title.slice(0, 30)
@@ -125,6 +129,38 @@ async function doSpawnPane(options: {
     return paneId || undefined
   } catch {
     return undefined
+  }
+}
+
+/**
+ * Rebalance right-column panes to equal height.
+ * Uses tmux resize-pane with percentage to achieve n-등분.
+ */
+async function rebalanceRightColumn(): Promise<void> {
+  const count = rightColumnPaneIds.length
+  if (count < 2) return
+
+  try {
+    // Get the total height of the right column from the first pane's window
+    const heightProc = Bun.spawn(
+      ["tmux", "display-message", "-t", rightColumnPaneIds[0], "-p", "#{window_height}"],
+      { stdout: "pipe", stderr: "ignore" },
+    )
+    const windowHeight = parseInt((await new Response(heightProc.stdout).text()).trim(), 10)
+    await heightProc.exited
+    if (!windowHeight || isNaN(windowHeight)) return
+
+    const targetHeight = Math.floor(windowHeight / count)
+
+    // Resize each pane except the last (last takes remaining space)
+    for (let i = 0; i < count - 1; i++) {
+      Bun.spawn(
+        ["tmux", "resize-pane", "-t", rightColumnPaneIds[i], "-y", String(targetHeight)],
+        { stdout: "ignore", stderr: "ignore" },
+      )
+    }
+  } catch {
+    // Non-critical — layout will just be slightly uneven
   }
 }
 

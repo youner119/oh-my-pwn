@@ -181,8 +181,8 @@ port 9009에 실행 중이어야 동작. Step 0에서 `get_binary_status`가 실
 - `omp_get_template` — research report 템플릿 로드
 - `omp_verify_template_output` — 템플릿 작성물 구조 검증
 - BN MCP tools: `get_binary_status`, `load_binary`, `list_methods`,
-  `decompile_function`, `batch_decompile_to_file`, `rename_function`,
-  `rename_multi_variables`, `retype_variable`, `set_comment`,
+  `decompile_function` (기본 HLIL, `lang=pseudoc` 옵션), `decompile_to_file`,
+  `rename_function`, `rename_multi_variables`, `retype_variable`, `set_comment`,
   `set_function_comment`, `set_function_prototype`, `define_types`,
   `declare_c_type`, `get_stack_frame_vars`, `get_callers`, `get_callees`,
   `save_bndb`, 등

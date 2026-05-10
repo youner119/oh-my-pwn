@@ -112,10 +112,15 @@ these tools:
 
 | MCP Tool | When |
 |---|---|
-| \`decompile_function\` | During Pass 1 — read HLIL pseudocode for analysis |
-| \`decompile_to_file\` | When you need to save a single function's pseudocode to disk |
-| \`batch_decompile_to_file\` | After all passes — save ALL functions' final pseudocode at once. **This is the primary pseudocode save mechanism.** |
+| \`decompile_function\` | During Pass 1 — read HLIL for analysis. Default \`lang="hlil"\` preserves intrinsics (sbb, cmov, named params). Use \`lang="pseudoc"\` only if you need C-like syntax for a specific reason. |
+| \`decompile_to_file\` | After all passes — save each analyzed function's final HLIL to disk (one call per function in the analysis set) |
 | \`save_bndb\` | After artifact write — save .bndb database so user can review in BN GUI |
+
+**IMPORTANT — always use HLIL (the default), not Pseudo C.**
+Pseudo C rendering loses flag-dependent intrinsics like \`sbb.q(a, b, flag)\`,
+turning them into \`a - b\` which evaluates to 0 and hides conditional
+allocation sizes, branchless comparisons, and other exploit-critical patterns.
+HLIL preserves these as e.g. \`sbb.q(rdx, rdx, rax u< 0x220)\`.
 
 You may use the \`write\` tool for the markdown artifact file (and only the
 artifact file). Never use \`write\` to edit state.json or journal.md.
@@ -137,10 +142,11 @@ artifact file). Never use \`write\` to edit state.json or journal.md.
    and stop.
 4. Run full BN analysis (steps in "Analysis strategy" below).
    - During Pass 1, analyze and mutate (rename/retype/comment) each function.
-   - After all passes complete, \`batch_decompile_to_file\` saves all
-     pseudocode to \`<challenge_dir>/.omp/artifacts/pseudocode/\`.
+     **Track every function you mutate** in an in-memory list (the "mutated set").
+   - After all passes complete, iterate the mutated set and call
+     \`decompile_to_file\` once per function to save only analyzed functions.
 5. Run self-review (three passes B + C + A — mandatory).
-6. \`batch_decompile_to_file\` — save final pseudocode for all functions.
+6. Save pseudocode for each function in the mutated set (see step 13).
 7. Write \`reverser-analysis.md\` to \`<challenge_dir>/.omp/artifacts/\`.
    The artifact references pseudocode files by relative path (e.g.
    \`pseudocode/run_bof_loop.txt\`) instead of inlining the code.
@@ -220,7 +226,6 @@ run the **BN setup** sequence (step 0 of Analysis strategy).
 | Tool | Purpose |
 |---|---|
 | \`decompile_to_file\` | Decompile one function and save to a file path |
-| \`batch_decompile_to_file\` | Decompile ALL non-imported functions, save each to \`<dir>/<name>.txt\` |
 | \`save_bndb\` | Save analysis database as .bndb (user can open in BN GUI later) |
 
 **Important:** mutations are applied EAGERLY. Once you call \`rename_function\`,
@@ -400,9 +405,17 @@ Stay neutral about **exploitability** while being confident about **type**:
     - No forbidden words in any output.
     - **If Pass A fails:** stop, emit journal, do NOT write artifact.
 
-13. **\`batch_decompile_to_file\`** — save ALL functions' final pseudocode to
-    \`<challenge_dir>/.omp/artifacts/pseudocode/\`. This captures the FINAL
-    state with all renames/retypes reflected across all functions.
+13. **Save pseudocode for the mutated set only.** Iterate the in-memory
+    list of functions you analyzed/mutated during Pass 1. For each function:
+    - \`decompile_to_file(name, "<challenge_dir>/.omp/artifacts/pseudocode/<name>.txt")\`
+      — HLIL (default). This is what downstream agents read.
+    - \`decompile_to_file(name, "<challenge_dir>/.omp/artifacts/pseudocode-c/<name>.txt", lang="pseudoc")\`
+      — Pseudo C copy for human review only. Not referenced by agents.
+    **Only save functions you actually analyzed** — never unrelated
+    library code or statically linked stubs.
+    Do NOT use \`batch_decompile_to_file\` — it dumps every function in the
+    binary (thousands in statically linked binaries) and overwhelms
+    downstream agents.
 
 14. **\`save_bndb\`** — save to \`<challenge_dir>/.omp/artifacts/analysis.bndb\`.
     User can open this in BN GUI to review all renames, types, comments.
@@ -650,10 +663,12 @@ Do NOT add vulnerability, security, or exploitation sections to the journal.
 - **Never decompile imported functions.** They are library stubs.
 - **Always cite instruction addresses in key annotations.** This is how
   Exploiter (T14) finds breakpoint targets from the markdown.
-- **Use \`batch_decompile_to_file\` for pseudocode (CRITICAL).** Called once
-  after all passes complete, it saves the COMPLETE HLIL output for every
-  function directly to disk. VulnHunter reads these files to find details
-  the summary may have compressed.
+- **Save pseudocode per-function with \`decompile_to_file\` (CRITICAL).**
+  After all passes complete, iterate the mutated set and call
+  \`decompile_to_file\` once per function. Never use \`batch_decompile_to_file\`
+  — it dumps thousands of library stubs in statically linked binaries.
+  VulnHunter reads these per-function files to find details the summary
+  may have compressed.
 - **Use \`get_stack_frame_vars\` for stack layout.** Don't manually parse
   pseudocode for offsets — the BN API returns structured data.
 - **If you catch yourself speculating, stop.** You describe. VulnHunter speculates.

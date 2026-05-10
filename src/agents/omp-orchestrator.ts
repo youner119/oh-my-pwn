@@ -197,7 +197,7 @@ omp_task_pool({
     {"agent":"omp-strategist","prompt":"<combine task prompt>","description":"SA combine: vuln_1+vuln_2"},
     ...
   ]',
-  max_concurrency: 3
+  max_concurrency: 5
 })
 \`\`\`
 

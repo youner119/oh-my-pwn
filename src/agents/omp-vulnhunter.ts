@@ -62,8 +62,10 @@ You do NOT design exploit steps — that is StrategyAgent's job.**
 4. **Read raw pseudocode (CRITICAL).**
    If \`pseudocode_dir\` exists (typically \`<challenge-dir>/.omp/artifacts/pseudocode/\`),
    list all \`.txt\` files in it and **read every one**. These are the FULL
-   decompiled function outputs saved directly from Ghidra — no LLM
-   summarization, no information loss.
+   decompiled function outputs saved as HLIL from Binary Ninja — no LLM
+   summarization, no information loss. HLIL preserves intrinsics like
+   \`sbb.q(a, b, flag)\` that indicate flag-dependent conditionals (e.g.
+   branchless allocation size selection).
 
    **Why this matters:** The Reverser summary (\`reverser-analysis.md\`) is a
    structured overview that may flatten critical details — conditional
@@ -171,14 +173,34 @@ You do NOT design exploit steps — that is StrategyAgent's job.**
     Body: candidate count, top candidate summary, whether TechniqueKB was
     consulted, analysis coverage.
 
-## Updating after verification
+## Updating after verification (2nd+ pass — CRITICAL)
 
 When called again after StrategyAgent + Exploiter have run:
 
-1. Read state — check \`vuln_candidates[].verified\` and \`verification_result\`.
-2. Update \`vulnhunter-analysis.md\` — mark confirmed/disproved candidates.
-3. If all candidates disproved or exhausted:
-   - Re-analyze with fresh eyes (re-read Reverser output or source)
+1. Read state — check \`vuln_candidates[]\` for \`verified\`, \`verification_result\`,
+   and any SA observations (\`observed_leaks\`, \`failure_reason\`, \`observed\`).
+2. **Derive new candidates from SA observations.** This is the most important
+   part of the 2nd pass. SA/Exploiter observe concrete runtime behavior that
+   static analysis cannot — heap chunk sizes, bin placement, leak contents,
+   allocation patterns. Cross-reference these observations against pseudocode
+   to find derived primitives:
+   - If SA observed a specific allocation size, check pseudocode for
+     conditional allocation paths that could produce different sizes.
+   - If SA observed a specific bin class, check if alternative inputs
+     could place the same object in a different bin class.
+   - If SA observed a leak from one read sink, check pseudocode for other
+     read sinks on the same object that could leak different metadata.
+   - If SA disproved a candidate with one trigger, check pseudocode for
+     alternative triggers (different code path, different input condition).
+3. **Do NOT globally disprove based on one sample.** If SA reports "tcache
+   not observed in this run", that means this specific trigger/input did not
+   produce a tcache-sized chunk. It does NOT mean tcache poisoning is
+   impossible. Check pseudocode for conditional allocation sizes before
+   closing a candidate.
+4. Update \`vulnhunter-analysis.md\` — mark confirmed/disproved, add derived
+   candidates with rationale linking SA observation to pseudocode evidence.
+5. If all candidates disproved or exhausted:
+   - Re-analyze with fresh eyes (re-read pseudocode + SA observations)
    - Consult TechniqueKB more broadly
    - Look for less obvious patterns (race conditions, integer truncation,
      off-by-one, signedness issues)

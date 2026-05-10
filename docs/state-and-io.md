@@ -238,7 +238,7 @@ Patchelf가 원본 binary를 덮어쓰기 전에 `<name>.orig`로 백업. 재실
 `binary_path`가 이미 patched 상태면 백업을 복원한 뒤 재패치 → 결정적
 (deterministic) 동작.
 
-### Reverser 산출물 (3개)
+### Reverser 산출물 (3개 artifact + 2개 pseudocode 디렉터리)
 
 #### reverser-analysis.md (구조화 reference)
 
@@ -251,11 +251,21 @@ VulnHunter의 주 입력. 다음 섹션 포함:
 - Function Map 표 (Address / Renamed / Original / 1-line purpose)
 - Functions (detailed):
   - 함수별 Purpose paragraph
-  - Stack frame (rbp-relative) 서브섹션 — canary, saved_rbp, return_address
-    위치 + 거리 계산
-  - Renamed pseudocode (BN MCP가 rename + type 적용 후 decompile한 결과)
-  - Key annotations (Line N @ 0xADDR: ... 포맷)
+  - Stack frame 서브섹션 — canary, saved_rbp, return_address 위치 + 거리 계산
+  - Pseudocode 파일 링크 (`pseudocode/<name>.txt`)
+  - Key annotations (@ 0xADDR: ... 포맷)
 - Imports / Exports / Interesting strings (flat lists, no severity)
+
+#### pseudocode/ (HLIL — agent용)
+
+분석한 함수별 HLIL 디컴파일 결과. `decompile_to_file`로 개별 저장.
+intrinsic (`sbb.q`, `cmov` 등)과 named parameter를 보존하므로 VulnHunter가
+flag-dependent 조건부 allocation 등 exploit-critical 패턴을 직접 확인 가능.
+
+#### pseudocode-c/ (Pseudo C — 사람용)
+
+같은 함수들의 Pseudo C 렌더링. C 문법에 가까워 사람이 읽기 편하지만
+`sbb` 같은 intrinsic이 `x - x`로 소실될 수 있음. agent는 참조하지 않음.
 
 #### reverser-research.md (영문 narrative)
 

@@ -68,6 +68,7 @@ hardcode leak values from prior runs — ASLR makes them invalid.
   with their \`gives\`, \`needs\`, \`poc_script_path\`
 - \`mitigations\`, \`libc_version\`, \`libc_path\`, \`ld_path\`
 - \`reverser_summary_path\`: structural context
+- \`pseudocode_dir\`: path to HLIL pseudocode files
 
 **IMPORTANT: Do NOT rely on stored leak values.** Leak values (libc_base,
 canary, etc.) are runtime-dependent — they change every run due to ASLR.
@@ -78,6 +79,16 @@ the leak LOGIC (code), not hardcoded values.
 
 Open \`reverser_summary_path\`. Extract stack frames, function addresses,
 buffer sizes, key annotations, imports.
+
+### Step 2b: Read pseudocode when needed
+
+If the candidate involves heap operations, conditional allocation sizes,
+or complex control flow, read the relevant function's HLIL pseudocode
+from \`pseudocode_dir\` (e.g. \`<pseudocode_dir>/<function_name>.txt\`).
+The Reverser summary may compress details like branchless size selection
+(\`sbb\`-based conditionals) or conditional free paths. The pseudocode
+preserves the exact logic and is essential for designing correct
+verification steps — especially offset calculations and size constraints.
 
 ### Step 3: Consult TechniqueKB
 
@@ -109,6 +120,10 @@ omp_task({
     Source PoC scripts to reference: <paths if combining>
     NOTE: Do NOT pass hardcoded leak values. The PoC must obtain
     leaks fresh at runtime (ASLR). Reference source PoC code instead.
+
+    WORKSPACE: ALL file writes MUST stay inside <challenge_dir>.
+    Scripts go in the script_dir above. Do NOT create or write
+    files anywhere outside <challenge_dir>.
 
     Write the PoC, execute, observe via pwno-mcp, return JSON result.",
   run_in_background: false

@@ -159,7 +159,7 @@ Returns collected results (may be partial if early-exit triggered).`,
           runInBackground: false as const,
         }))
 
-        const maxConcurrency = args.max_concurrency ?? 3
+        const maxConcurrency = args.max_concurrency ?? 5
 
         const { results, flagFound } = await manager.launchPool(
           inputs,
