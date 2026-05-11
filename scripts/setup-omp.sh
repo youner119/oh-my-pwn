@@ -2,7 +2,10 @@
 # setup-omp.sh — oh-my-pwn opencode 플러그인 로컬 세팅 스크립트
 #
 # 하는 일:
-#   1) dist/plugin.js 빌드 (bun run build:plugin)
+#   1) 의존성 설치 + dist/plugin.js 빌드 (bun install → bun run build:plugin)
+#      bun install은 런타임에 plugin.js가 import하는 external 패키지
+#      (@opencode-ai/plugin/tool 등)를 node_modules로 가져옴. 빠뜨리면
+#      opencode가 plugin 로드 실패 → agent picker에서 omp-* 안 보임.
 #   2) BN MCP bridge 경로 탐지:
 #      - --bn-bridge <path> 로 명시 전달
 #      - 또는 ~/Tools/binary_ninja_mcp/bridge/dist/index.js 자동 탐지
@@ -78,12 +81,17 @@ run() {
 say "repo root:   $REPO_ROOT"
 say "plugin path: $PLUGIN_PATH"
 
-# ── 1) build ──────────────────────────────────────────────────────────────────
+# ── 1) install + build ────────────────────────────────────────────────────────
+# `bun install`은 plugin.js의 external import (@opencode-ai/plugin/tool 등)를
+# node_modules에 가져온다. opencode가 plugin.js를 로드할 때 Node ESM resolver는
+# plugin.js의 부모 트리에서 node_modules를 찾으므로 OmP repo 안에 있어야 함.
 if [[ "$DO_BUILD" == "1" ]]; then
+  say "installing dependencies (bun install)"
+  run "cd '$REPO_ROOT' && bun install"
   say "building plugin (bun run build:plugin)"
   run "cd '$REPO_ROOT' && bun run build:plugin"
 else
-  say "skipping build (--no-build)"
+  say "skipping install + build (--no-build)"
 fi
 
 if [[ ! -f "$PLUGIN_PATH" && "$DRY_RUN" == "0" ]]; then
