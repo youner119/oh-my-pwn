@@ -19,7 +19,7 @@ import type {
 import { ConcurrencyManager } from "./concurrency"
 import { getAgentToolRestrictions } from "./agent-tool-restrictions"
 import { isInsideTmux, spawnSubagentPane, closeTmuxPane, resetPaneTracking } from "./tmux"
-import { appendFileSync, mkdirSync } from "node:fs"
+import { appendFileSync, mkdirSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
 
 let logPath: string | undefined
@@ -514,6 +514,7 @@ export class BackgroundManager {
             task.completedAt = new Date()
             this.concurrency.release(task.concurrencyKey)
             this.closePaneForTask(task.id)
+            void this.dumpTranscript(task)
           }
           continue
         }
@@ -527,6 +528,7 @@ export class BackgroundManager {
         task.completedAt = new Date()
         this.concurrency.release(task.concurrencyKey)
         this.closePaneForTask(task.id)
+        void this.dumpTranscript(task)
       }
 
       // Stop polling if no running tasks remain
@@ -568,6 +570,7 @@ export class BackgroundManager {
           task.completedAt = new Date()
           this.concurrency.release(task.concurrencyKey)
           this.closePaneForTask(task.id)
+          void this.dumpTranscript(task)
         } else {
           ompLog(`Task ${task.id}: session ${task.sessionID} not in status map yet (startup grace period)`)
         }
@@ -586,9 +589,60 @@ export class BackgroundManager {
       task.completedAt = new Date()
       this.concurrency.release(task.concurrencyKey)
       this.closePaneForTask(task.id)
+      void this.dumpTranscript(task)
     } catch (err) {
       ompLog(`Task ${task.id}: status check error: ${String(err)}`)
       // If we can't check status, assume still running
+    }
+  }
+
+  /**
+   * Persist a sub-agent's full conversation transcript to
+   * `<challenge_dir>/.omp/logs/agents/<task_id>__<agent>__<desc>.json`.
+   *
+   * Called once when the task transitions to "completed". Captures raw
+   * opencode messages (user prompt, assistant parts, tool calls + results)
+   * so the full reasoning trail is auditable after the pipeline finishes.
+   *
+   * Errors are swallowed and logged — transcript loss must never break the
+   * pipeline.
+   */
+  private async dumpTranscript(task: BackgroundTask): Promise<void> {
+    if (!task.sessionID) return
+    try {
+      const rawResult = await this.client.messages({
+        path: { id: task.sessionID },
+      })
+      const messages = unwrapData<unknown[]>(rawResult)
+      const logsDir = join(this.directory, ".omp", "logs", "agents")
+      mkdirSync(logsDir, { recursive: true })
+      const safeDesc = task.description
+        .replace(/[^A-Za-z0-9_.-]/g, "_")
+        .slice(0, 60)
+      const filename = `${task.id}__${task.agent}__${safeDesc}.json`
+      const payload = {
+        task_id: task.id,
+        agent: task.agent,
+        description: task.description,
+        session_id: task.sessionID,
+        parent_session_id: task.parentSessionID,
+        status: task.status,
+        created_at: task.createdAt.toISOString(),
+        started_at: task.startedAt?.toISOString(),
+        completed_at: task.completedAt?.toISOString(),
+        duration_ms:
+          task.startedAt && task.completedAt
+            ? task.completedAt.getTime() - task.startedAt.getTime()
+            : undefined,
+        messages: Array.isArray(messages) ? messages : [],
+      }
+      writeFileSync(
+        join(logsDir, filename),
+        JSON.stringify(payload, null, 2),
+      )
+      ompLog(`Task ${task.id}: transcript dumped to ${filename}`)
+    } catch (err) {
+      ompLog(`Task ${task.id}: transcript dump failed: ${String(err)}`)
     }
   }
 

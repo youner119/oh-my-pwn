@@ -96,8 +96,12 @@ const OmpPlugin: Plugin = async (input) => {
     : undefined
 
   // pwno-mcp container manager (single container, multi-session).
+  // serverUrl lets the tool re-register the MCP server with opencode at runtime
+  // (after the container is actually live) — the plugin-startup config hook
+  // registration happens before the container exists, so opencode's initial
+  // connect attempt fails silently and tools never appear.
   const pwnoManager = new PwnoContainerManager()
-  const ompPwnoContainerTool = createOmpPwnoContainerTool(pwnoManager)
+  const ompPwnoContainerTool = createOmpPwnoContainerTool(pwnoManager, serverUrl)
 
   return {
     config: async (cfg) => {

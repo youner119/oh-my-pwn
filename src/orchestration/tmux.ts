@@ -152,12 +152,15 @@ async function rebalanceRightColumn(): Promise<void> {
 
     const targetHeight = Math.floor(windowHeight / count)
 
-    // Resize each pane except the last (last takes remaining space)
+    // Sequential: each resize must complete before the next.
+    // tmux resize-pane auto-adjusts adjacent panes, so concurrent fire-and-forget
+    // requests race and overwrite each other → uneven layout.
     for (let i = 0; i < count - 1; i++) {
-      Bun.spawn(
+      const resizeProc = Bun.spawn(
         ["tmux", "resize-pane", "-t", rightColumnPaneIds[i], "-y", String(targetHeight)],
         { stdout: "ignore", stderr: "ignore" },
       )
+      await resizeProc.exited
     }
   } catch {
     // Non-critical — layout will just be slightly uneven

@@ -13,6 +13,7 @@ import type { PwnoContainerManager } from "./container-manager"
 
 export function createOmpPwnoContainerTool(
   manager: PwnoContainerManager,
+  serverUrl?: string,
 ): ToolDefinition {
   return tool({
     description: `Manage the pwno-mcp Docker container for parallel Exploiter instances.
@@ -58,10 +59,44 @@ Typical flow:
         switch (args.action) {
           case "ensure": {
             const status = await manager.ensure(args.workspace_path)
+            // Runtime MCP registration: opencode's plugin config hook fires at
+            // startup, before the pwno container exists. opencode tries to
+            // connect once, fails silently, and never retries. So we re-register
+            // here via the /mcp POST endpoint now that the server is live.
+            // Without this step, exploiter sub-agents see zero pwno-mcp tools.
+            let mcpRegistered: boolean | undefined
+            let mcpRegisterError: string | undefined
+            if (serverUrl) {
+              try {
+                const res = await fetch(`${serverUrl}/mcp`, {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({
+                    name: "pwno",
+                    config: {
+                      type: "remote",
+                      url: status.url,
+                      enabled: true,
+                    },
+                  }),
+                })
+                mcpRegistered = res.ok
+                if (!res.ok) {
+                  mcpRegisterError = `HTTP ${res.status}: ${await res.text().catch(() => "")}`
+                }
+              } catch (err) {
+                mcpRegistered = false
+                mcpRegisterError = String(err)
+              }
+            }
             return JSON.stringify({
               ok: true,
               action: "ensure",
               ...status,
+              ...(mcpRegistered !== undefined
+                ? { mcp_registered: mcpRegistered }
+                : {}),
+              ...(mcpRegisterError ? { mcp_register_error: mcpRegisterError } : {}),
             })
           }
           case "allocate_session": {
