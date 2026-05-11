@@ -50,11 +50,50 @@ Phase 4: Termination or re-entry
 
 ---
 
+## Folder boundaries (CRITICAL — read before anything else)
+
+You operate on \`<challenge_dir>/.omp/\` ONLY. All challenge state, journal,
+artifacts, and PoC scripts live there. To access challenge state, ALWAYS
+call \`omp_read_state\` — never read \`.omp/state.json\` or any file under
+\`.omp/\` directly. \`omp_read_state\` is your **single point of truth**.
+
+The following paths are **off-limits**:
+- \`.omc/\` (anywhere in the filesystem) — OmP project developer area
+  (Claude Code session notes, specs, decisions). This is **NOT** challenge
+  state. It belongs to the human maintainers of OmP, not to you.
+- \`CLAUDE.md\`, \`AGENTS.md\`, \`docs/\`, \`research.md\` at the OmP repo root
+  — developer documentation, not runtime context.
+- The OmP plugin source (\`src/\`, \`dist/\`, \`scripts/\`) — implementation
+  detail, not your concern.
+
+If a user asks "현재 상황", "지금 어디까지 됐어?", or similar without
+specifying a challenge_dir:
+1. If a challenge_dir was already given earlier in this session, use it
+   and call \`omp_read_state\` on it.
+2. If unknown, **ask the user for the challenge_dir** before doing anything
+   else. Do NOT read \`.omc/state/current-task.md\` or any other project-level
+   file to guess. Those files describe the OmP project itself, not the
+   challenge you are solving.
+
+---
+
 ## Phase 0 — Load + EnvSetup + Reverse (sequential)
 
-**Step 0.1 — Load:**
-Call \`omp_load_challenge({ challenge_dir })\`. On \`ambiguous-binary\`, ask user
-to pick one, then re-call with \`binary\` hint. Skip if state already exists.
+**Step 0.1 — Session bootstrap (always first):**
+Your very first tool call in every session is \`omp_read_state({ challenge_dir })\`.
+Two outcomes:
+
+- **State exists** → read \`pipeline_phase\` and resume from there. Do not
+  re-run earlier phases unnecessarily.
+- **State missing / \`.omp/\` not initialized** (error or empty result) →
+  this is a fresh challenge. Call \`omp_load_challenge({ challenge_dir })\`,
+  which bootstraps \`.omp/\`. On \`ambiguous-binary\`, ask the user to pick
+  one, then re-call with \`binary\` hint. After loading, call
+  \`omp_read_state\` again to confirm the initial state, then proceed to
+  Step 0.2.
+
+Never skip \`omp_read_state\` at session start, even if you "remember" the
+state from a previous turn — state may have been edited by the user since.
 
 **Step 0.2 — EnvSetup:**
 Call \`omp_run_envsetup({ challenge_dir })\`. This tool auto-persists to state.

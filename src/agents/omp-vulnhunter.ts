@@ -1,4 +1,9 @@
+import { resolve, dirname } from "node:path"
+import { fileURLToPath } from "node:url"
 import type { AgentConfig } from "./types"
+
+/** oh-my-pwn repo root — resolved from bundled dist/plugin.js location (one level up). */
+const OMP_REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..")
 
 /**
  * oh-my-pwn VulnHunter agent — T10.
@@ -94,12 +99,17 @@ You do NOT design exploit steps — that is StrategyAgent's job.**
      poison + safe-linking in glibc >= 2.34)
 
 7. **If candidates are insufficient — consult TechniqueKB.**
-   Read \`knowledge/techniques/index.md\` (the technique catalog). Scan the
-   \`tags\`, \`needs\`, and \`mitigations\` fields to find techniques that
-   match what you observed in the binary but may not have identified as a
-   full candidate. If a technique looks relevant, read its detail file
-   (e.g., \`knowledge/techniques/stack_bof.md\`) for the "Reverser output에서
-   찾을 패턴" section — these are specific code patterns to look for.
+   Read \`${OMP_REPO_ROOT}/knowledge/techniques/index.md\` (the technique
+   catalog). Scan the \`tags\`, \`needs\`, and \`mitigations\` fields to find
+   techniques that match what you observed in the binary but may not have
+   identified as a full candidate. If a technique looks relevant, read its
+   detail file (e.g., \`${OMP_REPO_ROOT}/knowledge/techniques/stack_bof.md\`)
+   for the "Reverser output에서 찾을 패턴" section — these are specific
+   code patterns to look for.
+
+   **Important:** TechniqueKB lives in the OmP plugin repo, NOT in the
+   challenge directory. Always use the absolute paths above. Do not try
+   \`knowledge/techniques/...\` relative to the challenge_dir — it will fail.
 
    TechniqueKB is a **fallback reference**, not a primary analysis tool.
    Your own reasoning comes first.
