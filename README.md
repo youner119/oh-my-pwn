@@ -6,7 +6,7 @@
 → Exploit → Verify 파이프라인을 agent들이 순차적으로 돌립니다. 사람은
 언제든 prompt 채널로 개입해서 교정 가능.
 
-**상태:** MVP 개발 중 (M2 Reverser 단계, T08 user test gate).
+**상태:** MVP 개발 중 — BN 전환 완료, exploit pipeline 병렬 orchestration 구현 단계.
 
 ## 빠른 시작
 
@@ -17,7 +17,7 @@
 # 2. 새 shell
 exec zsh
 
-# 3. Ghidra GUI 실행 + "omp"라는 이름의 project 생성/열기 + MCP server 시작
+# 3. Binary Ninja GUI 실행 + BN MCP plugin 활성화 (port 9009)
 
 # 4. OmP 전용 opencode TUI 시작
 omp
@@ -39,8 +39,12 @@ omp
 
 - `.omc/specs/deep-interview-oh-my-pwn.md` — 원본 요구사항 spec (T00–T24)
 - `.omc/specs/deep-interview-reverser-redesign.md` — Reverser agent 재설계
+- `.omc/specs/deep-interview-binary-ninja-transition.md` — Ghidra → Binary Ninja 전환
+- `.omc/specs/deep-interview-exploit-pipeline.md` — 3-agent exploit pipeline 설계
+- `.omc/specs/deep-interview-parallel-orchestration.md` — 병렬 orchestration 재설계
+- `.omc/specs/deep-interview-omo-subagent-import.md` — OmO subagent invocation import
 - `.omc/state/current-task.md` — 현재 진행 상황 (세션 연속성)
 
 ## 라이선스
 
-Private / personal use. 배포 예정 없음.
+MIT License
