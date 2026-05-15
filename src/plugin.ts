@@ -19,6 +19,10 @@ import { existsSync } from "node:fs"
 import type { Plugin } from "@opencode-ai/plugin"
 import { ompAgentConfigs } from "./agents/definitions"
 import {
+  installAgentSortShim,
+  reorderAgentsByPriority,
+} from "./agents/agent-sort-shim"
+import {
   ompReadStateTool,
   ompPatchStateTool,
   ompAppendJournalTool,
@@ -37,6 +41,11 @@ import {
   createOmpPwnoContainerTool,
 } from "./orchestration"
 import type { OmpSessionClient } from "./orchestration"
+
+// Install at module load so the patch is in place before opencode's agent
+// list sort runs (Remeda sortBy in packages/opencode/src/agent/agent.ts).
+// Idempotent.
+installAgentSortShim()
 
 const OmpPlugin: Plugin = async (input) => {
   // Capture SDK client for parallel orchestration infrastructure.
@@ -111,6 +120,14 @@ const OmpPlugin: Plugin = async (input) => {
       cfg.agent.build = { disable: true }
       cfg.agent.plan = { disable: true }
       Object.assign(cfg.agent, ompAgentConfigs)
+
+      // Force omp-orchestrator first in the TUI picker. opencode 1.4.x
+      // alphabetizes by agent name (sst/opencode#19127) which puts
+      // omp-exploiter first. reorderAgentsByPriority restores the
+      // OMP_AGENT_ORDER and injects `order: N` for future-proofing; the
+      // Array.prototype shim installed at module load enforces it against
+      // opencode's runtime sort.
+      cfg.agent = reorderAgentsByPriority(cfg.agent)
 
       // ── mcp ───────────────────────────────────────────────────────────────
       // binary-ninja-mcp: bridge (Node.js stdio) → BN plugin HTTP (port 9009).
