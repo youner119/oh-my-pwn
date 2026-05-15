@@ -59,8 +59,7 @@ Typical flow:
         switch (args.action) {
           case "ensure": {
             const status = await manager.ensure(args.workspace_path)
-            // Runtime MCP registration + transport-level health verification +
-            // tool-exposure verification.
+            // Runtime MCP registration + transport-level health verification.
             //
             // Background: opencode's plugin config hook fires at startup, before
             // the pwno container exists. opencode tries to connect once, fails
@@ -71,27 +70,32 @@ Typical flow:
             // until something else (a second ensure call) triggered the actual
             // transport=StreamableHTTP connected event.
             //
-            // Three-stage verification (each gates the next):
+            // Two-stage verification:
             //   1. mcp_registered: POST /mcp returns ok (opencode accepted config)
             //   2. mcp_connected:  POST /mcp/{name}/connect + GET /mcp polling
             //                      until status="connected" (transport open)
-            //   3. mcp_tools_exposed: GET /experimental/tool/ids returns names
-            //                        containing at least one `pwno_*` entry
-            //                        (opencode actually enumerated MCP tools
-            //                        into its tool registry — this is what
-            //                        sub-agent sessions will see)
             //
-            // mcp_tools_exposed is the strongest signal: if true, Exploiter
-            // sub-agents will find pwno_list_debug_sessions / pwno_get_context /
-            // etc. in their tool list. Orchestrator should not spawn SA until
-            // mcp_tools_exposed: true.
+            // Why no tool-registry check: opencode does NOT include MCP-provided
+            // tools in `/experimental/tool/ids` or `/experimental/tool` — both
+            // endpoints return only built-in + plugin tools. MCP tools are
+            // resolved per session.prompt at runtime. A `GET /experimental/
+            // tool/ids` filter for `pwno_*` therefore always returns 0 even
+            // when transport=connected and tools are usable inside sub-agent
+            // sessions. (Verified 2026-05-15 against a live omp instance:
+            // `/mcp` reported pwno+binja "connected", yet `/experimental/tool/ids`
+            // contained zero `pwno_*` / `binja_*` entries — while VH sessions
+            // simultaneously called `binja_get_data_decl` successfully.)
+            //
+            // Source of truth that pwno_* tools will be usable: `mcp_connected:
+            // true` plus the binja precedent — both servers are registered the
+            // same way (cfg.mcp[key] = {type:"remote"}), and binja already
+            // works in production sessions exposed as `binja_<toolname>`.
+            // opencode prefixes MCP tool names with `<configKey>_` at session
+            // resolution time; for our cfg.mcp["pwno"] that yields `pwno_*`.
             let mcpRegistered: boolean | undefined
             let mcpRegisterError: string | undefined
             let mcpConnected: boolean | undefined
             let mcpConnectError: string | undefined
-            let mcpToolsExposed: boolean | undefined
-            let mcpToolsError: string | undefined
-            let pwnoToolSample: string[] | undefined
             if (serverUrl) {
               try {
                 const res = await fetch(`${serverUrl}/mcp`, {
@@ -164,40 +168,6 @@ Typical flow:
                     `timeout (${CONNECT_TIMEOUT_MS}ms) waiting for pwno transport=connected`
                 }
               }
-
-              // Stage 3: verify pwno_* tools actually appear in opencode's
-              // tool registry. Transport=connected is necessary but not
-              // sufficient — opencode might not have enumerated tools yet,
-              // or the config-key→tool-prefix mapping might be wrong.
-              if (mcpConnected) {
-                try {
-                  const toolRes = await fetch(`${serverUrl}/experimental/tool/ids`)
-                  if (toolRes.ok) {
-                    const ids = (await toolRes.json().catch(() => null)) as
-                      | string[]
-                      | null
-                    if (Array.isArray(ids)) {
-                      const pwnoIds = ids.filter((id) => id.startsWith("pwno_"))
-                      if (pwnoIds.length > 0) {
-                        mcpToolsExposed = true
-                        pwnoToolSample = pwnoIds.slice(0, 6)
-                      } else {
-                        mcpToolsExposed = false
-                        mcpToolsError = `no pwno_* tools in opencode registry (total ids: ${ids.length})`
-                      }
-                    } else {
-                      mcpToolsExposed = false
-                      mcpToolsError = "tool ids response was not an array"
-                    }
-                  } else {
-                    mcpToolsExposed = false
-                    mcpToolsError = `HTTP ${toolRes.status} from /experimental/tool/ids`
-                  }
-                } catch (err) {
-                  mcpToolsExposed = false
-                  mcpToolsError = String(err)
-                }
-              }
             }
             return JSON.stringify({
               ok: true,
@@ -211,11 +181,6 @@ Typical flow:
                 ? { mcp_connected: mcpConnected }
                 : {}),
               ...(mcpConnectError ? { mcp_connect_error: mcpConnectError } : {}),
-              ...(mcpToolsExposed !== undefined
-                ? { mcp_tools_exposed: mcpToolsExposed }
-                : {}),
-              ...(mcpToolsError ? { mcp_tools_error: mcpToolsError } : {}),
-              ...(pwnoToolSample ? { pwno_tool_sample: pwnoToolSample } : {}),
             })
           }
           case "allocate_session": {

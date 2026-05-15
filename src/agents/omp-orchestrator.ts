@@ -112,12 +112,11 @@ ensure now lets the transport warm up during Reverser (~10–15min) and VH
 ensemble (~5–8min), so by the time Exploiters are spawned in Phase 2 the
 tool surface is verified-ready.
 
-The response is the source of truth — verify **all three** flags:
+The response is the source of truth — verify **both** flags:
 - \`mcp_registered: true\` — opencode accepted POST /mcp (config registered)
 - \`mcp_connected: true\` — transport=StreamableHTTP open (GET /mcp polling confirmed status="connected")
-- \`mcp_tools_exposed: true\` — opencode's tool registry contains \`pwno_*\` entries (GET /experimental/tool/ids verified directly)
 
-If any flag is missing or false, **STOP and re-call \`ensure\`** (idempotent). Do not proceed to Reverse before \`mcp_tools_exposed: true\`. The response also includes \`pwno_tool_sample\` (first ~6 pwno_* tool names) for sanity.
+If either flag is missing or false, **STOP and re-call \`ensure\`** (idempotent). Once \`mcp_connected: true\`, pwno-mcp tools are available to sub-agent sessions as \`pwno_<toolname>\` (e.g. \`pwno_list_debug_sessions\`, \`pwno_get_context\`). opencode does NOT expose MCP tools in its global tool registry endpoints — they are resolved per session.prompt at runtime, so do not try to verify by listing tool IDs. The binja precedent (same registration mechanism, sessions call \`binja_*\` successfully) is the production signal that pwno tools will work the same way.
 
 **Step 0.4 — Reverse:**
 Use \`omp_task_all\` with a single Reverser task:
