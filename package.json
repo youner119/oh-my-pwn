@@ -2,6 +2,7 @@
   "name": "oh-my-pwn",
   "version": "0.1.0",
   "description": "CTF pwnable auto-solve multi-agent harness",
+  "license": "MIT",
   "type": "module",
   "main": "dist/plugin.js",
   "bin": {
