@@ -103,4 +103,50 @@ describe("createOmpStrategistAgent", () => {
     const p = agent.prompt ?? ""
     expect(p).toContain("DO NOT: call `omp_patch_state`")
   })
+
+  test("prompt has explicit path forwarding section (host vs container)", () => {
+    const agent = createOmpStrategistAgent("test-model")
+    const p = agent.prompt ?? ""
+    expect(p).toContain("Path forwarding")
+    expect(p).toContain("host path")
+    expect(p).toContain("container paths")
+    expect(p).toContain("/workspace/<challenge_id>")
+  })
+
+  test("prompt forbids path rewriting and session_id invention", () => {
+    const agent = createOmpStrategistAgent("test-model")
+    const p = agent.prompt ?? ""
+    expect(p).toContain("DO NOT: rewrite paths")
+    expect(p).toContain("DO NOT: invent a `session_id`")
+    expect(p).toContain("sole id-allocator")
+  })
+
+  test("spawn template labels paths HOST vs CONTAINER", () => {
+    const agent = createOmpStrategistAgent("test-model")
+    const p = agent.prompt ?? ""
+    expect(p).toContain("(HOST — for Write/Read")
+    expect(p).toContain("(CONTAINER — for pwno-mcp calls)")
+    expect(p).toContain("assigned by Orchestrator")
+  })
+
+  test("prompt delegates execution mode choice to Exploiter", () => {
+    const agent = createOmpStrategistAgent("test-model")
+    const p = agent.prompt ?? ""
+    expect(p).toContain("Execution mode")
+    expect(p).toContain("Exploiter's call")
+    // SA must not pre-prescribe modes
+    expect(p).toContain("don't pre-prescribe it")
+  })
+
+  test("prompt references staging via omp_stage_challenge", () => {
+    const agent = createOmpStrategistAgent("test-model")
+    const p = agent.prompt ?? ""
+    expect(p).toContain("omp_stage_challenge")
+  })
+
+  test("Key principles include Path forwarding rule", () => {
+    const agent = createOmpStrategistAgent("test-model")
+    const p = agent.prompt ?? ""
+    expect(p).toContain("Path forwarding only")
+  })
 })
