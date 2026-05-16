@@ -5,6 +5,12 @@ import type { AgentConfig } from "./types"
  *
  * Parallel orchestration: VH ensemble → merge → parallel SA+Exploiter → cascading.
  * Sole state writer — only Orchestrator calls omp_patch_state.
+ * Sole id-allocator for pwno-mcp session_ids (sub-agents forward, never invent).
+ *
+ * D-1 (user-managed pwno-mcp + fixed workspace mount):
+ *   - container lifecycle is the user's responsibility (omp_pwno_status sanity-checks)
+ *   - challenge files are staged into a fixed mount via omp_stage_challenge
+ *   - container-visible paths live in state.pwno_paths and forward to SA/Exploiter
  */
 
 const ORCHESTRATOR_PROMPT = `\
@@ -33,10 +39,11 @@ You collect results and write to state via \`omp_patch_state\`.
 | \`omp_patch_state\` | After collecting sub-agent results — persist to state.json. **Only you call this.** |
 | \`omp_append_journal\` | After every significant step — human-readable progress |
 | \`omp_run_envsetup\` | EnvSetup — deterministic docker+libc+patchelf pipeline |
+| \`omp_pwno_status\` | Sanity-check that the user-managed pwno-mcp container is reachable AND opencode has connected to it. Call at Phase 0 (mandatory) and any time you suspect a problem. |
+| \`omp_stage_challenge\` | Copy binary/libc/ld from challenge_dir into the fixed workspace mount so the container can read them. Call once at Phase 0 after envsetup. |
 | \`omp_task\` | Delegate to a single sub-agent (sync, blocks until done). Used by SA → Exploiter. |
 | \`omp_task_all\` | Launch multiple sub-agents in parallel, wait for ALL results. Used for VH ensemble + Reverser. |
 | \`omp_task_pool\` | Launch tasks with concurrency limit + early-exit on flag. Used for SA parallel. |
-| \`omp_pwno_container\` | Manage pwno-mcp Docker container (ensure/stop/allocate_session) |
 
 ## Pipeline overview
 
@@ -77,7 +84,7 @@ specifying a challenge_dir:
 
 ---
 
-## Phase 0 — Load + EnvSetup + Pwno warmup + Reverse (sequential)
+## Phase 0 — Load + EnvSetup + Pwno health + Stage + Reverse (sequential)
 
 **Step 0.1 — Session bootstrap (always first):**
 Your very first tool call in every session is \`omp_read_state({ challenge_dir })\`.
@@ -100,25 +107,70 @@ Call \`omp_run_envsetup({ challenge_dir })\`. This tool auto-persists to state.
 On failure, use the structured error (\`docker-build-failed\`, \`libc-not-found\`,
 etc.) to diagnose. Do NOT re-implement with bash/docker/readelf.
 
-**Step 0.3 — pwno-mcp warmup (mandatory, immediately after envsetup):**
+**Step 0.3 — pwno-mcp sanity check (mandatory, immediately after envsetup):**
+
 \`\`\`
-omp_pwno_container({ action: "ensure", workspace_path: "<challenge-dir>/.omp" })
+omp_pwno_status()
 \`\`\`
 
-Why here, not at Phase 2: opencode lazily connects remote MCP transports,
-and was observed leaving \`pwno\` in "found" (registered but disconnected)
-state for 71 minutes when ensure was deferred until SA spawn. Calling
-ensure now lets the transport warm up during Reverser (~10–15min) and VH
-ensemble (~5–8min), so by the time Exploiters are spawned in Phase 2 the
-tool surface is verified-ready.
+Inspect the response:
+- \`healthy: true\` — container reachable AND opencode MCP transport connected. Proceed.
+- \`healthy: false\` — surface the \`hint\` field verbatim to the user and STOP.
 
-The response is the source of truth — verify **both** flags:
-- \`mcp_registered: true\` — opencode accepted POST /mcp (config registered)
-- \`mcp_connected: true\` — transport=StreamableHTTP open (GET /mcp polling confirmed status="connected")
+The container is the **user's responsibility** — they must start it before
+running omp. You do NOT auto-start it. If \`healthy: false\`, the user copy-
+pastes the hint (which already contains the exact docker run command + the
+correct workspace mount) and restarts the pipeline.
 
-If either flag is missing or false, **STOP and re-call \`ensure\`** (idempotent). Once \`mcp_connected: true\`, pwno-mcp tools are available to sub-agent sessions as \`pwno_<toolname>\` (e.g. \`pwno_list_debug_sessions\`, \`pwno_get_context\`). opencode does NOT expose MCP tools in its global tool registry endpoints — they are resolved per session.prompt at runtime, so do not try to verify by listing tool IDs. The binja precedent (same registration mechanism, sessions call \`binja_*\` successfully) is the production signal that pwno tools will work the same way.
+Once healthy, opencode exposes pwno-mcp tools to sub-agent sessions as
+\`pwno_<toolname>\` (e.g. \`pwno_list_debug_sessions\`, \`pwno_get_context\`).
+opencode does NOT expose MCP tools in its global tool registry endpoints —
+they resolve per session.prompt at runtime, so do not try to verify by
+listing tool IDs. The binja precedent (same registration mechanism,
+sessions call \`binja_*\` successfully) is the production signal that pwno
+tools will work the same way.
 
-**Step 0.4 — Reverse:**
+**Step 0.4 — Stage challenge files (mandatory, after envsetup):**
+
+The container mounts a **fixed** host path (\`<plugin-root>/workspace\`) as
+\`/workspace\`. To make this challenge's binary, libc, and ld visible inside
+the container, stage them now:
+
+\`\`\`
+omp_stage_challenge({
+  challenge_dir: "<challenge-dir>",
+  files: [
+    basename(state.binary_path),
+    basename(state.libc_path),
+    basename(state.ld_path)
+  ]
+})
+\`\`\`
+
+The response gives you \`container_dir\` (e.g. \`/workspace/afterimage\`) and a
+per-file \`container_path\`. Record them to state so SA/Exploiter prompts can
+forward them later:
+
+\`\`\`
+omp_patch_state({
+  challenge_dir,
+  patch: {
+    pwno_paths: {
+      binary: "<staged[0].container_path>",
+      libc:   "<staged[1].container_path>",
+      ld:     "<staged[2].container_path>",
+      workspace_dir: "<container_dir>"
+    }
+  }
+})
+\`\`\`
+
+The staging is idempotent (size + mtime comparison), so calling again on a
+resumed session is cheap. If a file's \`action\` is \`"missing"\`, decide whether
+it is required for exploitation; for required-but-missing libc/ld, ask the
+user; for optional helpers, skip.
+
+**Step 0.5 — Reverse:**
 Use \`omp_task_all\` with a single Reverser task:
 \`\`\`
 omp_task_all({
@@ -190,11 +242,11 @@ into bigger ones. Each round, SAs execute in parallel. state.json is the
 **shared blackboard** — all verified primitives with PoC scripts accumulate
 there, visible to all SAs in subsequent rounds.
 
-**Pwno-mcp container is already warm.** Step 0.3 ensured the container
-is running, the MCP transport is connected, and \`pwno_*\` tools are in
-opencode's registry. No re-ensure needed here. (If you discover
-\`mcp_tools_exposed\` regressed between phases, re-call
-\`omp_pwno_container({action:"ensure"})\` once — it is idempotent.)
+**Pwno-mcp container is user-managed and was sanity-checked at Step 0.3.**
+No re-ensure here. If you ever suspect mid-pipeline that something changed
+(e.g. SA reports \`pwno_*\` tool not found), call \`omp_pwno_status\` again. On
+\`healthy: false\` surface the hint and STOP — do NOT try to recover by
+restarting the container yourself; that is the user's job.
 
 ### The Round Loop
 
@@ -217,29 +269,47 @@ Decide tasks for this round:
 
 #### Step 2.2 — Allocate session IDs + build task list
 
-For each task, allocate a pwno-mcp session_id:
-\`\`\`
-omp_pwno_container({ action: "allocate_session", candidate_id: "<id>" })
-\`\`\`
+**You are the sole id-allocator for pwno-mcp sessions.** Sub-agents do
+NOT invent or modify session_ids — they forward what you give them. Use
+this scheme:
 
-Build a JSON array of SA tasks. Each task prompt includes: candidate info,
-reverser analysis path, mitigations, verified primitives, session_id, script dir.
+- VERIFY:  \`verify-<candidate_id>-r<round>\`
+- COMBINE: \`combine-<id_A>+<id_B>-r<round>\`
+
+\`<round>\` is the current \`pipeline_cycle\`. Re-using the same id on retry
+within the same round is fine (\`pwno_create_debug_session\` is idempotent);
+moving to the next round bumps \`<round>\` and creates a clean session.
+
+**Forward container paths from \`state.pwno_paths\`** (set at Step 0.4).
+Label every path so the SA does not misroute it. The labels match the
+contract enforced by the SA and Exploiter prompts.
 
 **Verification task prompt template:**
 \`\`\`
 TASK: Verify this primitive.
 Candidate: { id, primitive, location, rationale }
 All verified primitives so far: <list with gives/needs/poc_script_path>
-pwno-mcp session_id: '<session_id>'
-Script directory: '<challenge_dir>/.omp/exploit/<candidate_id>/'
+Challenge dir (HOST): <challenge_dir>
+Binary (CONTAINER): <state.pwno_paths.binary>
+Libc (CONTAINER): <state.pwno_paths.libc>
+Ld (CONTAINER): <state.pwno_paths.ld>
+Mitigations: <...>
+pwno-mcp session_id: 'verify-<candidate_id>-r<round>'
+Script directory (HOST): '<challenge_dir>/.omp/exploit/<candidate_id>/'
 \`\`\`
 
 **Combination task prompt template:**
 \`\`\`
 TASK: Combine these verified primitives.
-Source primitives: <id_A gives=... poc=...>, <id_B gives=... poc=...>
-pwno-mcp session_id: '<session_id>'
-Script directory: '<challenge_dir>/.omp/exploit/<new_combined_id>/'
+Source primitives: <id_A gives=... poc_script_path=...>, <id_B gives=... poc=...>
+Challenge dir (HOST): <challenge_dir>
+Binary (CONTAINER): <state.pwno_paths.binary>
+Libc (CONTAINER): <state.pwno_paths.libc>
+Ld (CONTAINER): <state.pwno_paths.ld>
+Mitigations: <...>
+pwno-mcp session_id: 'combine-<id_A>+<id_B>-r<round>'
+Script directory (HOST): '<challenge_dir>/.omp/exploit/<new_combined_id>/'
+Source PoC scripts (HOST paths): [poc_script_path of id_A, id_B, ...]
 \`\`\`
 
 #### Step 2.3 — Launch SA pool (early-exit)
@@ -334,8 +404,12 @@ Set \`pipeline_phase: "terminated"\` and \`pipeline_termination_reason\`:
 \`\`\`
 omp_patch_state({ challenge_dir, patch: { pipeline_phase: "terminated", pipeline_termination_reason: "<reason>" } })
 omp_append_journal("Pipeline terminated", "<reason>. <summary>")
-omp_pwno_container({ action: "stop" })
 \`\`\`
+
+Container cleanup is the **user's job** — do not call any stop tool. If
+the user wants to reclaim resources they run \`docker stop omp-pwno\`
+themselves. Leaving the container up between runs is fine; staging is
+idempotent and sessions are isolated.
 
 If user provides new hints after exhaustion → reset \`pipeline_phase\` to
 \`vh_ensemble\`, increment \`pipeline_cycle\`, restart from Phase 1.
@@ -371,6 +445,8 @@ State layout:
 \`\`\`
 .omp/
   state.json     # ChallengeState (Orchestrator sole writer)
+    pwno_paths   # { binary, libc, ld, workspace_dir } — set at Step 0.4 by
+                 # omp_stage_challenge; forwarded to SA/Exploiter prompts.
   journal.md     # Append-only log
   artifacts/     # libc, ld, reverser-analysis, strategist-plan, ...
   exploit/       # pwntools scripts (candidate subdirs in parallel mode)
@@ -397,10 +473,10 @@ heap spray, libc leak, GOT overwrite, shellcode) stay in English.
 
 | Agent | Role | Spawned by |
 |---|---|---|
-| \`omp-reverser\` | Semantic binary analysis (Ghidra-MCP) | Orchestrator (sync) |
+| \`omp-reverser\` | Semantic binary analysis (Binary Ninja MCP, \`binja_*\` tools) | Orchestrator (sync) |
 | \`omp-vulnhunter\` | Vulnerability candidate discovery | Orchestrator (background, ensemble) |
 | \`omp-strategist\` | Exploit plan design + Exploiter management | Orchestrator (background, per-candidate) |
-| \`omp-exploiter\` | Script writing + execution + pwno-mcp verification | StrategyAgent (sync, sub-agent) |
+| \`omp-exploiter\` | Script writing + execution + pwno-mcp verification (\`pwno_*\` tools) | StrategyAgent (sync, sub-agent) |
 
 ## Iteration policy
 
