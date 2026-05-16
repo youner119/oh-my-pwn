@@ -59,13 +59,43 @@ Typical flow:
         switch (args.action) {
           case "ensure": {
             const status = await manager.ensure(args.workspace_path)
-            // Runtime MCP registration: opencode's plugin config hook fires at
-            // startup, before the pwno container exists. opencode tries to
-            // connect once, fails silently, and never retries. So we re-register
-            // here via the /mcp POST endpoint now that the server is live.
-            // Without this step, exploiter sub-agents see zero pwno-mcp tools.
+            // Runtime MCP registration + transport-level health verification.
+            //
+            // Background: opencode's plugin config hook fires at startup, before
+            // the pwno container exists. opencode tries to connect once, fails
+            // silently, and never retries. POST /mcp re-registers the config —
+            // but opencode treats /mcp registration as lazy: it logs "found"
+            // and only opens the transport on first tool use or session refresh.
+            // Observed: a single POST /mcp left pwno in "found" state for 71min
+            // until something else (a second ensure call) triggered the actual
+            // transport=StreamableHTTP connected event.
+            //
+            // Two-stage verification:
+            //   1. mcp_registered: POST /mcp returns ok (opencode accepted config)
+            //   2. mcp_connected:  POST /mcp/{name}/connect + GET /mcp polling
+            //                      until status="connected" (transport open)
+            //
+            // Why no tool-registry check: opencode does NOT include MCP-provided
+            // tools in `/experimental/tool/ids` or `/experimental/tool` — both
+            // endpoints return only built-in + plugin tools. MCP tools are
+            // resolved per session.prompt at runtime. A `GET /experimental/
+            // tool/ids` filter for `pwno_*` therefore always returns 0 even
+            // when transport=connected and tools are usable inside sub-agent
+            // sessions. (Verified 2026-05-15 against a live omp instance:
+            // `/mcp` reported pwno+binja "connected", yet `/experimental/tool/ids`
+            // contained zero `pwno_*` / `binja_*` entries — while VH sessions
+            // simultaneously called `binja_get_data_decl` successfully.)
+            //
+            // Source of truth that pwno_* tools will be usable: `mcp_connected:
+            // true` plus the binja precedent — both servers are registered the
+            // same way (cfg.mcp[key] = {type:"remote"}), and binja already
+            // works in production sessions exposed as `binja_<toolname>`.
+            // opencode prefixes MCP tool names with `<configKey>_` at session
+            // resolution time; for our cfg.mcp["pwno"] that yields `pwno_*`.
             let mcpRegistered: boolean | undefined
             let mcpRegisterError: string | undefined
+            let mcpConnected: boolean | undefined
+            let mcpConnectError: string | undefined
             if (serverUrl) {
               try {
                 const res = await fetch(`${serverUrl}/mcp`, {
@@ -88,6 +118,56 @@ Typical flow:
                 mcpRegistered = false
                 mcpRegisterError = String(err)
               }
+
+              if (mcpRegistered) {
+                // Force transport open. /mcp/{name}/connect may itself return
+                // a status block; we ignore the body and rely on the polling
+                // loop below for the source of truth.
+                try {
+                  await fetch(`${serverUrl}/mcp/pwno/connect`, { method: "POST" })
+                } catch {
+                  // Non-fatal: opencode may auto-connect on the first GET /mcp.
+                }
+
+                const CONNECT_TIMEOUT_MS = 30_000
+                const POLL_INTERVAL_MS = 500
+                const deadline = Date.now() + CONNECT_TIMEOUT_MS
+                while (Date.now() < deadline) {
+                  let statusOk = false
+                  try {
+                    const statusRes = await fetch(`${serverUrl}/mcp`)
+                    if (statusRes.ok) {
+                      const body = (await statusRes.json().catch(() => null)) as
+                        | Record<string, { status: string; error?: string }>
+                        | null
+                      const pwno = body?.["pwno"]
+                      if (pwno?.status === "connected") {
+                        mcpConnected = true
+                        statusOk = true
+                        break
+                      }
+                      if (pwno?.status === "failed") {
+                        mcpConnected = false
+                        mcpConnectError = pwno.error || "pwno MCP status=failed"
+                        statusOk = true
+                        break
+                      }
+                      // "needs_auth" / "needs_client_registration" / undefined →
+                      // keep polling; opencode may still be establishing.
+                    }
+                  } catch (err) {
+                    mcpConnectError = String(err)
+                  }
+                  if (statusOk) break
+                  await new Promise((r) => setTimeout(r, POLL_INTERVAL_MS))
+                }
+                if (mcpConnected === undefined) {
+                  mcpConnected = false
+                  mcpConnectError =
+                    mcpConnectError ??
+                    `timeout (${CONNECT_TIMEOUT_MS}ms) waiting for pwno transport=connected`
+                }
+              }
             }
             return JSON.stringify({
               ok: true,
@@ -97,6 +177,10 @@ Typical flow:
                 ? { mcp_registered: mcpRegistered }
                 : {}),
               ...(mcpRegisterError ? { mcp_register_error: mcpRegisterError } : {}),
+              ...(mcpConnected !== undefined
+                ? { mcp_connected: mcpConnected }
+                : {}),
+              ...(mcpConnectError ? { mcp_connect_error: mcpConnectError } : {}),
             })
           }
           case "allocate_session": {

@@ -77,7 +77,7 @@ specifying a challenge_dir:
 
 ---
 
-## Phase 0 — Load + EnvSetup + Reverse (sequential)
+## Phase 0 — Load + EnvSetup + Pwno warmup + Reverse (sequential)
 
 **Step 0.1 — Session bootstrap (always first):**
 Your very first tool call in every session is \`omp_read_state({ challenge_dir })\`.
@@ -100,7 +100,25 @@ Call \`omp_run_envsetup({ challenge_dir })\`. This tool auto-persists to state.
 On failure, use the structured error (\`docker-build-failed\`, \`libc-not-found\`,
 etc.) to diagnose. Do NOT re-implement with bash/docker/readelf.
 
-**Step 0.3 — Reverse:**
+**Step 0.3 — pwno-mcp warmup (mandatory, immediately after envsetup):**
+\`\`\`
+omp_pwno_container({ action: "ensure", workspace_path: "<challenge-dir>/.omp" })
+\`\`\`
+
+Why here, not at Phase 2: opencode lazily connects remote MCP transports,
+and was observed leaving \`pwno\` in "found" (registered but disconnected)
+state for 71 minutes when ensure was deferred until SA spawn. Calling
+ensure now lets the transport warm up during Reverser (~10–15min) and VH
+ensemble (~5–8min), so by the time Exploiters are spawned in Phase 2 the
+tool surface is verified-ready.
+
+The response is the source of truth — verify **both** flags:
+- \`mcp_registered: true\` — opencode accepted POST /mcp (config registered)
+- \`mcp_connected: true\` — transport=StreamableHTTP open (GET /mcp polling confirmed status="connected")
+
+If either flag is missing or false, **STOP and re-call \`ensure\`** (idempotent). Once \`mcp_connected: true\`, pwno-mcp tools are available to sub-agent sessions as \`pwno_<toolname>\` (e.g. \`pwno_list_debug_sessions\`, \`pwno_get_context\`). opencode does NOT expose MCP tools in its global tool registry endpoints — they are resolved per session.prompt at runtime, so do not try to verify by listing tool IDs. The binja precedent (same registration mechanism, sessions call \`binja_*\` successfully) is the production signal that pwno tools will work the same way.
+
+**Step 0.4 — Reverse:**
 Use \`omp_task_all\` with a single Reverser task:
 \`\`\`
 omp_task_all({
@@ -172,10 +190,11 @@ into bigger ones. Each round, SAs execute in parallel. state.json is the
 **shared blackboard** — all verified primitives with PoC scripts accumulate
 there, visible to all SAs in subsequent rounds.
 
-**Step 2.0 — Ensure pwno-mcp container:**
-\`\`\`
-omp_pwno_container({ action: "ensure", workspace_path: "<challenge-dir>/.omp" })
-\`\`\`
+**Pwno-mcp container is already warm.** Step 0.3 ensured the container
+is running, the MCP transport is connected, and \`pwno_*\` tools are in
+opencode's registry. No re-ensure needed here. (If you discover
+\`mcp_tools_exposed\` regressed between phases, re-call
+\`omp_pwno_container({action:"ensure"})\` once — it is idempotent.)
 
 ### The Round Loop
 
