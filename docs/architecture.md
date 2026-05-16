@@ -117,7 +117,8 @@ tool: {
   // 병렬 인프라 tool (M5):
   omp_task: ompTaskTool,                         // 병렬 sub-agent spawn
   omp_background_output: ompBackgroundOutputTool, // task 결과 조회
-  omp_pwno_container: ompPwnoContainerTool,       // pwno-mcp container lifecycle
+  omp_pwno_status: ompPwnoStatusTool,             // D-1: user-managed container sanity check
+  omp_stage_challenge: ompStageChallengeTool,     // D-1: copy binary/libc/ld → workspace/<id>/
 }
 ```
 
@@ -247,17 +248,38 @@ Orchestrator (LLM)
 - Orchestrator가 결과를 수집하여 **순차적으로** state 기록
 - SA/Exploiter는 `omp_read_state`로 읽기만 가능
 
-### Single pwno-mcp Container + session_id
+### User-managed pwno-mcp Container + session_id (D-1)
 
 모든 Exploiter 인스턴스가 **1개 Docker container를 공유**하며 session_id로 격리:
 ```
-Exploiter-1 → pwno-mcp container (session_id=1)  ┐
-Exploiter-2 → pwno-mcp container (session_id=2)  ├─ 동일 container, 포트 5500
-Exploiter-3 → pwno-mcp container (session_id=3)  ┘
+Exploiter-1 → pwno-mcp container (session_id=verify-vuln_1-r1)   ┐
+Exploiter-2 → pwno-mcp container (session_id=verify-vuln_2-r1)   ├─ 동일 container, port 5500
+Exploiter-3 → pwno-mcp container (session_id=combine-v1+v2-r2)   ┘
 ```
 pwno-mcp가 session_id별로 GDB 프로세스를 격리 관리 (네이티브 multi-session).
-ContainerManager가 단일 container 시작/종료 + session_id 할당을 관리.
 port 분리 불필요.
+
+**Container lifecycle은 사용자 책임.** OmP는 docker run/stop 안 한다.
+사용자가 `omp` 실행 전에 직접 컨테이너를 띄움 — `scripts/setup-omp.sh`
+끝에 docker run 명령이 출력된다. workspace mount source는 **repo
+root의 `workspace/` 폴더로 고정** — challenge별로 mount path를 바꾸지
+않는다.
+
+**Challenge 파일은 staging으로 workspace에 들어간다.** Phase 0에서
+Orchestrator가 `omp_stage_challenge`를 호출하면 challenge_dir의
+binary/libc/ld가 `<plugin-root>/workspace/<challenge_id>/`로 copy되고
+컨테이너 안에서는 `/workspace/<id>/...`로 접근된다. staging은 mtime+size
+멱등이라 resume도 cheap.
+
+**session_id 작명은 Orchestrator 책임 (sole id-allocator):**
+- `verify-<candidate_id>-r<round>` (VERIFY task)
+- `combine-<id_A>+<id_B>-r<round>` (COMBINE task)
+
+Sub-agent (SA/Exploiter)는 받은 session_id를 그대로 forward, 생성/수정
+안 함.
+
+Container health는 `omp_pwno_status` tool로 sanity-check만 — Phase 0에서
+mandatory, 실패 시 docker run hint를 user에게 surface하고 STOP.
 
 ---
 

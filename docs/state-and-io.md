@@ -76,11 +76,26 @@
 | 필드 | 설명 |
 |---|---|
 | `libc_version` | `"2.35"` / `"static"` / `"unknown"` |
-| `libc_path` | 추출된 libc 절대경로 |
-| `ld_path` | 추출된 ld 절대경로 |
+| `libc_path` | 추출된 libc 절대경로 (host path) |
+| `ld_path` | 추출된 ld 절대경로 (host path) |
 | `docker_image` | 빌드된 이미지 태그 (예: `omp-42bee218`) |
 | `mitigations` | `{ nx, pie, canary, relro, seccomp, raw }` |
 | `remote` | `{ host, port, wrapper, command }` (Dockerfile에서 추론) |
+
+### pwno-mcp staging (D-1)
+
+Phase 0의 `omp_stage_challenge` 호출 결과. Orchestrator가 staging 후
+state에 기록하면 SA/Exploiter spawn 시 그대로 forward한다 (path forwarding).
+
+| 필드 | 설명 |
+|---|---|
+| `pwno_paths.binary` | container 안 binary 경로 (예: `/workspace/afterimage/chal`) |
+| `pwno_paths.libc` | container 안 libc 경로 |
+| `pwno_paths.ld` | container 안 ld 경로 |
+| `pwno_paths.workspace_dir` | container 안 challenge subdir (예: `/workspace/afterimage`) |
+
+호스트 backing dir은 `<plugin-root>/workspace/<challenge_id>/`. challenge별
+mount path 변경 없이 같은 컨테이너가 challenge들을 subdir로 격리.
 
 ### Reverser (T07)
 
