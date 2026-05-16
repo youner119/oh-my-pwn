@@ -4,6 +4,12 @@ dist/
 .DS_Store
 references/
 
+# pwno-mcp container mount source (D-1). Staged challenge files (binary/libc/ld)
+# accumulate here at runtime via omp_stage_challenge. The folder itself is kept
+# committed via .gitkeep so the docker mount target always exists.
+workspace/*
+!workspace/.gitkeep
+
 # Personal tool configs (not useful for other machines)
 .claude/
 .codex
