@@ -1,228 +1,141 @@
 /**
- * omp_pwno_container — manage the single pwno-mcp Docker container.
+ * omp_pwno_status — thin health check for the user-managed pwno-mcp container.
  *
- * Orchestrator calls this to:
- * - ensure the container is running before spawning Exploiters
- * - allocate unique session_ids per candidate
- * - stop the container after pipeline completes
+ * OmP no longer manages the container lifecycle. The user starts the container
+ * before running `omp`; this tool just verifies that:
+ *   1. the container is reachable at the configured URL, and
+ *   2. opencode has successfully connected to it as an MCP server.
+ *
+ * Orchestrator calls this at Phase 2 entry (and any time it wants a sanity
+ * check) so failure is loud and the hint message points to the exact docker
+ * command needed to start the container.
  */
 
 import type { ToolDefinition } from "@opencode-ai/plugin/tool"
 import { tool } from "@opencode-ai/plugin/tool"
-import type { PwnoContainerManager } from "./container-manager"
 
-export function createOmpPwnoContainerTool(
-  manager: PwnoContainerManager,
-  serverUrl?: string,
+export type ContainerProbe = (url: string) => Promise<boolean>
+
+export interface PwnoStatusToolOptions {
+  /** pwno-mcp endpoint (e.g. http://127.0.0.1:5500/mcp). */
+  pwnoUrl: string
+  /** opencode server URL, used to query MCP connection status. Optional. */
+  serverUrl?: string
+  /** Host workspace path the user is expected to mount (for the hint). */
+  workspacePath: string
+  /** TCP probe of the pwno-mcp endpoint. Defaults to a short fetch. */
+  probe?: ContainerProbe
+  /** Fetch implementation, injectable for tests. */
+  fetchImpl?: typeof fetch
+}
+
+const DEFAULT_PROBE_TIMEOUT_MS = 2_000
+
+async function defaultProbe(url: string): Promise<boolean> {
+  try {
+    const controller = new AbortController()
+    const timer = setTimeout(() => controller.abort(), DEFAULT_PROBE_TIMEOUT_MS)
+    try {
+      // Any TCP-level response (even 4xx/5xx) means the container is up.
+      // ECONNREFUSED / timeout / DNS failure → container down.
+      await fetch(url, { method: "GET", signal: controller.signal })
+      return true
+    } finally {
+      clearTimeout(timer)
+    }
+  } catch {
+    return false
+  }
+}
+
+function buildStartHint(pwnoUrl: string, workspacePath: string): string {
+  const port = (() => {
+    try {
+      return new URL(pwnoUrl).port || "5500"
+    } catch {
+      return "5500"
+    }
+  })()
+  return [
+    `pwno-mcp container is not reachable at ${pwnoUrl}.`,
+    `Start it with:`,
+    `  docker run --rm -d --name omp-pwno \\`,
+    `    -p ${port}:5500 \\`,
+    `    --cap-add=SYS_PTRACE --cap-add=SYS_ADMIN \\`,
+    `    --security-opt seccomp=unconfined \\`,
+    `    -v "${workspacePath}:/workspace" \\`,
+    `    ghcr.io/pwno-io/pwno-mcp:latest`,
+  ].join("\n")
+}
+
+function buildReconnectHint(serverUrl: string | undefined, status: string): string {
+  if (!serverUrl) {
+    return `Container reachable but opencode reports pwno MCP status="${status}". Restart omp.`
+  }
+  return [
+    `Container reachable but opencode reports pwno MCP status="${status}".`,
+    `Try forcing a reconnect:`,
+    `  curl -X POST ${serverUrl}/mcp/pwno/connect`,
+    `or restart omp.`,
+  ].join("\n")
+}
+
+export function createOmpPwnoStatusTool(
+  options: PwnoStatusToolOptions,
 ): ToolDefinition {
+  const probe = options.probe ?? defaultProbe
+  const fetchImpl = options.fetchImpl ?? fetch
+
   return tool({
-    description: `Manage the pwno-mcp Docker container for parallel Exploiter instances.
+    description: `Verify that the pwno-mcp container is reachable and that opencode has connected to it.
 
-Actions:
-- "ensure": Start the container if not running. Returns the MCP URL.
-  pwno-mcp supports multiple debug sessions in one container via session_id.
-- "allocate_session": Get a unique session_id for a candidate.
-  Pass this session_id to the Exploiter so it uses its own isolated GDB session.
-- "stop": Stop and remove the container after pipeline completes.
-- "status": Check if the container is running.
+OmP does NOT start the container — the user is expected to start it before running omp. Use this tool at Phase 2 entry (and any time you suspect a problem) to fail fast with a clear message.
 
-Typical flow:
-1. omp_pwno_container(action="ensure", workspace_path="/path/to/challenge/.omp")
-2. omp_pwno_container(action="allocate_session", candidate_id="vuln_bof_main") → "exploit-vuln_bof_main"
-3. ... spawn Exploiters with their session_ids ...
-4. omp_pwno_container(action="stop")`,
-    args: {
-      action: tool.schema
-        .string()
-        .describe(
-          'One of: "ensure", "allocate_session", "stop", "status".',
-        ),
-      workspace_path: tool.schema
-        .string()
-        .optional()
-        .describe(
-          'For "ensure": absolute path to mount as /workspace (typically <challenge-dir>/.omp).',
-        ),
-      candidate_id: tool.schema
-        .string()
-        .optional()
-        .describe(
-          'For "allocate_session": the candidate id to generate a session_id for.',
-        ),
-    },
-    async execute(args: {
-      action: string
-      workspace_path?: string
-      candidate_id?: string
-    }) {
-      try {
-        switch (args.action) {
-          case "ensure": {
-            const status = await manager.ensure(args.workspace_path)
-            // Runtime MCP registration + transport-level health verification.
-            //
-            // Background: opencode's plugin config hook fires at startup, before
-            // the pwno container exists. opencode tries to connect once, fails
-            // silently, and never retries. POST /mcp re-registers the config —
-            // but opencode treats /mcp registration as lazy: it logs "found"
-            // and only opens the transport on first tool use or session refresh.
-            // Observed: a single POST /mcp left pwno in "found" state for 71min
-            // until something else (a second ensure call) triggered the actual
-            // transport=StreamableHTTP connected event.
-            //
-            // Two-stage verification:
-            //   1. mcp_registered: POST /mcp returns ok (opencode accepted config)
-            //   2. mcp_connected:  POST /mcp/{name}/connect + GET /mcp polling
-            //                      until status="connected" (transport open)
-            //
-            // Why no tool-registry check: opencode does NOT include MCP-provided
-            // tools in `/experimental/tool/ids` or `/experimental/tool` — both
-            // endpoints return only built-in + plugin tools. MCP tools are
-            // resolved per session.prompt at runtime. A `GET /experimental/
-            // tool/ids` filter for `pwno_*` therefore always returns 0 even
-            // when transport=connected and tools are usable inside sub-agent
-            // sessions. (Verified 2026-05-15 against a live omp instance:
-            // `/mcp` reported pwno+binja "connected", yet `/experimental/tool/ids`
-            // contained zero `pwno_*` / `binja_*` entries — while VH sessions
-            // simultaneously called `binja_get_data_decl` successfully.)
-            //
-            // Source of truth that pwno_* tools will be usable: `mcp_connected:
-            // true` plus the binja precedent — both servers are registered the
-            // same way (cfg.mcp[key] = {type:"remote"}), and binja already
-            // works in production sessions exposed as `binja_<toolname>`.
-            // opencode prefixes MCP tool names with `<configKey>_` at session
-            // resolution time; for our cfg.mcp["pwno"] that yields `pwno_*`.
-            let mcpRegistered: boolean | undefined
-            let mcpRegisterError: string | undefined
-            let mcpConnected: boolean | undefined
-            let mcpConnectError: string | undefined
-            if (serverUrl) {
-              try {
-                const res = await fetch(`${serverUrl}/mcp`, {
-                  method: "POST",
-                  headers: { "Content-Type": "application/json" },
-                  body: JSON.stringify({
-                    name: "pwno",
-                    config: {
-                      type: "remote",
-                      url: status.url,
-                      enabled: true,
-                    },
-                  }),
-                })
-                mcpRegistered = res.ok
-                if (!res.ok) {
-                  mcpRegisterError = `HTTP ${res.status}: ${await res.text().catch(() => "")}`
-                }
-              } catch (err) {
-                mcpRegistered = false
-                mcpRegisterError = String(err)
-              }
+Returns:
+  {
+    healthy: bool,                       // true only if container reachable AND mcp connected
+    container_reachable: bool,
+    container_url: string,
+    mcp_status: "connected" | "failed" | "found" | "not_registered" | "unknown",
+    hint?: string                        // present when NOT healthy — copy-pasteable fix
+  }
 
-              if (mcpRegistered) {
-                // Force transport open. /mcp/{name}/connect may itself return
-                // a status block; we ignore the body and rely on the polling
-                // loop below for the source of truth.
-                try {
-                  await fetch(`${serverUrl}/mcp/pwno/connect`, { method: "POST" })
-                } catch {
-                  // Non-fatal: opencode may auto-connect on the first GET /mcp.
-                }
+If healthy=false, surface the hint to the user and STOP — do not proceed with exploitation.`,
+    args: {},
+    async execute() {
+      const containerReachable = await probe(options.pwnoUrl)
 
-                const CONNECT_TIMEOUT_MS = 30_000
-                const POLL_INTERVAL_MS = 500
-                const deadline = Date.now() + CONNECT_TIMEOUT_MS
-                while (Date.now() < deadline) {
-                  let statusOk = false
-                  try {
-                    const statusRes = await fetch(`${serverUrl}/mcp`)
-                    if (statusRes.ok) {
-                      const body = (await statusRes.json().catch(() => null)) as
-                        | Record<string, { status: string; error?: string }>
-                        | null
-                      const pwno = body?.["pwno"]
-                      if (pwno?.status === "connected") {
-                        mcpConnected = true
-                        statusOk = true
-                        break
-                      }
-                      if (pwno?.status === "failed") {
-                        mcpConnected = false
-                        mcpConnectError = pwno.error || "pwno MCP status=failed"
-                        statusOk = true
-                        break
-                      }
-                      // "needs_auth" / "needs_client_registration" / undefined →
-                      // keep polling; opencode may still be establishing.
-                    }
-                  } catch (err) {
-                    mcpConnectError = String(err)
-                  }
-                  if (statusOk) break
-                  await new Promise((r) => setTimeout(r, POLL_INTERVAL_MS))
-                }
-                if (mcpConnected === undefined) {
-                  mcpConnected = false
-                  mcpConnectError =
-                    mcpConnectError ??
-                    `timeout (${CONNECT_TIMEOUT_MS}ms) waiting for pwno transport=connected`
-                }
-              }
-            }
-            return JSON.stringify({
-              ok: true,
-              action: "ensure",
-              ...status,
-              ...(mcpRegistered !== undefined
-                ? { mcp_registered: mcpRegistered }
-                : {}),
-              ...(mcpRegisterError ? { mcp_register_error: mcpRegisterError } : {}),
-              ...(mcpConnected !== undefined
-                ? { mcp_connected: mcpConnected }
-                : {}),
-              ...(mcpConnectError ? { mcp_connect_error: mcpConnectError } : {}),
-            })
+      let mcpStatus: string = "unknown"
+      if (options.serverUrl) {
+        try {
+          const res = await fetchImpl(`${options.serverUrl}/mcp`)
+          if (res.ok) {
+            const body = (await res.json().catch(() => null)) as
+              | Record<string, { status?: string }>
+              | null
+            mcpStatus = body?.["pwno"]?.status ?? "not_registered"
           }
-          case "allocate_session": {
-            if (!args.candidate_id) {
-              return JSON.stringify({
-                error: "missing_candidate_id",
-                message: "candidate_id is required for allocate_session",
-              })
-            }
-            const sessionId = manager.allocateSessionId(args.candidate_id)
-            return JSON.stringify({
-              ok: true,
-              action: "allocate_session",
-              session_id: sessionId,
-              candidate_id: args.candidate_id,
-            })
-          }
-          case "stop": {
-            await manager.stop()
-            return JSON.stringify({ ok: true, action: "stop" })
-          }
-          case "status": {
-            const running = await manager.isRunning()
-            return JSON.stringify({
-              ok: true,
-              action: "status",
-              running,
-              url: manager.url,
-            })
-          }
-          default:
-            return JSON.stringify({
-              error: "unknown_action",
-              message: `Unknown action: ${args.action}. Use "ensure", "allocate_session", "stop", or "status".`,
-            })
+        } catch {
+          // leave as "unknown"
         }
-      } catch (err) {
-        return JSON.stringify({
-          error: "container_error",
-          message: String(err),
-        })
       }
+
+      const healthy = containerReachable && mcpStatus === "connected"
+
+      let hint: string | undefined
+      if (!containerReachable) {
+        hint = buildStartHint(options.pwnoUrl, options.workspacePath)
+      } else if (mcpStatus !== "connected") {
+        hint = buildReconnectHint(options.serverUrl, mcpStatus)
+      }
+
+      return JSON.stringify({
+        healthy,
+        container_reachable: containerReachable,
+        container_url: options.pwnoUrl,
+        mcp_status: mcpStatus,
+        ...(hint ? { hint } : {}),
+      })
     },
   })
 }

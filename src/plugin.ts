@@ -5,17 +5,20 @@
  * opencode TUI의 agent picker에서 선택 가능.
  *
  * MCP:
- *   - ghidra: bridge_mcp_ghidra.py (stdio) — reverser agent가 사용.
- *     브릿지 경로는 OMP_GHIDRA_BRIDGE_PATH 환경변수로만 지정 (하드코딩 없음).
- *     env var가 비어 있거나 파일이 존재하지 않으면 ghidra MCP 등록을 skip하고
- *     stderr에 경고를 남긴다. setup-omp.sh가 경로 탐지/alias 설정을 담당.
+ *   - binja: Binary Ninja MCP bridge (Node stdio) — reverser agent가 사용.
+ *     OMP_BN_BRIDGE_PATH 환경변수로 bridge dist 경로 지정.
  *
  *   - pwno: pwno-mcp Docker (HTTP remote) — exploiter agent가 사용.
- *     http://127.0.0.1:5500/mcp 기본. OMP_PWNO_MCP_URL 환경변수로 override.
- *     Docker container가 실행 중이어야 동작. 없으면 skip + 경고.
+ *     http://127.0.0.1:5500/mcp 기본, OMP_PWNO_MCP_URL로 override.
+ *     **컨테이너는 사용자가 omp 실행 전에 직접 띄움.** OmP는 lifecycle 관리하지
+ *     않음. omp_pwno_status tool로 컨테이너/MCP 연결 상태만 sanity check.
+ *     컨테이너 mount source는 repo root의 workspace/ (고정) — omp_stage_challenge가
+ *     challenge 파일을 여기로 복사한다.
  */
 
 import { existsSync } from "node:fs"
+import { resolve, dirname } from "node:path"
+import { fileURLToPath } from "node:url"
 import type { Plugin } from "@opencode-ai/plugin"
 import { ompAgentConfigs } from "./agents/definitions"
 import {
@@ -33,14 +36,17 @@ import {
 } from "./tools"
 import {
   BackgroundManager,
-  PwnoContainerManager,
   createOmpTaskTool,
   createOmpTaskAllTool,
   createOmpTaskPoolTool,
   createOmpBackgroundOutputTool,
-  createOmpPwnoContainerTool,
+  createOmpPwnoStatusTool,
 } from "./orchestration"
 import type { OmpSessionClient } from "./orchestration"
+
+/** Repo root (parent of dist/plugin.js). Used as the canonical workspace mount source. */
+const OMP_REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..")
+const OMP_WORKSPACE_PATH = resolve(OMP_REPO_ROOT, "workspace")
 
 // Install at module load so the patch is in place before opencode's agent
 // list sort runs (Remeda sortBy in packages/opencode/src/agent/agent.ts).
@@ -104,13 +110,16 @@ const OmpPlugin: Plugin = async (input) => {
     ? createOmpBackgroundOutputTool(manager)
     : undefined
 
-  // pwno-mcp container manager (single container, multi-session).
-  // serverUrl lets the tool re-register the MCP server with opencode at runtime
-  // (after the container is actually live) — the plugin-startup config hook
-  // registration happens before the container exists, so opencode's initial
-  // connect attempt fails silently and tools never appear.
-  const pwnoManager = new PwnoContainerManager()
-  const ompPwnoContainerTool = createOmpPwnoContainerTool(pwnoManager, serverUrl)
+  // pwno-mcp health check tool. Container lifecycle is the user's
+  // responsibility — they start it before omp. This tool just probes the
+  // configured URL and reports opencode's MCP connection status so the
+  // Orchestrator can fail fast at Phase 2 entry.
+  const pwnoUrl = process.env["OMP_PWNO_MCP_URL"] || "http://127.0.0.1:5500/mcp"
+  const ompPwnoStatusTool = createOmpPwnoStatusTool({
+    pwnoUrl,
+    serverUrl,
+    workspacePath: OMP_WORKSPACE_PATH,
+  })
 
   return {
     config: async (cfg) => {
@@ -153,11 +162,13 @@ const OmpPlugin: Plugin = async (input) => {
         )
       }
 
-      // pwno-mcp: Docker HTTP remote — exploiter agent의 gdb/pwndbg 관찰용.
-      // docker run --rm -p 5500:5500 --cap-add=SYS_PTRACE --cap-add=SYS_ADMIN \
-      //   --security-opt seccomp=unconfined -v "$PWD/workspace:/workspace" \
-      //   ghcr.io/pwno-io/pwno-mcp:latest
-      const pwnoUrl = process.env["OMP_PWNO_MCP_URL"] || "http://127.0.0.1:5500/mcp"
+      // pwno-mcp: HTTP remote MCP — exploiter agent의 gdb/pwndbg 관찰용.
+      // 컨테이너는 사용자가 직접 띄움 — repo root의 workspace/를 mount하면 된다:
+      //   docker run --rm -d --name omp-pwno -p 5500:5500 \
+      //     --cap-add=SYS_PTRACE --cap-add=SYS_ADMIN \
+      //     --security-opt seccomp=unconfined \
+      //     -v "${OMP_WORKSPACE_PATH}:/workspace" \
+      //     ghcr.io/pwno-io/pwno-mcp:latest
       const pwnoEnabled = process.env["OMP_PWNO_MCP_DISABLED"] !== "1"
       if (pwnoEnabled) {
         cfg.mcp ??= {}
@@ -192,7 +203,7 @@ const OmpPlugin: Plugin = async (input) => {
       ...(ompBackgroundOutputTool
         ? { omp_background_output: ompBackgroundOutputTool }
         : {}),
-      omp_pwno_container: ompPwnoContainerTool,
+      omp_pwno_status: ompPwnoStatusTool,
     },
   }
 }
