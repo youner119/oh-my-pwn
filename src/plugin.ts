@@ -33,6 +33,7 @@ import {
   ompLoadChallengeTool,
   ompGetTemplateTool,
   ompVerifyTemplateOutputTool,
+  createOmpStageChallengeTool,
 } from "./tools"
 import {
   BackgroundManager,
@@ -121,6 +122,13 @@ const OmpPlugin: Plugin = async (input) => {
     workspacePath: OMP_WORKSPACE_PATH,
   })
 
+  // Stage challenge files into the canonical workspace mount source.
+  // Orchestrator calls this once at Phase 2 entry, then forwards the returned
+  // container_path values to StrategyAgent.
+  const ompStageChallengeTool = createOmpStageChallengeTool({
+    workspacePath: OMP_WORKSPACE_PATH,
+  })
+
   return {
     config: async (cfg) => {
       // ── agents ────────────────────────────────────────────────────────────
@@ -204,6 +212,7 @@ const OmpPlugin: Plugin = async (input) => {
         ? { omp_background_output: ompBackgroundOutputTool }
         : {}),
       omp_pwno_status: ompPwnoStatusTool,
+      omp_stage_challenge: ompStageChallengeTool,
     },
   }
 }
