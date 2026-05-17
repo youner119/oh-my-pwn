@@ -143,13 +143,26 @@ omp_stage_challenge({
     basename(state.binary_path),
     basename(state.libc_path),
     basename(state.ld_path)
-  ]
+  ],
+  binary_name: basename(state.binary_path),
+  libc_name:   basename(state.libc_path),
+  ld_name:     basename(state.ld_path)
 })
 \`\`\`
 
-The response gives you \`container_dir\` (e.g. \`/workspace/afterimage\`) and a
-per-file \`container_path\`. Record them to state so SA/Exploiter prompts can
-forward them later:
+Always pass \`binary_name\`/\`libc_name\`/\`ld_name\` together. The tool then
+(a) prefers \`<challenge_dir>/.omp/artifacts/<name>.orig\` over the live
+file when staging (avoiding envsetup's host-only patchelf interpreter), and
+(b) re-runs patchelf on the staged binary so its interpreter/rpath point at
+container paths (\`/workspace/<id>/<ld>\` + \`/workspace/<id>\`). The response
+contains a \`patchelf\` field — verify \`patchelf.applied === true\` before
+proceeding. If \`applied: false\` with a "failed" reason, surface the reason
+to the user and stop; otherwise (skipped-args / source-missing) revisit the
+arguments above.
+
+The response also gives you \`container_dir\` (e.g. \`/workspace/afterimage\`)
+and a per-file \`container_path\`. Record them to state so SA/Exploiter
+prompts can forward them later:
 
 \`\`\`
 omp_patch_state({
