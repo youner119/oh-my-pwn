@@ -129,6 +129,16 @@ describe("createOmpStrategistAgent", () => {
     expect(p).toContain("assigned by Orchestrator")
   })
 
+  test("spawn template forwards reverser artifacts paths", () => {
+    const agent = createOmpStrategistAgent("test-model")
+    const p = agent.prompt ?? ""
+    expect(p).toContain("Reverser artifacts (HOST)")
+    expect(p).toContain(".omp/artifacts/")
+    expect(p).toContain("reverser-analysis.md")
+    expect(p).toContain("pseudocode/")
+    expect(p).toMatch(/Read these FIRST|do not call binja_\*/)
+  })
+
   test("prompt emits recommended_mode hint with 2-way classification", () => {
     const agent = createOmpStrategistAgent("test-model")
     const p = agent.prompt ?? ""

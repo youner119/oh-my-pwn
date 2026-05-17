@@ -180,7 +180,7 @@ omp_task({
   agent: "omp-exploiter",
   description: "Verify/combine: <primitive>",
   prompt: \`Challenge dir (HOST — for Write/Read of script files, also Mode 1 bash cwd): <challenge_dir>
-    Binary (CONTAINER — for pwno-mcp Mode 2/4 calls): <binary_path>
+    Binary (CONTAINER — for pwno-mcp Mode 2 calls): <binary_path>
     Libc (CONTAINER): <libc_path>
     Ld (CONTAINER): <ld_path>
     Mitigations: <...>
@@ -190,7 +190,13 @@ omp_task({
 
     recommended_mode: <1|2>  (SA's recommended Exploiter execution mode per Step 4b — 1=host pwntools for stdout-only evidence; 2=pwncli driver with GDB attach when memory/register inspection is needed. Exploiter may override with reason.)
 
-    pwno-mcp session_id: '<session_id>'  (assigned by Orchestrator — do not change; only used in Mode 2/4)
+    Reverser artifacts (HOST): '<challenge_dir>/.omp/artifacts/'
+    - reverser-analysis.md (narrative)
+    - pseudocode/<function>.txt (HLIL per function)
+    - pseudocode-c/<function>.txt (C-style)
+    Read these FIRST for any extra context beyond this task description; do not call binja_* unless artifacts/ truly does not cover what you need (BN GUI is usually not open in-session).
+
+    pwno-mcp session_id: '<session_id>'  (assigned by Orchestrator — do not change; only used in Mode 2)
     Script directory (HOST): '<challenge_dir>/.omp/exploit/<candidate_id>/'
 
     Source PoC scripts (HOST paths, if combining): <paths>
