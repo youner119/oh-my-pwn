@@ -44,8 +44,8 @@ tool로 만들지 않고 agent prompt에서 자연어로 처리합니다.
 
 모두 `src/tools/*.ts` / `src/orchestration/*.ts`에 구현돼 있고
 `src/plugin.ts`에서 session 레벨로 등록됩니다. 원래 7개에서 M5 병렬
-인프라 + D-1 워크스페이스 리디자인으로 4개 추가됨 (BN 전환으로
-`omp_save_decompiled` 제거, D-1으로 `omp_pwno_container` 제거).
+인프라 + pwno 호환성 수정으로 4개 추가됨 (BN 전환으로
+`omp_save_decompiled` 제거, pwno 호환성 수정으로 `omp_pwno_container` 제거).
 
 ---
 

@@ -6,7 +6,7 @@ import type { AgentConfig } from "./types"
 const OMP_REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..")
 
 /**
- * oh-my-pwn StrategyAgent — D-1 (user-managed pwno-mcp + fixed workspace mount).
+ * oh-my-pwn StrategyAgent — pwno 호환성 수정 (user-managed pwno-mcp + fixed workspace mount).
  *
  * The StrategyAgent receives a SINGLE vulnerability candidate from
  * Orchestrator and:

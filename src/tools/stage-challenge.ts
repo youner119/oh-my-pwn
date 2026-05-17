@@ -1,7 +1,7 @@
 /**
  * omp_stage_challenge — copy challenge files into the canonical workspace mount.
  *
- * D-1 design: pwno-mcp container mounts a FIXED host path (<plugin-root>/workspace)
+ * pwno 호환성 수정 design: pwno-mcp container mounts a FIXED host path (<plugin-root>/workspace)
  * as /workspace. To make a challenge's binary/libc/ld visible to GDB inside the
  * container, this tool copies them from the challenge directory to
  * <workspace>/<challenge_id>/.

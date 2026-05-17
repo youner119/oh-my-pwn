@@ -7,7 +7,7 @@ import type { AgentConfig } from "./types"
  * Sole state writer — only Orchestrator calls omp_patch_state.
  * Sole id-allocator for pwno-mcp session_ids (sub-agents forward, never invent).
  *
- * D-1 (user-managed pwno-mcp + fixed workspace mount):
+ * pwno 호환성 수정 (user-managed pwno-mcp + fixed workspace mount):
  *   - container lifecycle is the user's responsibility (omp_pwno_status sanity-checks)
  *   - challenge files are staged into a fixed mount via omp_stage_challenge
  *   - container-visible paths live in state.pwno_paths and forward to SA/Exploiter

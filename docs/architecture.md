@@ -117,8 +117,8 @@ tool: {
   // 병렬 인프라 tool (M5):
   omp_task: ompTaskTool,                         // 병렬 sub-agent spawn
   omp_background_output: ompBackgroundOutputTool, // task 결과 조회
-  omp_pwno_status: ompPwnoStatusTool,             // D-1: user-managed container sanity check
-  omp_stage_challenge: ompStageChallengeTool,     // D-1: copy binary/libc/ld → workspace/<id>/
+  omp_pwno_status: ompPwnoStatusTool,             // pwno 호환성 수정: user-managed container sanity check
+  omp_stage_challenge: ompStageChallengeTool,     // pwno 호환성 수정: copy binary/libc/ld → workspace/<id>/
 }
 ```
 
@@ -248,7 +248,7 @@ Orchestrator (LLM)
 - Orchestrator가 결과를 수집하여 **순차적으로** state 기록
 - SA/Exploiter는 `omp_read_state`로 읽기만 가능
 
-### User-managed pwno-mcp Container + session_id (D-1)
+### User-managed pwno-mcp Container + session_id (pwno 호환성 수정)
 
 모든 Exploiter 인스턴스가 **1개 Docker container를 공유**하며 session_id로 격리:
 ```

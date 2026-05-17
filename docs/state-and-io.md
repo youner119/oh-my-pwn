@@ -82,7 +82,7 @@
 | `mitigations` | `{ nx, pie, canary, relro, seccomp, raw }` |
 | `remote` | `{ host, port, wrapper, command }` (Dockerfile에서 추론) |
 
-### pwno-mcp staging (D-1)
+### pwno-mcp staging (pwno 호환성 수정)
 
 Phase 0의 `omp_stage_challenge` 호출 결과. Orchestrator가 staging 후
 state에 기록하면 SA/Exploiter spawn 시 그대로 forward한다 (path forwarding).

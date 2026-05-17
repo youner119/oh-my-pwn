@@ -21,7 +21,7 @@ describe("createOmpOrchestratorAgent", () => {
     expect(p).toContain("sole id-allocator")
   })
 
-  test("Tools table references the D-1 surface (status + stage), not the legacy container tool", () => {
+  test("Tools table references the pwno 호환성 수정 surface (status + stage), not the legacy container tool", () => {
     const agent = createOmpOrchestratorAgent("test-model")
     const p = agent.prompt ?? ""
     expect(p).toContain("`omp_pwno_status`")
