@@ -129,19 +129,24 @@ describe("createOmpStrategistAgent", () => {
     expect(p).toContain("assigned by Orchestrator")
   })
 
-  test("prompt emits requires_gdb inspection-mode hint per primitive class", () => {
+  test("prompt emits recommended_mode hint with 3-way classification", () => {
     const agent = createOmpStrategistAgent("test-model")
     const p = agent.prompt ?? ""
     // Step 4b classification rule exists
     expect(p).toContain("Step 4b")
-    expect(p).toContain("requires_gdb")
-    // Write-side primitives → true
-    expect(p).toMatch(/\*_write|arbitrary-write/)
-    expect(p).toMatch(/tcache_poison|house_of_/)
-    // Read/leak → false
+    expect(p).toContain("recommended_mode")
+    // All three modes documented
+    expect(p).toMatch(/recommended_mode:\s*1/)
+    expect(p).toMatch(/recommended_mode:\s*2/)
+    expect(p).toMatch(/recommended_mode:\s*4/)
+    // Write-side primitives → Mode 2
+    expect(p).toMatch(/\*_write|tcache_poison|house_of_/)
+    // Read/leak → Mode 1
     expect(p).toMatch(/fmt_string_read|_leak/)
+    // Mode 4 stdin caveat surfaced
+    expect(p).toMatch(/no input|NO stdin|busybox/)
     // Spawn template forwards the hint
-    expect(p).toMatch(/requires_gdb:\s*<true\|false>/)
+    expect(p).toMatch(/recommended_mode:\s*<1\|2\|4>/)
   })
 
   test("prompt delegates execution mode choice to Exploiter", () => {

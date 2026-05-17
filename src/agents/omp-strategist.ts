@@ -127,36 +127,54 @@ For VERIFY: design how to prove this primitive works. Keep it minimal.
 For COMBINE: design how to chain the source primitives. Reference
 source PoC scripts.
 
-### Step 4b: Decide the inspection-mode hint (\`requires_gdb\`)
+### Step 4b: Recommend an execution mode (\`recommended_mode\`)
 
-Classify the verification by what counts as evidence:
+Decide which Exploiter mode best matches the verification's evidence
+need. The recommendation is a default — Exploiter may override with a
+concrete reason — but it should be specific so Exploiter does not have
+to guess between subtle cases (e.g. write primitive + input).
 
-- **Set \`requires_gdb: true\`** when the primitive can only be proved by
-  observing real memory/register state. Triggers:
-  - Write-side primitives: \`*_write\` / arbitrary-write / address-write
-    (e.g. \`fmt_string_write\`, \`tcache_poison\`, \`fastbin_dup\`,
-    \`house_of_*\`, \`got_overwrite\`)
-  - Heap-layout verification (chunk header bytes, bin contents, freelist
-    pointers)
-  - Breakpoint state, exact register values, canary location, stack
-    frame inspection
-  - Any step whose \`expected_result\` mentions "memory state" / "byte at
-    address X" / "register R holds value V"
-- **Set \`requires_gdb: false\`** when stdin→stdout I/O alone is enough
-  evidence:
+Three modes, picked by two axes (needs-input × needs-inspection):
+
+| Evidence needed              | needs input? | recommended_mode |
+| ---------------------------- | ------------ | ---------------- |
+| stdout-only (read/leak/shell)| yes          | **1** (host)     |
+| memory/register state, input | yes          | **2** (pwncli)   |
+| memory/register state, none  | no           | **4** (GDB-only) |
+
+Concrete classifier:
+
+- **\`recommended_mode: 1\`** — output evidence is enough.
   - Read/leak primitives (\`fmt_string_read\`, \`*_leak\`, \`bof_leak\`)
-  - rip control / ret2win where the observable is a banner or shell
-    prompt or a \`puts\`-style leak
-  - Any step whose \`expected_result\` is something Exploiter can grep
-    from process stdout
+  - \`ret2win\` / rip-control where success = banner/shell prompt
+  - Any step whose \`expected_result\` is something to grep from stdout
+- **\`recommended_mode: 2\`** — needs **both** runtime input AND
+  memory/register inspection. This is the right pick when Mode 4's GDB
+  alone cannot drive the binary to the inspection point (stdin payload
+  required) AND Mode 1's stdout alone is insufficient evidence
+  (need to see memory change). pwncli's debug driver attaches GDB to
+  the running process, so \`pwno_pwncli\` + \`pwno_sendinput\` +
+  \`pwno_get_context\` / \`pwno_get_memory\` compose cleanly.
+  - Write-side primitives that need input to fire: \`fmt_string_write\`,
+    \`tcache_poison\`, \`fastbin_dup\`, \`house_of_*\`, \`got_overwrite\`,
+    AAW with leak
+  - Heap-layout verification after specific input sequences (chunk
+    headers, bin contents, freelist pointers post-allocation)
+- **\`recommended_mode: 4\`** — needs inspection but NO input. The
+  binary can be driven to the target state purely by GDB (entry, fixed
+  breakpoint, register dump, .got entry inspection, function offset
+  confirmation, mitigation bytes in ELF).
+  - DO NOT pick Mode 4 if the task needs stdin payload to fire — GDB's
+    \`run\` inside pwno-mcp's container shell cannot redirect arbitrary
+    stdin reliably (busybox dash limits). Use Mode 2 instead.
 
-For COMBINE tasks, set \`requires_gdb: true\` if **any** chained primitive
-needed GDB during its own VERIFY. Otherwise \`false\`.
+For COMBINE tasks: pick the **highest-overhead mode** any chained source
+required (4 > 2 > 1 in inspection depth, but Mode 2 strictly subsumes
+Mode 4 when input is present — prefer 2 over 4 in mixed cases).
 
-The hint is a default recommendation, not a hard prescription — Exploiter
-may still pick a different mode if it has a concrete reason. Mode 1
-(host) is the default when \`requires_gdb: false\`; Mode 4 (GDB) is the
-default when \`true\`.
+The hint is the default — Exploiter may override with a concrete reason
+(noted in their result). The hint biases mode selection but does not
+prescribe specific tools.
 
 ### Step 5: Spawn Exploiter
 
@@ -176,7 +194,7 @@ omp_task({
     TASK: <verify primitive X / combine X+Y>
     <details: what to prove, offsets, mechanism, expected observation>
 
-    requires_gdb: <true|false>  (inspection-mode hint from SA per Step 4b — default Mode 4 if true, Mode 1 if false; Exploiter may override with reason)
+    recommended_mode: <1|2|4>  (SA's recommended Exploiter execution mode per Step 4b — 1=host pwntools, 2=pwncli+GDB attach, 4=GDB-only no-input. Exploiter may override with reason.)
 
     pwno-mcp session_id: '<session_id>'  (assigned by Orchestrator — do not change; only used in Mode 2/4)
     Script directory (HOST): '<challenge_dir>/.omp/exploit/<candidate_id>/'
