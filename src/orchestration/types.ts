@@ -93,6 +93,40 @@ export interface TaskResult {
   error?: string
 }
 
+/* ── New 4-tool surface result types (additive, T2) ───────────────────── */
+/* `omp_task_launch` / `_wait_all` / `_wait_any` / `_cancel` return these.   */
+/* Legacy `TaskResult` above is removed in T9 cutover.                       */
+
+/** Returned by `omp_task_launch` — fire-and-forget. */
+export interface LaunchResult {
+  task_id: string
+  session_id: string
+}
+
+/** Single task outcome observed by wait_*. error is set for failed/cancelled. */
+export interface TaskOutcome {
+  task_id: string
+  status: TaskStatus
+  output?: string
+  error?: string
+}
+
+/** Returned by `omp_task_wait_all` — results[] preserves input task_ids order. */
+export interface WaitAllResult {
+  results: TaskOutcome[]
+}
+
+/** Returned by `omp_task_wait_any` — first task to reach terminal + remaining ids. */
+export interface WaitAnyResult extends TaskOutcome {
+  remaining_ids: string[]
+}
+
+/** Returned by `omp_task_cancel`. `not_found` includes already-terminal ids. */
+export interface CancelResult {
+  cancelled: string[]
+  not_found: string[]
+}
+
 /* ── Concurrency config ───────────────────────────────────────────────── */
 
 export interface ConcurrencyConfig {
