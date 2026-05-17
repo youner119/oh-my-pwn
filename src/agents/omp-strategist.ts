@@ -131,16 +131,15 @@ source PoC scripts.
 
 Decide which Exploiter mode best matches the verification's evidence
 need. The recommendation is a default — Exploiter may override with a
-concrete reason — but it should be specific so Exploiter does not have
-to guess between subtle cases (e.g. write primitive + input).
+concrete reason.
 
-Three modes, picked by two axes (needs-input × needs-inspection):
+Two modes, picked by what kind of evidence is required:
 
-| Evidence needed              | needs input? | recommended_mode |
-| ---------------------------- | ------------ | ---------------- |
-| stdout-only (read/leak/shell)| yes          | **1** (host)     |
-| memory/register state, input | yes          | **2** (pwncli)   |
-| memory/register state, none  | no           | **4** (GDB-only) |
+| Evidence needed                    | recommended_mode |
+| ---------------------------------- | ---------------- |
+| stdout-only (read/leak/shell)      | **1** (host)     |
+| memory/register state (with or     | **2** (pwncli +  |
+| without input)                     |  GDB attach)     |
 
 Concrete classifier:
 
@@ -148,29 +147,24 @@ Concrete classifier:
   - Read/leak primitives (\`fmt_string_read\`, \`*_leak\`, \`bof_leak\`)
   - \`ret2win\` / rip-control where success = banner/shell prompt
   - Any step whose \`expected_result\` is something to grep from stdout
-- **\`recommended_mode: 2\`** — needs **both** runtime input AND
-  memory/register inspection. This is the right pick when Mode 4's GDB
-  alone cannot drive the binary to the inspection point (stdin payload
-  required) AND Mode 1's stdout alone is insufficient evidence
-  (need to see memory change). pwncli's debug driver attaches GDB to
-  the running process, so \`pwno_pwncli\` + \`pwno_sendinput\` +
-  \`pwno_get_context\` / \`pwno_get_memory\` compose cleanly.
-  - Write-side primitives that need input to fire: \`fmt_string_write\`,
-    \`tcache_poison\`, \`fastbin_dup\`, \`house_of_*\`, \`got_overwrite\`,
-    AAW with leak
-  - Heap-layout verification after specific input sequences (chunk
-    headers, bin contents, freelist pointers post-allocation)
-- **\`recommended_mode: 4\`** — needs inspection but NO input. The
-  binary can be driven to the target state purely by GDB (entry, fixed
-  breakpoint, register dump, .got entry inspection, function offset
-  confirmation, mitigation bytes in ELF).
-  - DO NOT pick Mode 4 if the task needs stdin payload to fire — GDB's
-    \`run\` inside pwno-mcp's container shell cannot redirect arbitrary
-    stdin reliably (busybox dash limits). Use Mode 2 instead.
+- **\`recommended_mode: 2\`** — needs memory/register inspection.
+  pwncli's debug driver spawns the binary under GDB; the same Python
+  script that calls \`io.sendline()\` / \`io.recv()\` for input also
+  exposes the process to \`pwno_get_context\` / \`pwno_get_memory\` /
+  \`pwno_execute\` for inspection. Use this whether or not the task
+  needs runtime input — Mode 2 cleanly covers both cases via the same
+  pwntools driver.
+  - Write-side primitives: \`fmt_string_write\`, \`tcache_poison\`,
+    \`fastbin_dup\`, \`house_of_*\`, \`got_overwrite\`, AAW with leak
+  - Heap-layout verification (chunk headers, bin contents, freelist
+    pointers — with or without input sequences)
+  - Pure inspection tasks: function offset confirmation, .got entry,
+    register state at a fixed breakpoint, ELF mitigation bytes —
+    the driver can still spawn the binary and break before any input
+    is needed.
 
-For COMBINE tasks: pick the **highest-overhead mode** any chained source
-required (4 > 2 > 1 in inspection depth, but Mode 2 strictly subsumes
-Mode 4 when input is present — prefer 2 over 4 in mixed cases).
+For COMBINE tasks: if any chained source required Mode 2, the combined
+verification is Mode 2. Otherwise Mode 1.
 
 The hint is the default — Exploiter may override with a concrete reason
 (noted in their result). The hint biases mode selection but does not
@@ -194,7 +188,7 @@ omp_task({
     TASK: <verify primitive X / combine X+Y>
     <details: what to prove, offsets, mechanism, expected observation>
 
-    recommended_mode: <1|2|4>  (SA's recommended Exploiter execution mode per Step 4b — 1=host pwntools, 2=pwncli+GDB attach, 4=GDB-only no-input. Exploiter may override with reason.)
+    recommended_mode: <1|2>  (SA's recommended Exploiter execution mode per Step 4b — 1=host pwntools for stdout-only evidence; 2=pwncli driver with GDB attach when memory/register inspection is needed. Exploiter may override with reason.)
 
     pwno-mcp session_id: '<session_id>'  (assigned by Orchestrator — do not change; only used in Mode 2/4)
     Script directory (HOST): '<challenge_dir>/.omp/exploit/<candidate_id>/'
@@ -213,12 +207,11 @@ omp_task({
 \`\`\`
 
 Execution mode (which tools to use end-to-end) is the Exploiter's call —
-don't pre-prescribe it. The \`requires_gdb\` hint from Step 4b only
+don't pre-prescribe it. The \`recommended_mode\` hint from Step 4b only
 signals the **nature of evidence** the task needs; Exploiter still
-chooses between Mode 1 (host \`bash python3\`), Mode 2 (\`pwno_pwncli\`
-interactive), or Mode 4 (\`pwno_set_file\` + GDB) from its own playbook.
-Just give a clear goal and expected observation; the hint biases the
-default but does not force it.
+picks between Mode 1 (host \`bash python3\`) and Mode 2 (\`pwno_pwncli\`
+with GDB attach) from its own playbook. Just give a clear goal and
+expected observation; the hint biases the default but does not force it.
 
 ### Step 6: Handle result + retry
 
