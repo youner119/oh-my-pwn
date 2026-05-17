@@ -125,8 +125,23 @@ describe("createOmpStrategistAgent", () => {
     const agent = createOmpStrategistAgent("test-model")
     const p = agent.prompt ?? ""
     expect(p).toContain("(HOST — for Write/Read")
-    expect(p).toContain("(CONTAINER — for pwno-mcp calls)")
+    expect(p).toContain("(CONTAINER — for pwno-mcp")
     expect(p).toContain("assigned by Orchestrator")
+  })
+
+  test("prompt emits requires_gdb inspection-mode hint per primitive class", () => {
+    const agent = createOmpStrategistAgent("test-model")
+    const p = agent.prompt ?? ""
+    // Step 4b classification rule exists
+    expect(p).toContain("Step 4b")
+    expect(p).toContain("requires_gdb")
+    // Write-side primitives → true
+    expect(p).toMatch(/\*_write|arbitrary-write/)
+    expect(p).toMatch(/tcache_poison|house_of_/)
+    // Read/leak → false
+    expect(p).toMatch(/fmt_string_read|_leak/)
+    // Spawn template forwards the hint
+    expect(p).toMatch(/requires_gdb:\s*<true\|false>/)
   })
 
   test("prompt delegates execution mode choice to Exploiter", () => {

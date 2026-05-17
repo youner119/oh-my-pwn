@@ -127,6 +127,37 @@ For VERIFY: design how to prove this primitive works. Keep it minimal.
 For COMBINE: design how to chain the source primitives. Reference
 source PoC scripts.
 
+### Step 4b: Decide the inspection-mode hint (\`requires_gdb\`)
+
+Classify the verification by what counts as evidence:
+
+- **Set \`requires_gdb: true\`** when the primitive can only be proved by
+  observing real memory/register state. Triggers:
+  - Write-side primitives: \`*_write\` / arbitrary-write / address-write
+    (e.g. \`fmt_string_write\`, \`tcache_poison\`, \`fastbin_dup\`,
+    \`house_of_*\`, \`got_overwrite\`)
+  - Heap-layout verification (chunk header bytes, bin contents, freelist
+    pointers)
+  - Breakpoint state, exact register values, canary location, stack
+    frame inspection
+  - Any step whose \`expected_result\` mentions "memory state" / "byte at
+    address X" / "register R holds value V"
+- **Set \`requires_gdb: false\`** when stdin→stdout I/O alone is enough
+  evidence:
+  - Read/leak primitives (\`fmt_string_read\`, \`*_leak\`, \`bof_leak\`)
+  - rip control / ret2win where the observable is a banner or shell
+    prompt or a \`puts\`-style leak
+  - Any step whose \`expected_result\` is something Exploiter can grep
+    from process stdout
+
+For COMBINE tasks, set \`requires_gdb: true\` if **any** chained primitive
+needed GDB during its own VERIFY. Otherwise \`false\`.
+
+The hint is a default recommendation, not a hard prescription — Exploiter
+may still pick a different mode if it has a concrete reason. Mode 1
+(host) is the default when \`requires_gdb: false\`; Mode 4 (GDB) is the
+default when \`true\`.
+
 ### Step 5: Spawn Exploiter
 
 Forward Orchestrator's paths and \`session_id\` exactly. Label each path
@@ -136,8 +167,8 @@ as HOST or CONTAINER so Exploiter doesn't misroute it.
 omp_task({
   agent: "omp-exploiter",
   description: "Verify/combine: <primitive>",
-  prompt: \`Challenge dir (HOST — for Write/Read of script files): <challenge_dir>
-    Binary (CONTAINER — for pwno-mcp calls): <binary_path>
+  prompt: \`Challenge dir (HOST — for Write/Read of script files, also Mode 1 bash cwd): <challenge_dir>
+    Binary (CONTAINER — for pwno-mcp Mode 2/4 calls): <binary_path>
     Libc (CONTAINER): <libc_path>
     Ld (CONTAINER): <ld_path>
     Mitigations: <...>
@@ -145,7 +176,9 @@ omp_task({
     TASK: <verify primitive X / combine X+Y>
     <details: what to prove, offsets, mechanism, expected observation>
 
-    pwno-mcp session_id: '<session_id>'  (assigned by Orchestrator — do not change)
+    requires_gdb: <true|false>  (inspection-mode hint from SA per Step 4b — default Mode 4 if true, Mode 1 if false; Exploiter may override with reason)
+
+    pwno-mcp session_id: '<session_id>'  (assigned by Orchestrator — do not change; only used in Mode 2/4)
     Script directory (HOST): '<challenge_dir>/.omp/exploit/<candidate_id>/'
 
     Source PoC scripts (HOST paths, if combining): <paths>
@@ -161,10 +194,13 @@ omp_task({
 })
 \`\`\`
 
-Execution mode (which pwno-mcp tools to use) is the Exploiter's call —
-don't pre-prescribe it. Just give a clear goal and expected observation;
-Exploiter picks the right mode (\`pwno_execute_python_code\`, \`pwno_pwncli\`,
-or GDB-only) from its own playbook.
+Execution mode (which tools to use end-to-end) is the Exploiter's call —
+don't pre-prescribe it. The \`requires_gdb\` hint from Step 4b only
+signals the **nature of evidence** the task needs; Exploiter still
+chooses between Mode 1 (host \`bash python3\`), Mode 2 (\`pwno_pwncli\`
+interactive), or Mode 4 (\`pwno_set_file\` + GDB) from its own playbook.
+Just give a clear goal and expected observation; the hint biases the
+default but does not force it.
 
 ### Step 6: Handle result + retry
 
