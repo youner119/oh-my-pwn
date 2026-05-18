@@ -217,32 +217,68 @@ export const ChallengeStateSchema = z.object({
 
   /* ── Input contract (T03 fills) ───────────────────────────────────────── */
 
-  /** Absolute path to the binary (the active one — see binary_patched). */
+  /**
+   * Absolute path to the binary OmP operates on.
+   *
+   * **Semantics depend on whether the omp-setup agent has run:**
+   * - Pre-setup (T03 loader phase): points at the loader's chosen file
+   *   inside the challenge folder (e.g. `deploy/prob`). Same as
+   *   `binary_input_path`.
+   * - Post-setup (omp-setup agent, see `.omc/specs/deep-interview-envsetup-agent.md`):
+   *   points at the **patched copy** under `.omp/artifacts/<basename>`.
+   *   The original input file is preserved at `binary_input_path` and is
+   *   never mutated (patchelf in-place was retired with the omp-setup agent
+   *   to keep `docker build` deterministic).
+   *
+   * Reverser / VulnHunter / Strategist / Exploiter read this field as
+   * "the binary to analyse / exploit against". They do not need to know
+   * whether it is the input or the patched copy.
+   */
   binary_path: z.string().min(1),
   /**
    * SHA-256 of the binary bytes at `binary_path` *as it currently exists on
-   * disk*. After T04 EnvSetup patches the interpreter (`binary_patched`
-   * becomes true), this is the patched binary's hash, not the original's.
-   * The original's hash is preserved in `binary_original_sha256`.
+   * disk*. Post-setup, this is the patched binary's hash. The original
+   * input's hash is preserved separately in `binary_input_sha256`
+   * (formerly `binary_original_sha256`, now deprecated).
    */
   binary_sha256: z.string().optional(),
   /**
-   * True iff T04 EnvSetup has run `patchelf --set-interpreter --set-rpath`
-   * against `binary_path`. Implies `binary_original_path` and
-   * `binary_original_sha256` are set.
+   * Absolute path to the **untouched input binary**. The omp-setup agent
+   * never modifies this file — this is the canonical input identity the
+   * challenge owner provided (`deploy/prob`, etc.). `binary_path` is a
+   * separate patched copy under `.omp/artifacts/`. Equal to `binary_path`
+   * during the pre-setup phase (T03 loader output).
+   *
+   * Added by spec `deep-interview-envsetup-agent.md` (T01).
+   */
+  binary_input_path: z.string().min(1).optional(),
+  /**
+   * SHA-256 of the untouched input binary. Used as the **challenge
+   * identity** for setup-gate idempotency: the orchestrator skips
+   * re-running the setup agent only when this hash matches the file
+   * currently at `binary_input_path`. Stale binary (user replaced the
+   * file) → mismatch → force re-setup.
+   *
+   * Added by spec `deep-interview-envsetup-agent.md` (T01). Supersedes
+   * `binary_original_sha256`.
+   */
+  binary_input_sha256: z.string().optional(),
+  /**
+   * @deprecated Use `setup_complete` instead. The omp-setup agent retired
+   * in-place patchelf, so the boolean "is patched" gate is replaced by the
+   * richer setup-gate (`setup_complete` + `setup_unsupported_reason`).
+   * Schema retains the field to keep historical state.json parseable.
    */
   binary_patched: z.boolean().optional(),
   /**
-   * Absolute path to the untouched original binary, saved as a backup
-   * before patchelf modified `binary_path`. Lives under
-   * `<challenge-dir>/.omp/artifacts/`. The patcher reads this back when
-   * re-patching, so re-running EnvSetup is idempotent.
+   * @deprecated Use `binary_input_path` instead. Was the in-place patchelf
+   * backup under `.omp/artifacts/<basename>.orig`. With in-place patching
+   * retired, the input file at `binary_input_path` is itself canonical and
+   * no backup is needed.
    */
   binary_original_path: z.string().optional(),
   /**
-   * SHA-256 of the original (pre-patch) binary. Preserved as the input
-   * contract identity so a future correction protocol can detect when the
-   * user dropped a different binary into the challenge folder.
+   * @deprecated Use `binary_input_sha256` instead.
    */
   binary_original_sha256: z.string().optional(),
   /** Absolute path to the Dockerfile (or docker-compose.yml). */
@@ -252,14 +288,77 @@ export const ChallengeStateSchema = z.object({
   /** Absolute path(s) to source files when present. */
   source_paths: z.array(z.string()).default([]),
 
-  /* ── Environment (T04 EnvSetup fills) ─────────────────────────────────── */
+  /* ── Setup gate (T01 omp-setup agent) ────────────────────────────────── */
 
-  /** Detected glibc version e.g. "2.31", "2.35". */
+  /**
+   * Challenge classification decided by the omp-setup agent in Phase 0
+   * (inspect & classify). Currently only "user-mode-elf" is supported;
+   * everything else lands in "unsupported" and the orchestrator hands off
+   * to the user with `setup_unsupported_reason`. Future challenge types
+   * (kernel, library-only, multi-binary, source-only, browser, …) will be
+   * added as separate enum values when their sub-flows are specified.
+   *
+   * Added by spec `deep-interview-envsetup-agent.md` (T01).
+   */
+  challenge_type: z.enum(["user-mode-elf", "unsupported"]).optional(),
+  /**
+   * Setup-gate boolean. `true` means the omp-setup agent finished
+   * successfully and downstream agents (Reverser/VH/SA/Exploiter) may
+   * proceed. `false` or `undefined` means setup is needed.
+   *
+   * The orchestrator skips the setup agent only when this is `true` AND
+   * `binary_input_sha256` matches the file currently at `binary_input_path`.
+   *
+   * Added by spec `deep-interview-envsetup-agent.md` (T01).
+   */
+  setup_complete: z.boolean().optional(),
+  /**
+   * Free-form reason set by the omp-setup agent when it cannot proceed
+   * (e.g. `"kernel challenge detected: vmlinux + qemu-system in run.sh"`,
+   * `"host verify failed: missing libz.so.1"`). `null` (or `undefined`)
+   * means setup succeeded. Any non-null value tells the orchestrator to
+   * stop with a user handoff — diagnostic detail goes in the journal.
+   *
+   * Added by spec `deep-interview-envsetup-agent.md` (T01).
+   */
+  setup_unsupported_reason: z.string().nullable().optional(),
+
+  /* ── Environment (T04 EnvSetup / omp-setup agent fills) ──────────────── */
+
+  /** Detected glibc version e.g. "2.31", "2.35". `"static"` for static binaries. */
   libc_version: z.string().optional(),
-  /** Absolute path to the extracted libc inside `.omp/artifacts/`. */
+  /**
+   * Absolute path to the extracted libc inside `.omp/artifacts/`.
+   *
+   * Post-omp-setup-agent: this is an **alias** for
+   * `extracted_libs["libc.so.6"]` kept for backward compatibility — existing
+   * prompts (`omp-strategist`, `omp-exploiter`) and the envsetup library
+   * read this field directly. Setup agent populates both.
+   */
   libc_path: z.string().optional(),
-  /** Absolute path to the extracted ld-linux inside `.omp/artifacts/`. */
+  /**
+   * Absolute path to the extracted ld-linux inside `.omp/artifacts/`.
+   *
+   * Post-omp-setup-agent: alias for `extracted_libs[<ld basename>]` (e.g.
+   * `extracted_libs["ld-linux-x86-64.so.2"]`). Kept for backward compat.
+   */
   ld_path: z.string().optional(),
+  /**
+   * Full NEEDED-library map extracted from the docker image, keyed by the
+   * SONAME / DT_NEEDED entry (`"libc.so.6"`, `"libm.so.6"`, `"libz.so.1"`,
+   * `"libbz2.so.1.0"`, `"liblzma.so.5"`, `"ld-linux-x86-64.so.2"`, …).
+   * Values are absolute paths under `.omp/artifacts/`.
+   *
+   * Static binaries: empty map. `libc_version` is `"static"` in that case.
+   *
+   * Symlink policy: keys are NEEDED names (which may be symlinks pointing
+   * at the real file in the same directory). Whether the value is a
+   * symlink or a dereferenced realfile is controlled by the
+   * `omp_setup_extract_file` `dereference_symlinks` option.
+   *
+   * Added by spec `deep-interview-envsetup-agent.md` (T01).
+   */
+  extracted_libs: z.record(z.string(), z.string()).optional(),
   /** Absolute path to the built Docker image tag or id. */
   docker_image: z.string().optional(),
   mitigations: MitigationsSchema.optional(),

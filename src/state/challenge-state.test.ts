@@ -304,4 +304,178 @@ describe("ChallengeStateSchema", () => {
     expect(parsed.vuln_candidates[0]?.origin_type).toBeUndefined()
     expect(parsed.vuln_candidates[0]?.derived_from).toBeUndefined()
   })
+
+  /* ── omp-setup agent — T01 schema additions ────────────────────────── */
+
+  test("accepts setup-gate fields (challenge_type, setup_complete, setup_unsupported_reason)", () => {
+    const state = {
+      ...createInitialChallengeState(baseInput),
+      challenge_type: "user-mode-elf",
+      setup_complete: true,
+      setup_unsupported_reason: null,
+    }
+    const parsed = ChallengeStateSchema.parse(state)
+    expect(parsed.challenge_type).toBe("user-mode-elf")
+    expect(parsed.setup_complete).toBe(true)
+    expect(parsed.setup_unsupported_reason).toBeNull()
+  })
+
+  test("accepts unsupported challenge_type with diagnostic reason", () => {
+    const state = {
+      ...createInitialChallengeState(baseInput),
+      challenge_type: "unsupported",
+      setup_complete: false,
+      setup_unsupported_reason:
+        "kernel challenge detected: vmlinux + qemu-system in run.sh",
+    }
+    const parsed = ChallengeStateSchema.parse(state)
+    expect(parsed.challenge_type).toBe("unsupported")
+    expect(parsed.setup_complete).toBe(false)
+    expect(parsed.setup_unsupported_reason).toContain("kernel")
+  })
+
+  test("rejects challenge_type values outside the current enum", () => {
+    // Future types (kernel, library-only, browser, …) are reserved but
+    // not yet in the enum — parser must refuse them so callers can't
+    // silently emit unrecognised values.
+    for (const value of [
+      "kernel",
+      "library-only",
+      "multi-binary",
+      "source-only",
+      "browser",
+      "interpreter",
+      "unknown",
+      "",
+    ]) {
+      const bad = {
+        ...createInitialChallengeState(baseInput),
+        challenge_type: value,
+      }
+      expect(() => ChallengeStateSchema.parse(bad)).toThrow()
+    }
+  })
+
+  test("setup_unsupported_reason accepts null, string, and undefined", () => {
+    const variants = [
+      { setup_unsupported_reason: null },
+      { setup_unsupported_reason: "host verify failed: missing libz.so.1" },
+      {}, // undefined
+    ]
+    for (const partial of variants) {
+      const state = { ...createInitialChallengeState(baseInput), ...partial }
+      expect(() => ChallengeStateSchema.parse(state)).not.toThrow()
+    }
+  })
+
+  test("accepts binary_input_path and binary_input_sha256 (input identity contract)", () => {
+    const state = {
+      ...createInitialChallengeState(baseInput),
+      binary_input_path: "/c/deploy/prob",
+      binary_input_sha256:
+        "b3ae5f5113462273249bfb295cd2eb5027f98a5ad50a33876935b435b2a9a9ca",
+      binary_path: "/c/.omp/artifacts/prob",
+      binary_sha256: "patched-sha-here",
+    }
+    const parsed = ChallengeStateSchema.parse(state)
+    expect(parsed.binary_input_path).toBe("/c/deploy/prob")
+    expect(parsed.binary_input_sha256).toBe(
+      "b3ae5f5113462273249bfb295cd2eb5027f98a5ad50a33876935b435b2a9a9ca",
+    )
+    expect(parsed.binary_path).toBe("/c/.omp/artifacts/prob")
+    expect(parsed.binary_sha256).toBe("patched-sha-here")
+  })
+
+  test("rejects empty binary_input_path string (min(1) enforced)", () => {
+    const bad = {
+      ...createInitialChallengeState(baseInput),
+      binary_input_path: "",
+    }
+    expect(() => ChallengeStateSchema.parse(bad)).toThrow()
+  })
+
+  test("accepts extracted_libs as empty map (static binary)", () => {
+    const state = {
+      ...createInitialChallengeState(baseInput),
+      libc_version: "static",
+      extracted_libs: {},
+    }
+    const parsed = ChallengeStateSchema.parse(state)
+    expect(parsed.libc_version).toBe("static")
+    expect(parsed.extracted_libs).toEqual({})
+  })
+
+  test("accepts extracted_libs with multi-NEEDED entries (afterimage-style)", () => {
+    const state = {
+      ...createInitialChallengeState(baseInput),
+      libc_version: "2.39",
+      extracted_libs: {
+        "libc.so.6": "/c/.omp/artifacts/libc.so.6",
+        "libm.so.6": "/c/.omp/artifacts/libm.so.6",
+        "libz.so.1": "/c/.omp/artifacts/libz.so.1",
+        "libbz2.so.1.0": "/c/.omp/artifacts/libbz2.so.1.0",
+        "liblzma.so.5": "/c/.omp/artifacts/liblzma.so.5",
+        "ld-linux-x86-64.so.2": "/c/.omp/artifacts/ld-linux-x86-64.so.2",
+      },
+      libc_path: "/c/.omp/artifacts/libc.so.6",
+      ld_path: "/c/.omp/artifacts/ld-linux-x86-64.so.2",
+    }
+    const parsed = ChallengeStateSchema.parse(state)
+    expect(Object.keys(parsed.extracted_libs ?? {})).toHaveLength(6)
+    expect(parsed.extracted_libs?.["libz.so.1"]).toBe(
+      "/c/.omp/artifacts/libz.so.1",
+    )
+    // Alias parity: libc_path / ld_path are the same string as the
+    // matching extracted_libs entry. Setup agent must keep them in sync.
+    expect(parsed.libc_path).toBe(parsed.extracted_libs?.["libc.so.6"])
+    expect(parsed.ld_path).toBe(parsed.extracted_libs?.["ld-linux-x86-64.so.2"])
+  })
+
+  test("rejects extracted_libs with non-string values", () => {
+    const bad = {
+      ...createInitialChallengeState(baseInput),
+      extracted_libs: { "libc.so.6": 42 },
+    }
+    expect(() => ChallengeStateSchema.parse(bad)).toThrow()
+  })
+
+  test("legacy state with deprecated patchelf-backup fields still parses", () => {
+    // omp-setup agent retired in-place patchelf, but historical state.json
+    // files written by `omp_run_envsetup` contain `binary_patched`,
+    // `binary_original_path`, `binary_original_sha256`. Schema retains
+    // these as @deprecated so old state remains readable.
+    const legacyState = {
+      schema_version: "1",
+      challenge_dir: "/c",
+      binary_path: "/c/deploy/prob",
+      dockerfile_path: "/c/Dockerfile",
+      binary_patched: true,
+      binary_original_path: "/c/.omp/artifacts/prob.orig",
+      binary_original_sha256: "legacy-sha-256",
+      created_at: "2026-04-10T00:00:00.000Z",
+      updated_at: "2026-04-10T00:00:00.000Z",
+    }
+    const parsed = ChallengeStateSchema.parse(legacyState)
+    expect(parsed.binary_patched).toBe(true)
+    expect(parsed.binary_original_path).toBe("/c/.omp/artifacts/prob.orig")
+    expect(parsed.binary_original_sha256).toBe("legacy-sha-256")
+  })
+
+  test("backward compat: pre-omp-setup state (no setup-gate / extracted_libs / binary_input) still parses", () => {
+    const oldState = {
+      schema_version: "1",
+      challenge_dir: "/c",
+      binary_path: "/c/bin",
+      dockerfile_path: "/c/Dockerfile",
+      created_at: "2026-04-10T00:00:00.000Z",
+      updated_at: "2026-04-10T00:00:00.000Z",
+    }
+    const parsed = ChallengeStateSchema.parse(oldState)
+    expect(parsed.challenge_type).toBeUndefined()
+    expect(parsed.setup_complete).toBeUndefined()
+    expect(parsed.setup_unsupported_reason).toBeUndefined()
+    expect(parsed.binary_input_path).toBeUndefined()
+    expect(parsed.binary_input_sha256).toBeUndefined()
+    expect(parsed.extracted_libs).toBeUndefined()
+  })
 })
