@@ -15,6 +15,21 @@ hook을 통해 agent / tool / MCP를 주입합니다.
 
 ---
 
+## 병렬 작동 + 에이전트 흐름 (자율 모드 기준)
+
+![OmP 병렬 흐름](images/parallel-flow-d2.svg)
+
+- Phase 0/0.5 = 순차 (Setup → Reverse)
+- Phase 1 = VulnHunter ensemble 병렬 (`launch × N → wait_all`)
+- Phase 2 = SA iterative rounds (`wait_any` race + record-then-launch invariant)
+  - 구 spec의 Phase 3 (Result Collection + Cascading) 은 `REC` 박스 4-step으로 흡수됨
+- `vh_pending` flag + `ids === []` 조건으로 deferred VH 재진입 (Pattern 4b)
+- Phase 4 = 자율 종료 4-조건
+
+Source: [`images/parallel-flow.d2`](images/parallel-flow.d2). 갱신: `d2 --layout=elk docs/images/parallel-flow.d2 docs/images/parallel-flow-d2.svg`.
+
+---
+
 ## opencode 플러그인 인터페이스란
 
 opencode는 TUI-기반 agent 런타임으로, 외부 플러그인을 JavaScript/TypeScript

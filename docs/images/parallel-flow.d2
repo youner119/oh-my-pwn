@@ -1,0 +1,144 @@
+# OmP — 병렬 작동 + 에이전트 흐름 (자율 모드 기준)
+# Spec: .omc/specs/deep-interview-parallel-orchestration.md
+#       .omc/specs/deep-interview-omo-subagent-import.md
+# 렌더: d2 parallel-flow.d2 parallel-flow.svg
+#       또는 https://play.d2lang.com 에 붙여넣기
+
+direction: down
+
+# ============ External actors / stores ============
+user: User { shape: person }
+
+bn: "Binary Ninja\nport 9009" {
+  shape: cylinder
+  style.fill: "#ffe3e3"
+  style.stroke: "#fa5252"
+}
+
+pwc: "pwno-mcp\nport 5500\nuser-managed" {
+  shape: cylinder
+  style.fill: "#ffe3e3"
+  style.stroke: "#fa5252"
+}
+
+bb: "state.json\nblackboard" {
+  shape: cylinder
+  style.fill: "#ffe3e3"
+  style.stroke: "#fa5252"
+}
+
+# ============ Orchestrator ============
+orch: "omp-orchestrator\n(sole state writer\nsession_id allocator)" {
+  style.fill: "#dbe4ff"
+  style.stroke: "#3b5bdb"
+  style.stroke-width: 3
+}
+
+user -> orch: "omp TUI"
+
+# ============ Phase 0 — Setup ============
+ph0: "Phase 0 — Setup (순차, Orchestrator 단독)" {
+  t01: omp_pwno_status
+  t02: omp_load_challenge
+  t03: omp_stage_challenge
+  t04: omp_run_envsetup
+  t01 -> t02 -> t03 -> t04
+}
+
+orch -> ph0
+
+# ============ Phase 0.5 — Reverse ============
+ph05: "Phase 0.5 — Reverse (단일 spawn)" {
+  l05: "launch(reverser)\n+ wait_all"
+  rev: "omp-reverser" {
+    style.fill: "#d3f9d8"
+    style.stroke: "#37b24d"
+  }
+  art: "artifacts:\nreverser-analysis.md\nreverser-research.md / .ko.md" {
+    shape: document
+  }
+
+  l05 -> rev: spawn { style.stroke-dash: 3 }
+  rev -> art
+}
+
+ph0 -> ph05
+ph05.rev <-> bn: "BN MCP"
+
+# ============ Phase 1 — VulnHunter Ensemble ============
+ph1: "Phase 1 — VulnHunter Ensemble (병렬)" {
+  l1: "launch(vulnhunter) × N\n(한 턴에 fire-and-forget)"
+  vh1: "VH-1\n관점 A" { style.fill: "#d3f9d8"; style.stroke: "#37b24d" }
+  vh2: "VH-2\n관점 B" { style.fill: "#d3f9d8"; style.stroke: "#37b24d" }
+  vhn: "VH-N\n관점 N" { style.fill: "#d3f9d8"; style.stroke: "#37b24d" }
+  w1: "wait_all([ids])"
+  m1: "Orchestrator\nmerge / dedup"
+  ps1: "patch_state\n(candidate list)"
+
+  l1 -> vh1: spawn { style.stroke-dash: 3 }
+  l1 -> vh2: spawn { style.stroke-dash: 3 }
+  l1 -> vhn: spawn { style.stroke-dash: 3 }
+  vh1 -> w1
+  vh2 -> w1
+  vhn -> w1
+  w1 -> m1 -> ps1
+}
+
+ph05 -> ph1
+
+# ============ Phase 2 — SA Iterative Rounds ============
+ph2: "Phase 2 — SA Iterative Rounds (병렬 + dynamic spawn)" {
+  l2a: "initial:\nlaunch(strategist) × M"
+  sapool: "SA pool"
+  wa: "wait_any(ids)"
+  rec: "1. patch_state (RECORD FIRST)\n2. maybe launch extra SA\n3. maybe set vh_pending=true\n4. next wait_any"
+  dec: "ids === [] ?" { shape: diamond }
+  vhp: "vh_pending ?" { shape: diamond }
+
+  l2a -> sapool: spawn { style.stroke-dash: 3 }
+  sapool -> wa
+  wa -> rec
+  rec -> dec
+  dec -> wa: "no, race 계속"
+  dec -> vhp: "yes"
+
+  sad: "각 SA 내부 (VERIFY 또는 COMBINE)" {
+    sar: "omp_read_state\nblackboard 읽기"
+    sap: "VERIFY: 단일 primitive 증명\nCOMBINE: source PoC 합성"
+    sale: "launch(exploiter) + wait_all"
+    expl: "omp-exploiter" {
+      style.fill: "#d3f9d8"
+      style.stroke: "#37b24d"
+    }
+    saret: "return:\npoc_script_path\ngives / needs\nobserved state"
+
+    sar -> sap -> sale
+    sale -> expl: spawn { style.stroke-dash: 3 }
+    expl -> saret
+  }
+
+  sapool -> sad: "각 SA마다\n동일 구조" { style.stroke-dash: 3 }
+}
+
+ph1 -> ph2
+ph2.sad.expl <-> pwc: "pwntools + GDB\nsession_id=verify-X-rN"
+
+# ============ Phase 4 — Termination ============
+ph4: "Phase 4 — 자율 종료" {
+  f1: "flag_found\nSUCCESS"
+  f2: "stagnated\nLLM 종합 판단"
+  f3: "budget_exceeded\nmax_cycles=20"
+  f4: "user_intervention"
+}
+
+ph2 -> ph4: "flag/shell 획득 시\nearly-exit + cancel 나머지"
+ph2.vhp -> ph1.l1: "yes, deferred VH"
+ph2.vhp -> ph4: "no"
+
+# ============ Blackboard reads/writes ============
+ph1.vh1 -> bb: reads { style.stroke-dash: 3 }
+ph1.vh2 -> bb: reads { style.stroke-dash: 3 }
+ph1.vhn -> bb: reads { style.stroke-dash: 3 }
+ph1.ps1 -> bb: writes
+ph2.sad.sar -> bb: reads { style.stroke-dash: 3 }
+ph2.rec -> bb: writes
