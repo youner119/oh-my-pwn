@@ -14,14 +14,21 @@ function createFakeClient(options?: {
   defaultStatus?: string
   /** Delay (ms) before session goes idle. 0 = immediate. */
   idleDelay?: number
-}): OmpSessionClient & { sessions: Map<string, { agent: string; prompt: string }> } {
+  /** If true, abort() throws — to test graceful failure path. */
+  abortThrows?: boolean
+}): OmpSessionClient & {
+  sessions: Map<string, { agent: string; prompt: string }>
+  abortedSessions: Set<string>
+} {
   const sessions = new Map<string, { agent: string; prompt: string }>()
+  const abortedSessions = new Set<string>()
   let sessionCounter = 0
   const startTimes = new Map<string, number>()
   const delay = options?.idleDelay ?? 0
 
   return {
     sessions,
+    abortedSessions,
     async create(params) {
       sessionCounter += 1
       const id = `session-${sessionCounter}`
@@ -70,6 +77,14 @@ function createFakeClient(options?: {
     },
     async get(params) {
       return { data: { directory: "/test" } }
+    },
+    async abort(params) {
+      if (options?.abortThrows) {
+        throw new Error("simulated abort failure")
+      }
+      abortedSessions.add(params.path.id)
+      // SDK shape: { data: boolean }
+      return { data: true }
     },
   }
 }
@@ -288,6 +303,109 @@ describe("BackgroundManager", () => {
 
     manager.shutdown()
   }, 10000)
+
+  test("T4: cancel running task → abort called, status=cancelled, 'done' emitted", async () => {
+    const client = createFakeClient({ idleDelay: 60000 })
+    const manager = new BackgroundManager({ client, directory: "/test" })
+
+    const events: string[] = []
+    manager.taskEvents.on("done", (id: string) => events.push(id))
+
+    const launch = await manager.launch({
+      parentSessionID: "p",
+      agent: "omp-vulnhunter",
+      description: "Cancel target",
+      prompt: "x",
+      runInBackground: true,
+    })
+
+    const ok = await manager.cancel(launch.taskId)
+    expect(ok).toBe(true)
+
+    const task = manager.getTask(launch.taskId)!
+    expect(task.status).toBe("cancelled")
+    expect(task.sessionID).toBeDefined()
+    expect(client.abortedSessions.has(task.sessionID!)).toBe(true)
+    expect(events).toContain(launch.taskId)
+
+    manager.shutdown()
+  })
+
+  test("T4: cancel unknown taskId returns false (no emit)", async () => {
+    const client = createFakeClient()
+    const manager = new BackgroundManager({ client, directory: "/test" })
+
+    const events: string[] = []
+    manager.taskEvents.on("done", (id: string) => events.push(id))
+
+    const ok = await manager.cancel("not-a-real-id")
+    expect(ok).toBe(false)
+    expect(events).toHaveLength(0)
+    expect(client.abortedSessions.size).toBe(0)
+  })
+
+  test("T4: cancel already-completed task returns false (idempotent)", async () => {
+    const client = createFakeClient()
+    const manager = new BackgroundManager({ client, directory: "/test" })
+
+    const result = await manager.launch({
+      parentSessionID: "p",
+      agent: "omp-vulnhunter",
+      description: "Sync done",
+      prompt: "x",
+      runInBackground: false,
+    })
+    expect(result.status).toBe("completed")
+
+    const events: string[] = []
+    manager.taskEvents.on("done", (id: string) => events.push(id))
+
+    const ok = await manager.cancel(result.taskId)
+    expect(ok).toBe(false)
+    expect(events).toHaveLength(0)
+    expect(client.abortedSessions.size).toBe(0)
+  })
+
+  test("T4: double cancel — second call returns false, no second emit", async () => {
+    const client = createFakeClient({ idleDelay: 60000 })
+    const manager = new BackgroundManager({ client, directory: "/test" })
+
+    const launch = await manager.launch({
+      parentSessionID: "p",
+      agent: "omp-vulnhunter",
+      description: "Double cancel",
+      prompt: "x",
+      runInBackground: true,
+    })
+
+    const events: string[] = []
+    manager.taskEvents.on("done", (id: string) => events.push(id))
+
+    expect(await manager.cancel(launch.taskId)).toBe(true)
+    expect(await manager.cancel(launch.taskId)).toBe(false)
+    expect(events).toHaveLength(1)
+
+    manager.shutdown()
+  })
+
+  test("T4: abort RPC failure → still marked cancelled, returns true", async () => {
+    const client = createFakeClient({ idleDelay: 60000, abortThrows: true })
+    const manager = new BackgroundManager({ client, directory: "/test" })
+
+    const launch = await manager.launch({
+      parentSessionID: "p",
+      agent: "omp-vulnhunter",
+      description: "Abort throws",
+      prompt: "x",
+      runInBackground: true,
+    })
+
+    const ok = await manager.cancel(launch.taskId)
+    expect(ok).toBe(true)
+    expect(manager.getTask(launch.taskId)!.status).toBe("cancelled")
+
+    manager.shutdown()
+  })
 
   test("tool restrictions are applied to spawned sessions", async () => {
     const client = createFakeClient()

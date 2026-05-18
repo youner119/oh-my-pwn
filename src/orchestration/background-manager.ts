@@ -325,6 +325,39 @@ export class BackgroundManager {
     return true
   }
 
+  /**
+   * Cancel a task by ID. T4 — the API surface for the new `omp_task_cancel`
+   * tool (added in T7). Idempotent: returns false for unknown ids or tasks
+   * already in a terminal state.
+   *
+   * Steps:
+   *   1. Best-effort POST /session/{id}/abort (errors swallowed — session
+   *      may have finished between status check and abort).
+   *   2. Mark task `cancelled`, release concurrency slot, close tmux pane.
+   *   3. Emit "done" so any pending waitAll/waitAny treats it as a first-
+   *      complete candidate.
+   */
+  async cancel(taskId: string): Promise<boolean> {
+    const task = this.tasks.get(taskId)
+    if (!task) return false
+    if (task.status !== "running" && task.status !== "queued") return false
+
+    if (task.sessionID) {
+      try {
+        await this.client.abort({ path: { id: task.sessionID } })
+      } catch (err) {
+        ompLog(`Task ${taskId}: abort RPC failed, marking cancelled anyway: ${String(err)}`)
+      }
+    }
+
+    task.status = "cancelled"
+    task.completedAt = new Date()
+    this.concurrency.release(task.concurrencyKey)
+    this.closePaneForTask(task.id)
+    this.taskEvents.emit("done", task.id)
+    return true
+  }
+
   /** Shut down: cancel all waiters, stop polling, close panes. */
   shutdown(): void {
     this.stopPolling()

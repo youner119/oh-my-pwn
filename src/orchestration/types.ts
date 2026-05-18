@@ -50,6 +50,17 @@ export interface OmpSessionClient {
     path: { id: string }
     query?: Record<string, unknown>
   }): Promise<{ data?: { directory?: string } }>
+
+  /**
+   * Abort a running session — used by BackgroundManager.cancel() (T4).
+   * Maps to opencode SDK's `client.session.abort` (POST /session/{id}/abort).
+   * Errors are swallowed by the caller since the session may have already
+   * finished between the cancel decision and the abort call.
+   */
+  abort(params: {
+    path: { id: string }
+    query?: Record<string, unknown>
+  }): Promise<unknown>
 }
 
 /* ── Task types ───────────────────────────────────────────────────────── */
