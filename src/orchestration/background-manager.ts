@@ -14,8 +14,12 @@ import type {
   LaunchInput,
   LaunchResult,
   OmpSessionClient,
+  TaskOutcome,
   TaskResult,
+  TaskStatus,
   TextPart,
+  WaitAllResult,
+  WaitAnyResult,
 } from "./types"
 import { ConcurrencyManager } from "./concurrency"
 import { resolveAgent } from "./agent-resolver"
@@ -58,6 +62,11 @@ function generateTaskId(): string {
 
 function isIdleStatus(status: string): boolean {
   return IDLE_STATUSES.has(status)
+}
+
+/** Task is in a terminal state (completed / failed / cancelled). */
+function isTerminalStatus(status: TaskStatus): boolean {
+  return status === "completed" || status === "failed" || status === "cancelled"
 }
 
 function extractAssistantText(
@@ -196,6 +205,122 @@ export class BackgroundManager {
 
     this.ensurePolling()
     return { task_id: task.id, session_id: task.sessionID! }
+  }
+
+  /**
+   * Wait until ALL tasks reach a terminal status (T6).
+   *
+   * - Returns `results[]` in the same order as input `taskIds`.
+   * - Unknown task_ids become synthetic failed outcomes (A1 — graceful).
+   * - Outputs for completed tasks are fetched in parallel via Promise.all
+   *   (B1).
+   * - State-first: if all tasks are already terminal, returns immediately.
+   */
+  async waitAll(taskIds: string[]): Promise<WaitAllResult> {
+    // Identify pending tasks (known + not-yet-terminal).
+    const pending = new Set<string>()
+    for (const id of taskIds) {
+      const t = this.tasks.get(id)
+      if (t && !isTerminalStatus(t.status)) pending.add(id)
+    }
+
+    if (pending.size > 0) {
+      await new Promise<void>((resolve) => {
+        const handler = (taskId: string) => {
+          if (pending.has(taskId)) {
+            pending.delete(taskId)
+            if (pending.size === 0) {
+              this.taskEvents.off("done", handler)
+              resolve()
+            }
+          }
+        }
+        this.taskEvents.on("done", handler)
+      })
+    }
+
+    const results = await Promise.all(taskIds.map((id) => this.buildOutcome(id)))
+    return { results }
+  }
+
+  /**
+   * Wait until ANY of the given tasks reaches a terminal status (T6).
+   *
+   * - Returns the first task to reach terminal + `remaining_ids` (input
+   *   order preserved, first task removed).
+   * - State-first: scans `taskIds` in input order; the first
+   *   already-terminal id wins.
+   * - Unknown task_ids (A1) become synthetic failed outcomes. If
+   *   encountered first in iteration order, they "win" as first complete.
+   * - Cancellation and failure both count as first-complete (C, spec L75).
+   */
+  async waitAny(taskIds: string[]): Promise<WaitAnyResult> {
+    // State-first: scan for already-terminal (or unknown) in input order.
+    for (const id of taskIds) {
+      const t = this.tasks.get(id)
+      if (!t) {
+        return {
+          task_id: id,
+          status: "failed",
+          error: `unknown task_id: ${id}`,
+          remaining_ids: taskIds.filter((x) => x !== id),
+        }
+      }
+      if (isTerminalStatus(t.status)) {
+        const outcome = await this.buildOutcome(id)
+        return { ...outcome, remaining_ids: taskIds.filter((x) => x !== id) }
+      }
+    }
+
+    // All running — subscribe.
+    const watching = new Set(taskIds)
+    const firstId = await new Promise<string>((resolve) => {
+      const handler = (taskId: string) => {
+        if (watching.has(taskId)) {
+          this.taskEvents.off("done", handler)
+          resolve(taskId)
+        }
+      }
+      this.taskEvents.on("done", handler)
+    })
+
+    const outcome = await this.buildOutcome(firstId)
+    return { ...outcome, remaining_ids: taskIds.filter((x) => x !== firstId) }
+  }
+
+  /**
+   * Internal: build a TaskOutcome for a single id (T6 helper).
+   * - Completed → fetches assistant text via fetchSessionOutput.
+   * - Failed / cancelled → returns error text without fetch.
+   * - Unknown id → synthetic failed outcome (A1).
+   * - Fetch failure → marks as completed with error message.
+   */
+  private async buildOutcome(taskId: string): Promise<TaskOutcome> {
+    const task = this.tasks.get(taskId)
+    if (!task) {
+      return {
+        task_id: taskId,
+        status: "failed",
+        error: `unknown task_id: ${taskId}`,
+      }
+    }
+    if (task.status === "completed" && task.sessionID) {
+      try {
+        const output = await this.fetchSessionOutput(task.sessionID)
+        return { task_id: taskId, status: task.status, output }
+      } catch (err) {
+        return {
+          task_id: taskId,
+          status: task.status,
+          error: `output fetch failed: ${String(err)}`,
+        }
+      }
+    }
+    return {
+      task_id: taskId,
+      status: task.status,
+      ...(task.error ? { error: task.error } : {}),
+    }
   }
 
   /** Get a task by ID. */

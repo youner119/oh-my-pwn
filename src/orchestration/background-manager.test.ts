@@ -505,6 +505,184 @@ describe("BackgroundManager", () => {
     expect(failedTasks[0].error).toContain("simulated session.create failure")
   })
 
+  // ── T6: waitAll ───────────────────────────────────────────────────────
+
+  test("T6: waitAll — returns results in input order, fetches outputs", async () => {
+    const client = createFakeClient({ idleDelay: 100 })
+    const manager = new BackgroundManager({ client, directory: "/test" })
+
+    const r1 = await manager.launchAsync({
+      parentSessionID: "p", agent: "omp-vulnhunter",
+      description: "T1", prompt: "p1", runInBackground: true,
+    })
+    const r2 = await manager.launchAsync({
+      parentSessionID: "p", agent: "omp-vulnhunter",
+      description: "T2", prompt: "p2", runInBackground: true,
+    })
+    const r3 = await manager.launchAsync({
+      parentSessionID: "p", agent: "omp-vulnhunter",
+      description: "T3", prompt: "p3", runInBackground: true,
+    })
+
+    const result = await manager.waitAll([r1.task_id, r2.task_id, r3.task_id])
+    expect(result.results).toHaveLength(3)
+    expect(result.results[0].task_id).toBe(r1.task_id)
+    expect(result.results[1].task_id).toBe(r2.task_id)
+    expect(result.results[2].task_id).toBe(r3.task_id)
+    expect(result.results.every((r) => r.status === "completed")).toBe(true)
+    expect(result.results[0].output).toContain("p1")
+    expect(result.results[2].output).toContain("p3")
+
+    manager.shutdown()
+  }, 15000)
+
+  test("T6: waitAll — state-first returns immediately if all already terminal", async () => {
+    const client = createFakeClient()
+    const manager = new BackgroundManager({ client, directory: "/test" })
+
+    const sync = await manager.launch({
+      parentSessionID: "p", agent: "omp-vulnhunter",
+      description: "Sync done", prompt: "x", runInBackground: false,
+    })
+    expect(sync.status).toBe("completed")
+
+    const start = Date.now()
+    const result = await manager.waitAll([sync.taskId])
+    const elapsed = Date.now() - start
+    expect(elapsed).toBeLessThan(500)  // immediate return
+    expect(result.results[0].status).toBe("completed")
+  })
+
+  test("T6: waitAll — includes cancelled tasks as terminal", async () => {
+    const client = createFakeClient({ idleDelay: 60000 })
+    const manager = new BackgroundManager({ client, directory: "/test" })
+
+    const r1 = await manager.launchAsync({
+      parentSessionID: "p", agent: "omp-vulnhunter",
+      description: "Will cancel", prompt: "x", runInBackground: true,
+    })
+
+    const waitPromise = manager.waitAll([r1.task_id])
+    await manager.cancel(r1.task_id)
+
+    const result = await waitPromise
+    expect(result.results[0].status).toBe("cancelled")
+
+    manager.shutdown()
+  })
+
+  test("T6: waitAll — unknown task_id → synthetic failed outcome", async () => {
+    const client = createFakeClient()
+    const manager = new BackgroundManager({ client, directory: "/test" })
+
+    const result = await manager.waitAll(["fake-id-1", "fake-id-2"])
+    expect(result.results).toHaveLength(2)
+    expect(result.results[0]).toMatchObject({
+      task_id: "fake-id-1",
+      status: "failed",
+    })
+    expect(result.results[0].error).toContain("unknown task_id")
+  })
+
+  // ── T6: waitAny ───────────────────────────────────────────────────────
+
+  test("T6: waitAny — returns first complete + remaining_ids in input order", async () => {
+    const client = createFakeClient({ idleDelay: 60000 })
+    const manager = new BackgroundManager({ client, directory: "/test" })
+
+    const r1 = await manager.launchAsync({
+      parentSessionID: "p", agent: "omp-vulnhunter",
+      description: "A", prompt: "a", runInBackground: true,
+    })
+    const r2 = await manager.launchAsync({
+      parentSessionID: "p", agent: "omp-vulnhunter",
+      description: "B", prompt: "b", runInBackground: true,
+    })
+    const r3 = await manager.launchAsync({
+      parentSessionID: "p", agent: "omp-vulnhunter",
+      description: "C", prompt: "c", runInBackground: true,
+    })
+
+    const waitPromise = manager.waitAny([r1.task_id, r2.task_id, r3.task_id])
+    // Cancel the middle one — should be first complete.
+    await manager.cancel(r2.task_id)
+
+    const result = await waitPromise
+    expect(result.task_id).toBe(r2.task_id)
+    expect(result.status).toBe("cancelled")
+    expect(result.remaining_ids).toEqual([r1.task_id, r3.task_id])
+
+    manager.shutdown()
+  })
+
+  test("T6: waitAny — state-first scans input order, first terminal wins", async () => {
+    const client = createFakeClient({ idleDelay: 60000 })
+    const manager = new BackgroundManager({ client, directory: "/test" })
+
+    const r1 = await manager.launchAsync({
+      parentSessionID: "p", agent: "omp-vulnhunter",
+      description: "A", prompt: "x", runInBackground: true,
+    })
+    const r2 = await manager.launchAsync({
+      parentSessionID: "p", agent: "omp-vulnhunter",
+      description: "B", prompt: "x", runInBackground: true,
+    })
+
+    // Cancel both before waitAny — both terminal at entry.
+    await manager.cancel(r1.task_id)
+    await manager.cancel(r2.task_id)
+
+    const result = await manager.waitAny([r1.task_id, r2.task_id])
+    // r1 first in input order → wins.
+    expect(result.task_id).toBe(r1.task_id)
+    expect(result.remaining_ids).toEqual([r2.task_id])
+  })
+
+  test("T6: waitAny — unknown task_id encountered first → synthetic failed", async () => {
+    const client = createFakeClient({ idleDelay: 60000 })
+    const manager = new BackgroundManager({ client, directory: "/test" })
+
+    const r1 = await manager.launchAsync({
+      parentSessionID: "p", agent: "omp-vulnhunter",
+      description: "Real", prompt: "x", runInBackground: true,
+    })
+
+    const result = await manager.waitAny(["fake-id", r1.task_id])
+    expect(result.task_id).toBe("fake-id")
+    expect(result.status).toBe("failed")
+    expect(result.error).toContain("unknown task_id")
+    expect(result.remaining_ids).toEqual([r1.task_id])
+
+    manager.shutdown()
+  })
+
+  test("T6: waitAny — cascaded re-call drains remaining via remaining_ids", async () => {
+    const client = createFakeClient({ idleDelay: 60000 })
+    const manager = new BackgroundManager({ client, directory: "/test" })
+
+    const r1 = await manager.launchAsync({
+      parentSessionID: "p", agent: "omp-vulnhunter",
+      description: "A", prompt: "x", runInBackground: true,
+    })
+    const r2 = await manager.launchAsync({
+      parentSessionID: "p", agent: "omp-vulnhunter",
+      description: "B", prompt: "x", runInBackground: true,
+    })
+
+    const p1 = manager.waitAny([r1.task_id, r2.task_id])
+    await manager.cancel(r1.task_id)
+    const first = await p1
+    expect(first.task_id).toBe(r1.task_id)
+
+    const p2 = manager.waitAny(first.remaining_ids)
+    await manager.cancel(r2.task_id)
+    const second = await p2
+    expect(second.task_id).toBe(r2.task_id)
+    expect(second.remaining_ids).toEqual([])
+
+    manager.shutdown()
+  })
+
   test("tool restrictions are applied to spawned sessions", async () => {
     const client = createFakeClient()
     const manager = new BackgroundManager({ client, directory: "/test" })
