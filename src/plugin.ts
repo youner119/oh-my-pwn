@@ -40,6 +40,10 @@ import {
   createOmpTaskTool,
   createOmpTaskAllTool,
   createOmpTaskPoolTool,
+  createOmpTaskLaunchTool,
+  createOmpTaskWaitAllTool,
+  createOmpTaskWaitAnyTool,
+  createOmpTaskCancelTool,
   createOmpBackgroundOutputTool,
   createOmpPwnoStatusTool,
 } from "./orchestration"
@@ -107,6 +111,10 @@ const OmpPlugin: Plugin = async (input) => {
   const ompTaskTool = manager ? createOmpTaskTool(manager) : undefined
   const ompTaskAllTool = manager ? createOmpTaskAllTool(manager) : undefined
   const ompTaskPoolTool = manager ? createOmpTaskPoolTool(manager) : undefined
+  const ompTaskLaunchTool = manager ? createOmpTaskLaunchTool(manager) : undefined
+  const ompTaskWaitAllTool = manager ? createOmpTaskWaitAllTool(manager) : undefined
+  const ompTaskWaitAnyTool = manager ? createOmpTaskWaitAnyTool(manager) : undefined
+  const ompTaskCancelTool = manager ? createOmpTaskCancelTool(manager) : undefined
   const ompBackgroundOutputTool = manager
     ? createOmpBackgroundOutputTool(manager)
     : undefined
@@ -208,6 +216,11 @@ const OmpPlugin: Plugin = async (input) => {
       ...(ompTaskTool ? { omp_task: ompTaskTool } : {}),
       ...(ompTaskAllTool ? { omp_task_all: ompTaskAllTool } : {}),
       ...(ompTaskPoolTool ? { omp_task_pool: ompTaskPoolTool } : {}),
+      // New 4-tool surface (T7, additive). Coexists with legacy until T9 cutover.
+      ...(ompTaskLaunchTool ? { omp_task_launch: ompTaskLaunchTool } : {}),
+      ...(ompTaskWaitAllTool ? { omp_task_wait_all: ompTaskWaitAllTool } : {}),
+      ...(ompTaskWaitAnyTool ? { omp_task_wait_any: ompTaskWaitAnyTool } : {}),
+      ...(ompTaskCancelTool ? { omp_task_cancel: ompTaskCancelTool } : {}),
       ...(ompBackgroundOutputTool
         ? { omp_background_output: ompBackgroundOutputTool }
         : {}),
