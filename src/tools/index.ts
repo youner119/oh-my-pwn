@@ -8,3 +8,18 @@ export { ompVerifyTemplateOutputTool } from "./omp-verify-template-output"
 export { createOmpStageChallengeTool } from "./stage-challenge"
 export type { StageChallengeToolOptions } from "./stage-challenge"
 // omp_save_decompiled removed — BN MCP tool `decompile_to_file` replaces it.
+
+// omp-setup agent atomic tools (T02 skeletons; T03–T08 implementations).
+// Spec: `.omc/specs/deep-interview-envsetup-agent.md`.
+export { createOmpSetupInspectFolderTool } from "./omp-setup-inspect-folder"
+export type { OmpSetupInspectFolderToolOptions } from "./omp-setup-inspect-folder"
+export { createOmpSetupDockerBuildTool } from "./omp-setup-docker-build"
+export type { OmpSetupDockerBuildToolOptions } from "./omp-setup-docker-build"
+export { createOmpSetupProbeImageTool } from "./omp-setup-probe-image"
+export type { OmpSetupProbeImageToolOptions } from "./omp-setup-probe-image"
+export { createOmpSetupExtractFileTool } from "./omp-setup-extract-file"
+export type { OmpSetupExtractFileToolOptions } from "./omp-setup-extract-file"
+export { createOmpSetupPatchElfTool } from "./omp-setup-patch-elf"
+export type { OmpSetupPatchElfToolOptions } from "./omp-setup-patch-elf"
+export { createOmpSetupVerifyRuntimeTool } from "./omp-setup-verify-runtime"
+export type { OmpSetupVerifyRuntimeToolOptions } from "./omp-setup-verify-runtime"
