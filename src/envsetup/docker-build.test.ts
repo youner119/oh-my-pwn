@@ -255,4 +255,75 @@ describe("dockerBuildImage", () => {
       expect(result.buildLogPath!.startsWith(logsDir)).toBe(true)
     })
   })
+
+  describe("imageTagOverride (T04 — omp_setup_docker_build)", () => {
+    test("uses the supplied tag instead of computing omp-<sha8>", () => {
+      const state = seedState(dir)
+      const runner = new FakeDockerRunner(() => ({ exitCode: 0 }))
+
+      const result = dockerBuildImage(state, runner, {
+        imageTagOverride: "afterimage",
+      })
+
+      expect(result.imageTag).toBe("afterimage")
+      // The actual build command should have used the override too.
+      const buildCall = runner.calls.find((c) => c.args[0] === "build")
+      expect(buildCall?.args).toContain("afterimage")
+      // sha-derived default must NOT appear.
+      expect(buildCall?.args).not.toContain("omp-abc123de")
+    })
+
+    test("relaxes binary_sha256 invariant when override is supplied", () => {
+      // T04 use case: setup agent calls Phase 1 docker_build before any
+      // patched binary exists (binary_sha256 is the patched copy's hash).
+      // Only binary_input_sha256 is set at this point. The override path
+      // must NOT require state.binary_sha256.
+      const state = seedState(dir)
+      const noSha: ChallengeState = { ...state, binary_sha256: undefined }
+      const runner = new FakeDockerRunner(() => ({ exitCode: 0 }))
+
+      const result = dockerBuildImage(noSha, runner, {
+        imageTagOverride: "kaleido",
+      })
+
+      expect(result.imageTag).toBe("kaleido")
+      expect(result.cached).toBe(false)
+    })
+
+    test("cache reuse still works with override (state.docker_image == override)", () => {
+      const initial = seedState(dir)
+      // Pretend a previous run with the same override tag finished.
+      const cachedState = saveChallengeState({
+        ...initial,
+        docker_image: "afterimage",
+      })
+      const runner = new FakeDockerRunner(() => ({ exitCode: 0 }))
+
+      const result = dockerBuildImage(cachedState, runner, {
+        imageTagOverride: "afterimage",
+      })
+
+      expect(result.imageTag).toBe("afterimage")
+      expect(result.cached).toBe(true)
+      // No build should have been invoked.
+      const buildCall = runner.calls.find((c) => c.args[0] === "build")
+      expect(buildCall).toBeUndefined()
+    })
+
+    test("cache miss when override differs from previously recorded image", () => {
+      const initial = seedState(dir)
+      const cachedState = saveChallengeState({
+        ...initial,
+        docker_image: "old-tag",
+      })
+      const runner = new FakeDockerRunner(() => ({ exitCode: 0 }))
+
+      const result = dockerBuildImage(cachedState, runner, {
+        imageTagOverride: "new-tag",
+      })
+
+      expect(result.imageTag).toBe("new-tag")
+      expect(result.cached).toBe(false)
+    })
+  })
 })

@@ -40,6 +40,21 @@ export interface DockerBuildResult {
 export interface DockerBuildOptions {
   /** Override the current time, used for deterministic log filenames. */
   now?: Date
+  /**
+   * Override the image tag instead of computing `omp-<binary_sha8>` from
+   * state. Used by `omp_setup_docker_build` (T04) so the agent or operator
+   * can supply a meaningful image name (e.g. `"afterimage"`, `"kaleido"`,
+   * `"omp/pwno-mcp:dev"`) rather than the sha-derived default. When
+   * supplied, the `binary_sha256` invariant on `state` is relaxed — the
+   * caller is responsible for tag uniqueness.
+   */
+  imageTagOverride?: string
+  /**
+   * Force a fresh `docker build` regardless of cache state. Used by
+   * `omp_setup_docker_build` (T04) when the agent explicitly requests
+   * rebuild (e.g. user said "rebuild from scratch"). Default false.
+   */
+  forceRebuild?: boolean
 }
 
 /**
@@ -54,18 +69,26 @@ export function dockerBuildImage(
   runner: DockerRunner,
   opts: DockerBuildOptions = {},
 ): DockerBuildResult {
-  if (state.binary_sha256 === undefined) {
-    throw new Error(
-      "internal: dockerBuildImage requires state with binary_sha256 (T03 invariant)",
-    )
+  let imageTag: string
+  if (opts.imageTagOverride !== undefined) {
+    imageTag = opts.imageTagOverride
+  } else {
+    if (state.binary_sha256 === undefined) {
+      throw new Error(
+        "internal: dockerBuildImage requires state with binary_sha256 (T03 invariant) when no imageTagOverride is supplied",
+      )
+    }
+    imageTag = `omp-${state.binary_sha256.slice(0, 8)}`
   }
 
-  const imageTag = `omp-${state.binary_sha256.slice(0, 8)}`
   const dockerfilePath = state.dockerfile_path
   const buildContext = dirname(dockerfilePath)
   const now = opts.now ?? new Date()
 
-  if (canReuseImage(state, imageTag, dockerfilePath, runner)) {
+  if (
+    opts.forceRebuild !== true &&
+    canReuseImage(state, imageTag, dockerfilePath, runner)
+  ) {
     return { imageTag, cached: true }
   }
 
