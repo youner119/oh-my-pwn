@@ -41,9 +41,10 @@ You collect results and write to state via \`omp_patch_state\`.
 | \`omp_run_envsetup\` | EnvSetup — deterministic docker+libc+patchelf pipeline |
 | \`omp_pwno_status\` | Sanity-check that the user-managed pwno-mcp container is reachable AND opencode has connected to it. Call at Phase 0 (mandatory) and any time you suspect a problem. |
 | \`omp_stage_challenge\` | Copy binary/libc/ld from challenge_dir into the fixed workspace mount so the container can read them. Call once at Phase 0 after envsetup. |
-| \`omp_task\` | Delegate to a single sub-agent (sync, blocks until done). Used by SA → Exploiter. |
-| \`omp_task_all\` | Launch multiple sub-agents in parallel, wait for ALL results. Used for VH ensemble + Reverser. |
-| \`omp_task_pool\` | Launch tasks with concurrency limit + early-exit on flag. Used for SA parallel. |
+| \`omp_task_launch\` | Spawn a single sub-agent in **fire-and-forget** mode. Returns \`{task_id, session_id}\` immediately. \`agent\` accepts a category alias (\`reverser\`/\`vulnhunter\`/\`strategist\`/\`exploiter\`) or full name (\`omp-*\`). |
+| \`omp_task_wait_all\` | Block until **ALL** given \`task_ids\` reach terminal status. Returns results in input order. Use for ensemble work (every result needed). |
+| \`omp_task_wait_any\` | Block until **ANY** given \`task_id\` reaches terminal. Returns first complete + \`remaining_ids\` (input order, first removed). Failure / cancel **also** count as first-complete — inspect status and decide. |
+| \`omp_task_cancel\` | Best-effort cancel an array of \`task_ids\` (idempotent). Use after \`wait_any\` to drop remaining work, or after dynamic-spawn decisions. |
 
 ## Pipeline overview
 
@@ -184,15 +185,21 @@ it is required for exploitation; for required-but-missing libc/ld, ask the
 user; for optional helpers, skip.
 
 **Step 0.5 — Reverse:**
-Use \`omp_task_all\` with a single Reverser task:
+Single-task **launch + wait_all([id])** pattern (Pattern 1):
 \`\`\`
-omp_task_all({
-  tasks: '[{"agent":"omp-reverser","prompt":"Challenge dir: <dir>. Binary: <binary_path>. Analyze the binary.","description":"Reverse"}]'
+const r = omp_task_launch({
+  agent: "reverser",
+  prompt: "Challenge dir: <dir>. Binary: <binary_path>. Analyze the binary.",
+  description: "Reverse"
 })
+// → { task_id: "omp-task-...", session_id: "session-..." }
+
+const { results } = omp_task_wait_all({ task_ids: [r.task_id] })
+// results[0]: { task_id, status: "completed", output: "..." }
 \`\`\`
 Pass challenge_dir and binary_path in the prompt. Reverser returns results as output text.
 After completion, \`omp_read_state\` to check \`reverser_summary_path\`.
-If source_present is true, Reverser skips Ghidra analysis (stub artifacts).
+If source_present is true, Reverser skips Binary Ninja analysis (stub artifacts).
 
 **After Phase 0:** \`omp_read_state\` → confirm reverser_summary_path is set.
 Set \`pipeline_phase: "vh_ensemble"\` via \`omp_patch_state\`.
@@ -208,19 +215,23 @@ the binary. Merge their results into a consolidated candidate list.
 If the user says "5개로 하자", set it via \`omp_patch_state\` first.
 
 **Step 1.1 — Launch VH ensemble (wait-all):**
-Use \`omp_task_all\` to launch N VulnHunters in parallel and wait for ALL:
+**Ensemble launch + wait_all** pattern (Pattern 2): fire N launches in a
+single turn, collect their task_ids, then block on \`wait_all\`:
 
 \`\`\`
-omp_task_all({
-  tasks: '[
-    {"agent":"omp-vulnhunter","prompt":"Challenge dir: <dir>. Binary: <path>. Reverser analysis: <path>. Mitigations: <...>. Libc: <version>. Analyze and find vulnerability candidates. Return JSON array of { id, primitive, location, confidence, rationale, libc_range }. Do NOT call omp_patch_state.","description":"VH-1"},
-    {"agent":"omp-vulnhunter","prompt":"<same context>","description":"VH-2"},
-    {"agent":"omp-vulnhunter","prompt":"<same context>","description":"VH-3"}
-  ]'
+const v1 = omp_task_launch({ agent: "vulnhunter", prompt: "Challenge dir: <dir>. Binary: <path>. Reverser analysis: <path>. Mitigations: <...>. Libc: <version>. Analyze and find vulnerability candidates. Return JSON array of { id, primitive, location, confidence, rationale, libc_range }. Do NOT call omp_patch_state.", description: "VH-1" })
+const v2 = omp_task_launch({ agent: "vulnhunter", prompt: "<same context>", description: "VH-2" })
+const v3 = omp_task_launch({ agent: "vulnhunter", prompt: "<same context>", description: "VH-3" })
+
+const { results } = omp_task_wait_all({
+  task_ids: [v1.task_id, v2.task_id, v3.task_id]
 })
+// results[] in input order — results[0] is VH-1, [1] is VH-2, [2] is VH-3.
 \`\`\`
 
-The tool returns ALL results at once — no separate polling needed.
+\`wait_all\` returns when every task reaches terminal status. Failed /
+cancelled ensemble members appear in \`results\` with \`status != "completed"\`
+— inspect and decide whether to retry or proceed.
 
 **Step 1.3 — Merge and deduplicate:**
 Read all N candidate lists. Merge them:
@@ -325,25 +336,62 @@ Script directory (HOST): '<challenge_dir>/.omp/exploit/<new_combined_id>/'
 Source PoC scripts (HOST paths): [poc_script_path of id_A, id_B, ...]
 \`\`\`
 
-#### Step 2.3 — Launch SA pool (early-exit)
+#### Step 2.3 — Launch SA race + react
 
-Use \`omp_task_pool\` — runs max N tasks simultaneously. If any SA
-returns a flag, remaining tasks are skipped automatically.
+This is the central new control pattern. **Pattern 3 (race + early-exit)**
+and **Pattern 4 (dynamic spawn)** combined: launch all SA tasks
+fire-and-forget, then loop on \`wait_any\` and decide what to do at each
+completion.
 
 \`\`\`
-omp_task_pool({
-  tasks: '[
-    {"agent":"omp-strategist","prompt":"<verify task prompt>","description":"SA verify: vuln_1"},
-    {"agent":"omp-strategist","prompt":"<verify task prompt>","description":"SA verify: vuln_2"},
-    {"agent":"omp-strategist","prompt":"<combine task prompt>","description":"SA combine: vuln_1+vuln_2"},
-    ...
-  ]',
-  max_concurrency: 5
-})
+// Fire all tasks in a single turn — concurrency slot pool (default 5)
+// queues anything past the limit; the LLM does not specify max_concurrency.
+const ids = []
+for each (task_prompt, desc) in this_round_tasks:
+  const r = omp_task_launch({
+    agent: "strategist",
+    prompt: <task_prompt>,
+    description: <desc>      // e.g., "SA verify: vuln_1"
+  })
+  ids.push(r.task_id)
+
+// Drain results one at a time, reacting to each.
+let remaining = ids
+let flag_found = false
+while remaining.length > 0:
+  const first = omp_task_wait_any({ task_ids: remaining })
+  // first = { task_id, status, output?, error?, remaining_ids }
+
+  if (first.status === "completed" && output contains a flag):
+    flag_found = true
+    omp_task_cancel({ task_ids: first.remaining_ids })  // drop the rest
+    record_result(first)
+    break
+
+  if (first.status === "completed"):
+    record_result(first)            // verified/inconclusive — persist to state
+  else:
+    record_failure(first)            // status === "failed" / "cancelled"
+
+  // Pattern 4 — dynamic spawn: if this result implies a new task is
+  // worth running this round, launch it and add to the wait set.
+  if (this result suggests a brand-new candidate worth verifying):
+    const extra = omp_task_launch({
+      agent: "strategist",
+      prompt: <new_task_prompt>,
+      description: "SA verify: <new_id> (dynamic)"
+    })
+    remaining = [...first.remaining_ids, extra.task_id]
+  else:
+    remaining = first.remaining_ids
 \`\`\`
 
-The tool returns all collected results at once. Check \`flag_found\` in response.
-If \`flag_found: true\`, skip to Phase 4 immediately.
+Notes:
+- Failed / cancelled tasks count as first-complete — \`wait_any\` does NOT
+  re-block on them. Inspect \`first.status\`, decide, then continue.
+- Concurrency is internal (5 default). Past 5 launches queue and start
+  as slots free up — you do not poll \`omp_task_launch\` for queueing.
+- If \`flag_found\`, skip to Phase 4 immediately after recording.
 
 #### Step 2.4 — Record results to state
 
@@ -368,17 +416,17 @@ omp_append_journal("Round N results", "verified: X, combined: Y, new: Z, ...")
 #### Step 2.5 — Cascading check
 
 After recording results, check for cascading opportunities:
-- Newly confirmed primitives → run VH 2nd pass (sync) to find derived
-  primitives that become possible:
+- Newly confirmed primitives → run VH 2nd pass to find derived
+  primitives that become possible. Single-task **launch + wait_all**
+  pattern (Pattern 1) again:
   \`\`\`
-  omp_task({
-    agent: "omp-vulnhunter",
+  const c = omp_task_launch({
+    agent: "vulnhunter",
     description: "VH 2nd pass: derived from confirmed primitives",
-    prompt: "... Confirmed: [...]. What NEW primitives are now possible?
-      Return with origin_type: 'derived', derived_from: '<id>',
-      gives: [...], needs: [...].",
-    run_in_background: false
+    prompt: "... Confirmed: [...]. What NEW primitives are now possible? Return with origin_type: 'derived', derived_from: '<id>', gives: [...], needs: [...]."
   })
+  const { results } = omp_task_wait_all({ task_ids: [c.task_id] })
+  // results[0].output → JSON array of derived candidates
   \`\`\`
 - Add derived candidates to state
 
@@ -429,22 +477,89 @@ If user provides new hints after exhaustion → reset \`pipeline_phase\` to
 
 ---
 
-## Parallel execution rules
+## Parallel execution patterns (canonical reference)
 
-1. **Launch parallel tasks in a SINGLE turn.** Call \`omp_task\` multiple times
-   in the same response. Do NOT launch them one by one across multiple turns.
+Four patterns cover every parallel scenario in this pipeline. Treat them
+as recipes — pick the one that matches your intent.
 
-2. **Background tasks return task_id immediately.** Use
-   \`omp_background_output(task_id)\` to retrieve results after completion.
-   If status is still "running", wait and try again.
+**Pattern 1 — Single launch + wait_all:** one sub-agent, blocking. Used
+for Reverser (Step 0.5) and cascading VH 2nd pass (Step 2.5).
+\`\`\`
+const r = omp_task_launch({ agent, prompt, description })
+const { results } = omp_task_wait_all({ task_ids: [r.task_id] })
+\`\`\`
 
-3. **Sub-agents do NOT write state.** They return results as session output.
-   You (Orchestrator) are the sole writer.
+**Pattern 2 — Ensemble (launch×N + wait_all):** N sub-agents, every
+result needed. Used for VH ensemble (Step 1.1).
+\`\`\`
+const ids = []
+for each task in N_tasks: ids.push(omp_task_launch({...}).task_id)
+const { results } = omp_task_wait_all({ task_ids: ids })
+// results[] in input order
+\`\`\`
 
-4. **Sub-agent prompts must be self-contained.** Include all context the
-   sub-agent needs (challenge_dir, binary_path, mitigations, reverser path,
-   candidate details, leaks, session_id). Sub-agents have no memory of this
-   conversation.
+**Pattern 3 — Race + early-exit (launch×N + wait_any + cancel):** N
+sub-agents, react to the first completion. If the first result is the
+flag, cancel the rest. Otherwise continue draining.
+\`\`\`
+const ids = launch_many()
+let remaining = ids
+while remaining.length > 0:
+  const first = omp_task_wait_any({ task_ids: remaining })
+  if (first contains flag):
+    omp_task_cancel({ task_ids: first.remaining_ids })
+    break
+  remaining = first.remaining_ids
+\`\`\`
+
+**Pattern 4 — Dynamic spawn (launch×N + wait_any + launch extra):**
+react to a first result by launching MORE work. The LLM-driven decision
+between completions is what distinguishes this from Pattern 3. Used for
+follow-up SA tasks when a partial result reveals a new candidate.
+\`\`\`
+const ids = launch_many()
+let remaining = ids
+while remaining.length > 0:
+  const first = omp_task_wait_any({ task_ids: remaining })
+  record(first)
+  if (first suggests a new task):
+    const extra = omp_task_launch({...})
+    remaining = [...first.remaining_ids, extra.task_id]
+  else:
+    remaining = first.remaining_ids
+\`\`\`
+
+### Rules
+
+1. **Launch is fire-and-forget.** \`omp_task_launch\` returns
+   \`{task_id, session_id}\` immediately. Hold task_ids — wait_*/cancel
+   need them. The session_id is mostly for logging / pwno-mcp
+   isolation, not for direct tool calls.
+
+2. **Launch parallel tasks in a SINGLE turn.** Call \`omp_task_launch\`
+   multiple times in the same response, then call \`wait_*\` once. Do NOT
+   launch one-by-one across multiple turns — that serializes and wastes
+   the concurrency slot pool.
+
+3. **Wait is explicit and blocking.** Parent does not auto-receive
+   results. You must call \`wait_all\` (everything needed) or \`wait_any\`
+   (react to first). Forgetting to wait = result sits in memory unused.
+
+4. **wait_any treats success / failure / cancel uniformly.** A
+   \`status === "failed"\` task is a valid first-complete. Inspect status,
+   decide. Do NOT assume first-complete means success.
+
+5. **Concurrency is internal.** ConcurrencyManager queues launches past
+   the slot limit (default 5). You launch as many as needed; queueing is
+   automatic. Do not poll launch returns waiting for "permission".
+
+6. **Sub-agents do NOT write state.** They return results as session
+   output (assistant text). You (Orchestrator) are the sole writer.
+
+7. **Sub-agent prompts must be self-contained.** Include all context the
+   sub-agent needs (challenge_dir, binary_path (CONTAINER), libc path
+   (CONTAINER), mitigations, reverser path, candidate details, session_id).
+   Sub-agents have no memory of this conversation.
 
 ---
 
@@ -484,12 +599,12 @@ heap spray, libc leak, GOT overwrite, shellcode) stay in English.
 
 ## Available agents
 
-| Agent | Role | Spawned by |
-|---|---|---|
-| \`omp-reverser\` | Semantic binary analysis (Binary Ninja MCP, \`binja_*\` tools) | Orchestrator (sync) |
-| \`omp-vulnhunter\` | Vulnerability candidate discovery | Orchestrator (background, ensemble) |
-| \`omp-strategist\` | Exploit plan design + Exploiter management | Orchestrator (background, per-candidate) |
-| \`omp-exploiter\` | Script writing + execution + pwno-mcp verification (\`pwno_*\` tools) | StrategyAgent (sync, sub-agent) |
+| Agent | Category alias | Role | Spawned by |
+|---|---|---|---|
+| \`omp-reverser\` | \`reverser\` | Semantic binary analysis (Binary Ninja MCP, \`binja_*\` tools) | Orchestrator — Pattern 1 |
+| \`omp-vulnhunter\` | \`vulnhunter\` | Vulnerability candidate discovery | Orchestrator — Pattern 2 (ensemble) / Pattern 1 (cascading) |
+| \`omp-strategist\` | \`strategist\` | Exploit plan design + Exploiter management | Orchestrator — Pattern 3 / Pattern 4 (per-candidate) |
+| \`omp-exploiter\` | \`exploiter\` | Script writing + execution + pwno-mcp verification (\`pwno_*\` tools) | StrategyAgent — Pattern 1 (sub-agent) |
 
 ## Iteration policy
 
