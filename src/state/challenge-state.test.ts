@@ -356,6 +356,43 @@ describe("ChallengeStateSchema", () => {
     }
   })
 
+  test("accepts challenge_summary (facts-only per D10)", () => {
+    const state = {
+      ...createInitialChallengeState(baseInput),
+      challenge_type: "user-mode-elf",
+      challenge_summary:
+        "Ubuntu 24.04 / glibc 2.39 user-mode x86_64 ELF. NEEDED: libc/libm/libz/libbz2/liblzma. " +
+        "Mitigations: NX=on PIE=on Canary=on RELRO=full seccomp=false. Remote via xinetd on TCP/10039.",
+    }
+    const parsed = ChallengeStateSchema.parse(state)
+    expect(parsed.challenge_summary).toContain("Ubuntu 24.04")
+    expect(parsed.challenge_summary).toContain("Canary=on")
+    // Schema does not enforce D10 — that is a prompt-level rule for the
+    // setup agent. Schema only enforces "optional string".
+  })
+
+  test("challenge_summary is optional (pre-omp-setup state)", () => {
+    const stateWithout = createInitialChallengeState(baseInput)
+    expect(stateWithout.challenge_summary).toBeUndefined()
+  })
+
+  test("challenge_summary accepts the unsupported-case shape (kernel example)", () => {
+    const state = {
+      ...createInitialChallengeState(baseInput),
+      challenge_type: "unsupported",
+      setup_unsupported_reason:
+        "kernel challenge detected: vmlinux + qemu-system in run.sh",
+      challenge_summary:
+        "Linux kernel exploitation challenge. bzImage (5.4MB self-extracting kernel image) + " +
+        "rootfs.cpio.gz (4.9MB cpio initramfs) + qemu-system-x86_64 boot with KASLR/SMAP/SMEP/PTI. " +
+        "Remote: socat TCP-LISTEN:8080.",
+    }
+    const parsed = ChallengeStateSchema.parse(state)
+    expect(parsed.challenge_summary).toContain("kernel")
+    expect(parsed.challenge_summary).toContain("KASLR")
+    expect(parsed.setup_unsupported_reason).toContain("kernel challenge")
+  })
+
   test("setup_unsupported_reason accepts null, string, and undefined", () => {
     const variants = [
       { setup_unsupported_reason: null },
@@ -474,6 +511,7 @@ describe("ChallengeStateSchema", () => {
     expect(parsed.challenge_type).toBeUndefined()
     expect(parsed.setup_complete).toBeUndefined()
     expect(parsed.setup_unsupported_reason).toBeUndefined()
+    expect(parsed.challenge_summary).toBeUndefined()
     expect(parsed.binary_input_path).toBeUndefined()
     expect(parsed.binary_input_sha256).toBeUndefined()
     expect(parsed.extracted_libs).toBeUndefined()

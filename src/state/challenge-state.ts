@@ -322,6 +322,33 @@ export const ChallengeStateSchema = z.object({
    * Added by spec `deep-interview-envsetup-agent.md` (T01).
    */
   setup_unsupported_reason: z.string().nullable().optional(),
+  /**
+   * 1–3 sentence free-form summary of the challenge environment, written
+   * by the omp-setup agent during Phase 0 (Inspect & Understand). Captures
+   * facts only — file kinds, mitigations raw flags, libc version, remote
+   * wrapper, architecture — and explicitly NOT downstream judgments
+   * (vulnerability primitives, mitigation strength, exploit feasibility,
+   * function-level vuln hints, difficulty ratings) per D10 of
+   * `.omc/specs/deep-interview-envsetup-agent.md`. Used by Reverser/VH as
+   * a quick-orient input alongside `reverser-analysis.md`.
+   *
+   * Examples (allowed):
+   *   "Ubuntu 24.04 / glibc 2.39 user-mode x86_64 ELF. Single binary 'prob'
+   *    (8MB) with NEEDED libc/libm/libz/libbz2/liblzma. Mitigations:
+   *    NX=on PIE=on Canary=on RELRO=full seccomp=false. Remote via xinetd
+   *    on TCP/10039."
+   *
+   *   "Linux kernel exploitation challenge. bzImage + rootfs.cpio.gz +
+   *    qemu-system-x86_64 boot with KASLR/SMAP/SMEP/PTI. Remote: socat
+   *    TCP-LISTEN:8080."
+   *
+   * Counter-example (FORBIDDEN — violates D10):
+   *   "Stack BOF in main() with 0x40 byte buffer. ROP straightforward,
+   *    libc 2.39 means tcache double-free is fastbin-segregated."
+   *
+   * Added by spec `deep-interview-envsetup-agent.md` (T01.5).
+   */
+  challenge_summary: z.string().optional(),
 
   /* ── Environment (T04 EnvSetup / omp-setup agent fills) ──────────────── */
 
