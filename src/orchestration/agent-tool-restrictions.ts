@@ -4,29 +4,38 @@
  * Merged into the `tools` object passed to session.promptAsync when
  * spawning a sub-agent session. `true` = allow, `false` = deny.
  *
- * Design:
- * - SA gets `omp_task: true` (needs to spawn Exploiter as sub-agent)
- * - Exploiter gets `omp_task: false` (no recursive spawning)
- * - VulnHunter gets `omp_task: false` (leaf agent)
- * - Reverser gets `omp_task: false` (leaf agent)
+ * Design (post-T9 cutover, 4-tool surface):
+ * - SA spawns Exploiter → needs the full launch/wait/cancel surface
+ * - Exploiter, VulnHunter, Reverser are leaf agents — no child spawning
+ *
+ * The four orchestration tools come as a coherent set; we toggle them
+ * together so an agent can't half-spawn (launch without wait, etc.).
  */
 
 const AGENT_RESTRICTIONS: Record<string, Record<string, boolean>> = {
   "omp-reverser": {
-    omp_task: false,
-    omp_background_output: false,
+    omp_task_launch: false,
+    omp_task_wait_all: false,
+    omp_task_wait_any: false,
+    omp_task_cancel: false,
   },
   "omp-vulnhunter": {
-    omp_task: false,
-    omp_background_output: false,
+    omp_task_launch: false,
+    omp_task_wait_all: false,
+    omp_task_wait_any: false,
+    omp_task_cancel: false,
   },
   "omp-strategist": {
-    omp_task: true,
-    omp_background_output: true,
+    omp_task_launch: true,
+    omp_task_wait_all: true,
+    omp_task_wait_any: true,
+    omp_task_cancel: true,
   },
   "omp-exploiter": {
-    omp_task: false,
-    omp_background_output: false,
+    omp_task_launch: false,
+    omp_task_wait_all: false,
+    omp_task_wait_any: false,
+    omp_task_cancel: false,
   },
 }
 

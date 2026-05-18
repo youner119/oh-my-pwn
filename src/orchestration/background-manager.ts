@@ -15,7 +15,6 @@ import type {
   LaunchResult,
   OmpSessionClient,
   TaskOutcome,
-  TaskResult,
   TaskStatus,
   TextPart,
   WaitAllResult,
@@ -144,48 +143,16 @@ export class BackgroundManager {
   }
 
   /**
-   * Launch a sub-agent task.
+   * Launch a sub-agent task in fire-and-forget mode.
    *
-   * - `runInBackground=true`: returns immediately with taskId. Poll via getResult().
-   * - `runInBackground=false`: blocks until sub-session completes, returns result.
-   */
-  async launch(input: LaunchInput): Promise<TaskResult> {
-    const task = this.createTask(input)
-    const concurrencyKey = task.concurrencyKey
-
-    // Acquire concurrency slot
-    await this.concurrency.acquire(concurrencyKey)
-
-    try {
-      await this.startSession(task, input)
-    } catch (err) {
-      this.concurrency.release(concurrencyKey)
-      task.status = "failed"
-      task.error = String(err)
-      return { taskId: task.id, status: "failed", error: task.error }
-    }
-
-    if (input.runInBackground) {
-      this.ensurePolling()
-      return { taskId: task.id, status: "running" }
-    }
-
-    // Sync mode: poll until completion
-    return this.waitForCompletion(task)
-  }
-
-  /**
-   * Launch a sub-agent task in fire-and-forget mode (T5).
-   *
-   * Backing impl for the new `omp_task_launch` tool (T7). Resolves the
-   * agent category alias to a concrete agent name via `resolveAgent`,
-   * creates the opencode child session, fires the prompt, and returns
+   * Backing impl for the `omp_task_launch` tool. Resolves the agent
+   * category alias to a concrete agent name via `resolveAgent`, creates
+   * the opencode child session, fires the prompt, and returns
    * `{ task_id, session_id }`. The session runs asynchronously; observe
-   * its outcome via `waitAll` / `waitAny` (T6) or `getTask`.
+   * its outcome via `waitAll` / `waitAny` or `getTask`.
    *
    * On session creation failure, the task is marked `failed` in the
    * tasks map (state consistency) and the error is rethrown to the caller.
-   * `runInBackground` on the input is ignored — this method is always async.
    */
   async launchAsync(input: LaunchInput): Promise<LaunchResult> {
     const resolvedAgent = resolveAgent(input.agent)
@@ -337,158 +304,10 @@ export class BackgroundManager {
     return result
   }
 
-  /** Get output from a completed/failed task. */
-  async getResult(taskId: string): Promise<TaskResult> {
-    const task = this.tasks.get(taskId)
-    if (!task) {
-      return { taskId, status: "failed", error: `Task ${taskId} not found` }
-    }
-
-    if (task.status === "running" || task.status === "queued") {
-      return { taskId, status: task.status }
-    }
-
-    if (task.status === "failed" || task.status === "cancelled") {
-      return { taskId, status: task.status, error: task.error }
-    }
-
-    // Completed — fetch output
-    if (!task.sessionID) {
-      return { taskId, status: "completed", output: "" }
-    }
-
-    try {
-      const output = await this.fetchSessionOutput(task.sessionID)
-      return { taskId, status: "completed", output }
-    } catch (err) {
-      return {
-        taskId,
-        status: "completed",
-        output: `(output fetch failed: ${String(err)})`,
-      }
-    }
-  }
-
-  /** Check if any background tasks from a parent session are still running. */
-  hasRunningTasksForParent(parentSessionID: string): boolean {
-    for (const task of this.tasks.values()) {
-      if (
-        task.parentSessionID === parentSessionID &&
-        (task.status === "running" || task.status === "queued")
-      ) {
-        return true
-      }
-    }
-    return false
-  }
-
   /**
-   * Launch multiple tasks and wait for ALL to complete (wait-all).
-   * Used for VH ensemble and Reverser — we need every result.
-   */
-  async launchAll(inputs: LaunchInput[]): Promise<TaskResult[]> {
-    ompLog(`launchAll: starting ${inputs.length} tasks (wait-all)`)
-
-    const promises = inputs.map((input) =>
-      this.launchAndWait(input),
-    )
-    const results = await Promise.all(promises)
-
-    ompLog(`launchAll: all ${inputs.length} tasks completed`)
-    return results
-  }
-
-  /**
-   * Launch tasks with a concurrency limit, early-exit on flag.
-   * Used for SA+Exploiter — max N running at once, stop if flag found.
-   *
-   * @param inputs - all tasks to run
-   * @param maxConcurrency - max simultaneous tasks (default 3)
-   * @param isFlag - callback to check if a result contains a flag
-   * @returns collected results (may be partial if early-exit triggered)
-   */
-  async launchPool(
-    inputs: LaunchInput[],
-    maxConcurrency: number,
-    isFlag: (result: TaskResult) => boolean,
-  ): Promise<{ results: TaskResult[]; flagFound: boolean }> {
-    ompLog(`launchPool: ${inputs.length} tasks, max concurrency ${maxConcurrency}`)
-
-    const results: TaskResult[] = []
-    const queue = [...inputs]
-    const executing = new Map<Promise<void>, string>() // promise → taskId
-    let flagFound = false
-
-    const launchNext = async (): Promise<void> => {
-      if (queue.length === 0 || flagFound) return
-
-      const input = queue.shift()!
-      const resultPromise = this.launchAndWait(input).then((result) => {
-        results.push(result)
-        executing.delete(p)
-
-        if (isFlag(result)) {
-          flagFound = true
-          ompLog(`launchPool: FLAG FOUND in task ${result.taskId} — stopping`)
-        }
-      })
-      const p = resultPromise
-      executing.set(p, input.description)
-    }
-
-    // Fill initial slots
-    while (executing.size < maxConcurrency && queue.length > 0) {
-      await launchNext()
-    }
-
-    // As each finishes, launch next from queue
-    while (executing.size > 0) {
-      await Promise.race(executing.keys())
-
-      // Fill freed slots
-      while (executing.size < maxConcurrency && queue.length > 0 && !flagFound) {
-        await launchNext()
-      }
-    }
-
-    ompLog(`launchPool: done. ${results.length} results, flagFound=${flagFound}`)
-    return { results, flagFound }
-  }
-
-  /**
-   * Internal: launch a single task and wait for completion.
-   * Reuses startSession + waitForCompletion. Always blocking.
-   */
-  private async launchAndWait(input: LaunchInput): Promise<TaskResult> {
-    const task = this.createTask(input)
-    await this.concurrency.acquire(task.concurrencyKey)
-
-    try {
-      await this.startSession(task, { ...input, runInBackground: false })
-    } catch (err) {
-      this.concurrency.release(task.concurrencyKey)
-      task.status = "failed"
-      task.error = String(err)
-      return { taskId: task.id, status: "failed", error: task.error }
-    }
-
-    return this.waitForCompletion(task)
-  }
-
-  /** Cancel a running task. */
-  async cancelTask(taskId: string): Promise<boolean> {
-    const task = this.tasks.get(taskId)
-    if (!task || task.status !== "running") return false
-    task.status = "cancelled"
-    task.completedAt = new Date()
-    this.concurrency.release(task.concurrencyKey)
-    return true
-  }
-
-  /**
-   * Cancel a task by ID. T4 — the API surface for the new `omp_task_cancel`
-   * tool (added in T7). Idempotent: returns false for unknown ids or tasks
-   * already in a terminal state.
+   * Cancel a task by ID. The API surface for the `omp_task_cancel`
+   * tool. Idempotent: returns false for unknown ids or tasks already in
+   * a terminal state.
    *
    * Steps:
    *   1. Best-effort POST /session/{id}/abort (errors swallowed — session
@@ -660,26 +479,6 @@ export class BackgroundManager {
     }
   }
 
-  private async waitForCompletion(task: BackgroundTask): Promise<TaskResult> {
-    // Poll until not active
-    while (task.status === "running") {
-      await sleep(POLLING_INTERVAL_MS)
-      if (!task.sessionID) break
-      await this.checkTaskStatus(task)
-    }
-
-    this.concurrency.release(task.concurrencyKey)
-
-    if (task.status === "failed") {
-      return { taskId: task.id, status: "failed", error: task.error }
-    }
-
-    const output = task.sessionID
-      ? await this.fetchSessionOutput(task.sessionID)
-      : ""
-    return { taskId: task.id, status: "completed", output }
-  }
-
   private ensurePolling(): void {
     if (this.pollingInterval) return
     this.pollingInterval = setInterval(() => {
@@ -752,55 +551,6 @@ export class BackgroundManager {
     }
   }
 
-  private async checkTaskStatus(task: BackgroundTask): Promise<void> {
-    if (!task.sessionID) return
-
-    try {
-      const rawStatuses = await this.client.status()
-      ompLog(`status() raw keys: ${Object.keys(rawStatuses as object).join(", ")}`)
-      const statuses = unwrapData<Record<string, { type: string }>>(rawStatuses)
-      ompLog(`status() unwrapped keys: ${Object.keys(statuses ?? {}).join(", ")}`)
-      const sessionStatus = statuses[task.sessionID]
-
-      // Session not in status map has two meanings:
-      // 1. Just created, not registered yet → keep waiting (task just started)
-      // 2. Already completed and removed from status map → completed
-      // Distinguish by checking if we've EVER seen it as busy.
-      if (!sessionStatus) {
-        if (task.startedAt && Date.now() - task.startedAt.getTime() > 10000) {
-          // Task has been running for >10s but session disappeared from status map
-          // → session completed and was cleaned up by opencode
-          ompLog(`Task ${task.id}: session ${task.sessionID} disappeared from status map after running → completed`)
-          task.status = "completed"
-          task.completedAt = new Date()
-          this.concurrency.release(task.concurrencyKey)
-          this.closePaneForTask(task.id)
-          void this.dumpTranscript(task)
-        } else {
-          ompLog(`Task ${task.id}: session ${task.sessionID} not in status map yet (startup grace period)`)
-        }
-        return
-      }
-
-      // Session still active (busy, retry) — keep waiting
-      if (!isIdleStatus(sessionStatus.type)) {
-        ompLog(`Task ${task.id}: session status = ${sessionStatus.type} (waiting)`)
-        return
-      }
-
-      // Session is idle — sub-agent finished
-      ompLog(`Task ${task.id}: session idle → completed`)
-      task.status = "completed"
-      task.completedAt = new Date()
-      this.concurrency.release(task.concurrencyKey)
-      this.closePaneForTask(task.id)
-      void this.dumpTranscript(task)
-    } catch (err) {
-      ompLog(`Task ${task.id}: status check error: ${String(err)}`)
-      // If we can't check status, assume still running
-    }
-  }
-
   /**
    * Persist a sub-agent's full conversation transcript to
    * `<challenge_dir>/.omp/logs/agents/<task_id>__<agent>__<desc>.json`.
@@ -865,8 +615,4 @@ export class BackgroundManager {
       }>,
     )
   }
-}
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms))
 }

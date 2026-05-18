@@ -92,21 +92,12 @@ export interface LaunchInput {
   agent: string
   description: string
   prompt: string
-  runInBackground: boolean
   tools?: Record<string, boolean>
   model?: { providerID: string; modelID: string }
 }
 
-export interface TaskResult {
-  taskId: string
-  status: TaskStatus
-  output?: string
-  error?: string
-}
-
-/* ── New 4-tool surface result types (additive, T2) ───────────────────── */
-/* `omp_task_launch` / `_wait_all` / `_wait_any` / `_cancel` return these.   */
-/* Legacy `TaskResult` above is removed in T9 cutover.                       */
+/* ── 4-tool surface result types ──────────────────────────────────────── */
+/* Returned by `omp_task_launch` / `_wait_all` / `_wait_any` / `_cancel`.    */
 
 /** Returned by `omp_task_launch` — fire-and-forget. */
 export interface LaunchResult {

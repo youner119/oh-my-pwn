@@ -37,14 +37,10 @@ import {
 } from "./tools"
 import {
   BackgroundManager,
-  createOmpTaskTool,
-  createOmpTaskAllTool,
-  createOmpTaskPoolTool,
   createOmpTaskLaunchTool,
   createOmpTaskWaitAllTool,
   createOmpTaskWaitAnyTool,
   createOmpTaskCancelTool,
-  createOmpBackgroundOutputTool,
   createOmpPwnoStatusTool,
 } from "./orchestration"
 import type { OmpSessionClient } from "./orchestration"
@@ -108,16 +104,10 @@ const OmpPlugin: Plugin = async (input) => {
     ? new BackgroundManager({ client: sessionClient, directory, serverUrl })
     : undefined
 
-  const ompTaskTool = manager ? createOmpTaskTool(manager) : undefined
-  const ompTaskAllTool = manager ? createOmpTaskAllTool(manager) : undefined
-  const ompTaskPoolTool = manager ? createOmpTaskPoolTool(manager) : undefined
   const ompTaskLaunchTool = manager ? createOmpTaskLaunchTool(manager) : undefined
   const ompTaskWaitAllTool = manager ? createOmpTaskWaitAllTool(manager) : undefined
   const ompTaskWaitAnyTool = manager ? createOmpTaskWaitAnyTool(manager) : undefined
   const ompTaskCancelTool = manager ? createOmpTaskCancelTool(manager) : undefined
-  const ompBackgroundOutputTool = manager
-    ? createOmpBackgroundOutputTool(manager)
-    : undefined
 
   // pwno-mcp health check tool. Container lifecycle is the user's
   // responsibility — they start it before omp. This tool just probes the
@@ -213,17 +203,11 @@ const OmpPlugin: Plugin = async (input) => {
       omp_get_template: ompGetTemplateTool,
       omp_verify_template_output: ompVerifyTemplateOutputTool,
       // omp_save_decompiled removed — use BN MCP tool `decompile_to_file` instead.
-      ...(ompTaskTool ? { omp_task: ompTaskTool } : {}),
-      ...(ompTaskAllTool ? { omp_task_all: ompTaskAllTool } : {}),
-      ...(ompTaskPoolTool ? { omp_task_pool: ompTaskPoolTool } : {}),
-      // New 4-tool surface (T7, additive). Coexists with legacy until T9 cutover.
+      // 4-tool sub-agent surface — fire-and-forget + explicit wait/cancel.
       ...(ompTaskLaunchTool ? { omp_task_launch: ompTaskLaunchTool } : {}),
       ...(ompTaskWaitAllTool ? { omp_task_wait_all: ompTaskWaitAllTool } : {}),
       ...(ompTaskWaitAnyTool ? { omp_task_wait_any: ompTaskWaitAnyTool } : {}),
       ...(ompTaskCancelTool ? { omp_task_cancel: ompTaskCancelTool } : {}),
-      ...(ompBackgroundOutputTool
-        ? { omp_background_output: ompBackgroundOutputTool }
-        : {}),
       omp_pwno_status: ompPwnoStatusTool,
       omp_stage_challenge: ompStageChallengeTool,
     },
