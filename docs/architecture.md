@@ -114,9 +114,11 @@ tool: {
   omp_run_envsetup: ompRunEnvsetupTool,
   omp_get_template: ompGetTemplateTool,
   omp_verify_template_output: ompVerifyTemplateOutputTool,
-  // 병렬 인프라 tool (M5):
-  omp_task: ompTaskTool,                         // 병렬 sub-agent spawn
-  omp_background_output: ompBackgroundOutputTool, // task 결과 조회
+  // 4-tool 병렬 인프라 (2026-05-18 cutover):
+  omp_task_launch: ompTaskLaunchTool,             // fire-and-forget sub-agent spawn → {task_id, session_id}
+  omp_task_wait_all: ompTaskWaitAllTool,          // 모두 terminal까지 block, 입력 순서 results[]
+  omp_task_wait_any: ompTaskWaitAnyTool,          // 첫 완료자 + remaining_ids (race + dynamic spawn)
+  omp_task_cancel: ompTaskCancelTool,             // 멱등 abort RPC + status=cancelled + emit("done")
   omp_pwno_status: ompPwnoStatusTool,             // pwno 호환성 수정: user-managed container sanity check
   omp_stage_challenge: ompStageChallengeTool,     // pwno 호환성 수정: copy binary/libc/ld → workspace/<id>/
 }
@@ -228,18 +230,20 @@ OmP의 병렬 agent 실행은 opencode 내장 기능이 아닌 **OmO(oh-my-opena
 
 ```
 Orchestrator (LLM)
-  ├─ task(agent="omp-vulnhunter", run_in_background=true) → task_id_1
-  ├─ task(agent="omp-vulnhunter", run_in_background=true) → task_id_2
-  └─ task(agent="omp-vulnhunter", run_in_background=true) → task_id_3
-      ↑ 한 턴에 여러 개 호출 → 동시 실행
+  ├─ omp_task_launch(agent="vulnhunter", ...) → {task_id: t1, session_id}
+  ├─ omp_task_launch(agent="vulnhunter", ...) → {task_id: t2, ...}
+  └─ omp_task_launch(agent="vulnhunter", ...) → {task_id: t3, ...}
+      ↑ 한 턴에 fire-and-forget 여러 번 → 동시 실행
+  ↓
+  omp_task_wait_all({task_ids: [t1, t2, t3]}) → {results: [...] 입력 순서}
 ```
 
-내부적으로:
+내부적으로 (BackgroundManager):
 1. `session.create({ parentID: orchestratorSessionID })` — 자식 세션 생성
 2. `session.promptAsync({ agent: "omp-vulnhunter", parts: [prompt] })` — 비동기 실행
-3. BackgroundManager가 polling으로 완료 감지
-4. 완료 시 parent session에 notification 주입
-5. Orchestrator가 `background_output(task_id)` 호출로 결과 조회
+3. polling이 session "idle" 감지 → `task.status = "completed"` + `taskEvents.emit("done", task_id)`
+4. wait_*가 state-first check (이미 terminal인 task 즉시 반환) + EventEmitter 구독으로 race 닫음
+5. waitAll/waitAny가 outcome (output + status + error) Promise.all로 fetch해서 LLM에 반환
 
 ### Sole Writer 패턴
 

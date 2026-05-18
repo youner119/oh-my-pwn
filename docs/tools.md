@@ -26,7 +26,7 @@ tool로 만들지 않고 agent prompt에서 자연어로 처리합니다.
 
 ---
 
-## 현재 tool 11개 — 한 눈에
+## 현재 tool 13개 — 한 눈에
 
 | Tool | 역할 | Library-backed? | 읽기/쓰기 |
 |---|---|---|---|
@@ -37,15 +37,19 @@ tool로 만들지 않고 agent prompt에서 자연어로 처리합니다.
 | `omp_append_journal` | `journal.md` append | Yes | 쓰기 |
 | `omp_get_template` | 템플릿 문자열 로드 | Yes (src/templates) | 읽기 |
 | `omp_verify_template_output` | 템플릿 작성물 구조 검증 | Yes | 읽기 (idempotent) |
-| `omp_task` | 병렬 sub-agent spawn. `run_in_background=true`로 fire-and-forget 실행. task_id 반환. OmO delegate-task 포팅. | Yes (orchestration/) | 쓰기 |
-| `omp_background_output` | task_id로 완료된 background task 결과 조회. Orchestrator가 라운드 결과 수집에 사용. | Yes (orchestration/) | 읽기 |
+| `omp_task_launch` | 단일 sub-agent를 **fire-and-forget**으로 spawn. `{task_id, session_id}` 즉시 반환. `agent`는 category alias (`reverser`/`vulnhunter`/`strategist`/`exploiter`) 또는 full name (`omp-*`). | Yes (orchestration/) | 쓰기 |
+| `omp_task_wait_all` | 주어진 `task_ids[]` **모두** terminal에 도달할 때까지 block. 입력 순서대로 `results[]` 반환. unknown id는 synthetic failed outcome (graceful). | Yes (orchestration/) | 읽기 |
+| `omp_task_wait_any` | 주어진 `task_ids[]` 중 **첫 완료자** + `remaining_ids` 반환. 성공/실패/취소 모두 first-complete로 취급. SA race + dynamic spawn에 사용. | Yes (orchestration/) | 읽기 |
+| `omp_task_cancel` | `task_ids[]`를 best-effort 취소 (멱등). `{cancelled[], not_found[]}` 반환. SDK `session.abort` 호출 + `status="cancelled"` + `done` emit. | Yes (orchestration/) | 쓰기 |
 | `omp_pwno_status` | user-managed pwno-mcp container의 reachability + opencode MCP connect 상태 sanity check. Phase 0에서 mandatory + healthy:false면 hint를 user에게 surface하고 STOP. | Yes (orchestration/) | 읽기 |
 | `omp_stage_challenge` | challenge_dir의 binary/libc/ld를 `<plugin-root>/workspace/<id>/`로 mtime+size 멱등 복사. container_path 반환. Phase 0에서 1회 호출, 결과를 state.pwno_paths에 저장. | Yes (tools/) | 쓰기 (workspace/ 내) |
 
 모두 `src/tools/*.ts` / `src/orchestration/*.ts`에 구현돼 있고
-`src/plugin.ts`에서 session 레벨로 등록됩니다. 원래 7개에서 M5 병렬
-인프라 + pwno 호환성 수정으로 4개 추가됨 (BN 전환으로
-`omp_save_decompiled` 제거, pwno 호환성 수정으로 `omp_pwno_container` 제거).
+`src/plugin.ts`에서 session 레벨로 등록됩니다. 원래 7개 + M5 병렬 인프라
++ pwno 호환성 수정 + 4-tool cutover (2026-05-18, `omp_task`/`_all`/`_pool`/
+`omp_background_output` 4개 제거, `omp_task_launch`/`_wait_all`/`_wait_any`/
+`_cancel` 4개 추가, net 0). BN 전환으로 `omp_save_decompiled` 제거,
+pwno 호환성 수정으로 `omp_pwno_container` 제거.
 
 ---
 

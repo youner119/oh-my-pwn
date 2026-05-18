@@ -312,17 +312,20 @@ Orchestrator
 
 | 컴포넌트 | 역할 | OmO 참고 파일 |
 |----------|------|--------------|
-| `task` tool | LLM이 호출하는 delegation tool. `run_in_background=true`로 병렬 실행 | `reference/oh-my-openagent/src/tools/delegate-task/` |
-| BackgroundManager | 실행 중 task 추적, session polling, 완료 감지, parent 알림 | `reference/oh-my-openagent/src/features/background-agent/manager.ts` |
+| `omp_task_launch` | fire-and-forget spawn. `{task_id, session_id}` 즉시 반환. category alias 지원 (`reverser`/`vulnhunter`/`strategist`/`exploiter`) | `reference/oh-my-openagent/src/tools/delegate-task/` (디자인만 차용) |
+| `omp_task_wait_all` / `_wait_any` / `_cancel` | explicit wait/cancel. wait는 state-first check + EventEmitter wake-up. wait_any가 dynamic spawn을 가능하게 함 | (OmP 자체 구현) |
+| BackgroundManager | 실행 중 task 추적, polling으로 terminal 감지, `taskEvents` EventEmitter로 wait_* 깨움 | `reference/oh-my-openagent/src/features/background-agent/manager.ts` |
 | ConcurrencyManager | 모델별 동시 실행 제한 (기본 5개) | `reference/oh-my-openagent/src/features/background-agent/concurrency.ts` |
-| ContainerManager | (OmP 전용) 단일 pwno-mcp Docker container lifecycle + session_id 할당 | 새로 구현 |
+| (pwno 호환성 수정 이후) | container는 user-managed. OmP는 sanity check (`omp_pwno_status`)만. session_id는 Orchestrator prompt logic으로 이동 | 별도 spec |
 
 ### 통신 흐름
 
 ```
-Forward:  Orchestrator → task(run_in_background=true) → session.create(parentID) + promptAsync → sub-agent
-Backward: sub-agent 완료 → BackgroundManager polling → parent에 notification 주입
-          → Orchestrator가 background_output(task_id)로 결과 조회
+Forward:  Orchestrator → omp_task_launch(agent, prompt) → session.create(parentID) + promptAsync → sub-agent
+          → {task_id, session_id} 즉시 반환 (parent는 계속 다른 일 가능)
+Backward: sub-agent 세션 idle → BackgroundManager polling → task.status="completed"
+          → taskEvents.emit("done", task_id) → 대기 중인 wait_*가 깨어남
+          → Orchestrator의 omp_task_wait_all([ids]) / wait_any 호출이 outcome 반환
 ```
 
 ### Session 계층

@@ -485,10 +485,12 @@ MVP 단계라 CI 파이프라인이 아직 설정되지 않았습니다. 개인 
   병렬 오케스트레이션 재설계: iterative round model, state.json blackboard,
   SA VERIFY/COMBINE task types, single pwno-mcp container + session_id,
   early-exit, PoC code as knowledge transfer.
-  OmO 인프라 포팅 (omp_task, omp_background_output, BackgroundManager,
-  ConcurrencyManager). pwno 호환성 수정 (2026-05-17) 으로 pwno-mcp container는
-  user-managed로 전환되어 `omp_pwno_status` + `omp_stage_challenge`
-  pair가 기존 `omp_pwno_container` 3-action 도구를 대체.
+  OmO 인프라 포팅 (BackgroundManager, ConcurrencyManager). pwno 호환성
+  수정 (2026-05-17) 으로 pwno-mcp container는 user-managed로 전환되어
+  `omp_pwno_status` + `omp_stage_challenge` pair가 기존 `omp_pwno_container`
+  3-action 도구를 대체. 4-tool cutover (2026-05-18): 기존 `omp_task`/`_all`/
+  `_pool`/`_background_output` 4개를 `omp_task_launch`/`_wait_all`/`_wait_any`/
+  `_cancel`로 완전 교체 (spec: `.omc/specs/deep-interview-omo-subagent-import.md`).
   Spec: `.omc/specs/deep-interview-parallel-orchestration.md`
   254 tests (BN 전환으로 ghidra/ 테스트 제거), plugin 161KB.
 - ⏸ **M6 Benchmark harness + metric** — T22~T24 대기 (MVP 완료 지점)
