@@ -56,12 +56,13 @@ describe("createOmpStrategistAgent", () => {
     expect(p).toContain("chain")
   })
 
-  test("prompt spawns Exploiter via omp_task (sync)", () => {
+  test("prompt spawns Exploiter via launch + wait_all (Pattern 1)", () => {
     const agent = createOmpStrategistAgent("test-model")
     const p = agent.prompt ?? ""
-    expect(p).toContain("omp_task")
-    expect(p).toContain("omp-exploiter")
-    expect(p).toContain("run_in_background: false")
+    expect(p).toContain("omp_task_launch")
+    expect(p).toContain("omp_task_wait_all")
+    expect(p).toContain("exploiter")
+    expect(p).not.toContain("run_in_background")
   })
 
   test("prompt returns structured JSON with gives/needs/poc_script_path", () => {

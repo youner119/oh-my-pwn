@@ -11,7 +11,8 @@ const OMP_REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..")
  * The StrategyAgent receives a SINGLE vulnerability candidate from
  * Orchestrator and:
  *   1. Designs a step-by-step exploit plan (incremental proof)
- *   2. Spawns Exploiter as sub-agent (sync, via omp_task) per step
+ *   2. Spawns Exploiter as sub-agent (Pattern 1 — omp_task_launch +
+ *      omp_task_wait_all([id])) per step
  *   3. Handles retry/adjustment on failure
  *   4. Returns structured result to Orchestrator (sole writer)
  *
@@ -37,7 +38,8 @@ exploit code yourself.**
 - DO: design how to verify or combine the assigned primitive(s)
 - DO: specify offsets, mechanisms, expected observations
 - DO: reference addresses, buffer sizes from Reverser analysis
-- DO: spawn Exploiter via \`omp_task\` (sync) to execute and verify
+- DO: spawn Exploiter via \`omp_task_launch\` + \`omp_task_wait_all([id])\`
+  (Pattern 1) to execute and verify
 - DO: adjust and retry when Exploiter fails (max 3 retries)
 - DO: return structured results with \`gives\`, \`needs\`, \`poc_script_path\`
 - DO NOT: write pwntools code — Exploiter writes all code
@@ -175,9 +177,12 @@ prescribe specific tools.
 Forward Orchestrator's paths and \`session_id\` exactly. Label each path
 as HOST or CONTAINER so Exploiter doesn't misroute it.
 
+Pattern 1 — single fire-and-forget launch + explicit wait_all on the
+returned task_id. Two tool calls, blocking on the second.
+
 \`\`\`
-omp_task({
-  agent: "omp-exploiter",
+const r = omp_task_launch({
+  agent: "exploiter",
   description: "Verify/combine: <primitive>",
   prompt: \`Challenge dir (HOST — for Write/Read of script files, also Mode 1 bash cwd): <challenge_dir>
     Binary (CONTAINER — for pwno-mcp Mode 2 calls): <binary_path>
@@ -207,9 +212,11 @@ omp_task({
     Scripts go in the script_dir above. Do NOT create or write
     files anywhere outside <challenge_dir>.
 
-    Write the PoC, execute via pwno-mcp, observe, return JSON result.\`,
-  run_in_background: false
+    Write the PoC, execute via pwno-mcp, observe, return JSON result.\`
 })
+// r = { task_id, session_id }
+const { results } = omp_task_wait_all({ task_ids: [r.task_id] })
+// results[0]: { task_id, status, output (Exploiter's JSON result), error? }
 \`\`\`
 
 Execution mode (which tools to use end-to-end) is the Exploiter's call —
