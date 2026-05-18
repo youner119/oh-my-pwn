@@ -34,9 +34,7 @@ import {
   ompGetTemplateTool,
   ompVerifyTemplateOutputTool,
   createOmpStageChallengeTool,
-  createOmpSetupInspectFolderTool,
   createOmpSetupDockerBuildTool,
-  createOmpSetupProbeImageTool,
   createOmpSetupExtractFileTool,
   createOmpSetupPatchElfTool,
   createOmpSetupVerifyRuntimeTool,
@@ -133,14 +131,15 @@ const OmpPlugin: Plugin = async (input) => {
     workspacePath: OMP_WORKSPACE_PATH,
   })
 
-  // omp-setup agent atomic tool surface (T02 skeletons; T03–T08 implementations).
-  // Spec: `.omc/specs/deep-interview-envsetup-agent.md`. Tools currently return
-  // not_implemented stubs — full bodies land in T03–T08. Registered now so the
-  // surface is stable when the omp-setup agent (T09) and Orchestrator Phase 0
-  // rewrite (T11) consume it.
-  const ompSetupInspectFolderTool = createOmpSetupInspectFolderTool()
+  // omp-setup agent atomic tool surface (T02 skeletons; T04/T06/T07/T08
+  // implementations). Spec: `.omc/specs/deep-interview-envsetup-agent.md`.
+  // Tools currently return not_implemented stubs — full bodies land in
+  // T04/T06/T07/T08. Registered now so the surface is stable when the
+  // omp-setup agent (T09) and Orchestrator Phase 0 rewrite (T11) consume it.
+  // inspect_folder / probe_image were considered then deferred — Phase 0 is
+  // fully agentic (bash inspection), so deterministic tools for those are
+  // not needed.
   const ompSetupDockerBuildTool = createOmpSetupDockerBuildTool()
-  const ompSetupProbeImageTool = createOmpSetupProbeImageTool()
   const ompSetupExtractFileTool = createOmpSetupExtractFileTool()
   const ompSetupPatchElfTool = createOmpSetupPatchElfTool()
   const ompSetupVerifyRuntimeTool = createOmpSetupVerifyRuntimeTool()
@@ -228,10 +227,9 @@ const OmpPlugin: Plugin = async (input) => {
       ...(ompTaskCancelTool ? { omp_task_cancel: ompTaskCancelTool } : {}),
       omp_pwno_status: ompPwnoStatusTool,
       omp_stage_challenge: ompStageChallengeTool,
-      // omp-setup agent atomic tools (T02 skeletons).
-      omp_setup_inspect_folder: ompSetupInspectFolderTool,
+      // omp-setup agent atomic tools (T02 skeletons — state-changing only).
+      // inspect_folder / probe_image deferred — Phase 0 is fully agentic.
       omp_setup_docker_build: ompSetupDockerBuildTool,
-      omp_setup_probe_image: ompSetupProbeImageTool,
       omp_setup_extract_file: ompSetupExtractFileTool,
       omp_setup_patch_elf: ompSetupPatchElfTool,
       omp_setup_verify_runtime: ompSetupVerifyRuntimeTool,
