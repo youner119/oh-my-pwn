@@ -12,11 +12,13 @@
 import type {
   BackgroundTask,
   LaunchInput,
+  LaunchResult,
   OmpSessionClient,
   TaskResult,
   TextPart,
 } from "./types"
 import { ConcurrencyManager } from "./concurrency"
+import { resolveAgent } from "./agent-resolver"
 import { getAgentToolRestrictions } from "./agent-tool-restrictions"
 import { isInsideTmux, spawnSubagentPane, closeTmuxPane, resetPaneTracking } from "./tmux"
 import { EventEmitter } from "node:events"
@@ -161,6 +163,39 @@ export class BackgroundManager {
 
     // Sync mode: poll until completion
     return this.waitForCompletion(task)
+  }
+
+  /**
+   * Launch a sub-agent task in fire-and-forget mode (T5).
+   *
+   * Backing impl for the new `omp_task_launch` tool (T7). Resolves the
+   * agent category alias to a concrete agent name via `resolveAgent`,
+   * creates the opencode child session, fires the prompt, and returns
+   * `{ task_id, session_id }`. The session runs asynchronously; observe
+   * its outcome via `waitAll` / `waitAny` (T6) or `getTask`.
+   *
+   * On session creation failure, the task is marked `failed` in the
+   * tasks map (state consistency) and the error is rethrown to the caller.
+   * `runInBackground` on the input is ignored — this method is always async.
+   */
+  async launchAsync(input: LaunchInput): Promise<LaunchResult> {
+    const resolvedAgent = resolveAgent(input.agent)
+    const resolvedInput: LaunchInput = { ...input, agent: resolvedAgent }
+
+    const task = this.createTask(resolvedInput)
+    await this.concurrency.acquire(task.concurrencyKey)
+
+    try {
+      await this.startSession(task, resolvedInput)
+    } catch (err) {
+      this.concurrency.release(task.concurrencyKey)
+      task.status = "failed"
+      task.error = String(err)
+      throw err
+    }
+
+    this.ensurePolling()
+    return { task_id: task.id, session_id: task.sessionID! }
   }
 
   /** Get a task by ID. */

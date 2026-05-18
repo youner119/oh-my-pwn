@@ -16,6 +16,8 @@ function createFakeClient(options?: {
   idleDelay?: number
   /** If true, abort() throws — to test graceful failure path. */
   abortThrows?: boolean
+  /** If true, create() throws — to test launchAsync error handling. */
+  createThrows?: boolean
 }): OmpSessionClient & {
   sessions: Map<string, { agent: string; prompt: string }>
   abortedSessions: Set<string>
@@ -30,6 +32,9 @@ function createFakeClient(options?: {
     sessions,
     abortedSessions,
     async create(params) {
+      if (options?.createThrows) {
+        throw new Error("simulated session.create failure")
+      }
       sessionCounter += 1
       const id = `session-${sessionCounter}`
       startTimes.set(id, Date.now())
@@ -405,6 +410,99 @@ describe("BackgroundManager", () => {
     expect(manager.getTask(launch.taskId)!.status).toBe("cancelled")
 
     manager.shutdown()
+  })
+
+  test("T5: launchAsync returns {task_id, session_id} with running status", async () => {
+    const client = createFakeClient({ idleDelay: 60000 })
+    const manager = new BackgroundManager({ client, directory: "/test" })
+
+    const result = await manager.launchAsync({
+      parentSessionID: "p",
+      agent: "omp-vulnhunter",
+      description: "Async launch",
+      prompt: "x",
+      runInBackground: true,
+    })
+
+    expect(result.task_id).toMatch(/^omp-task-/)
+    expect(result.session_id).toMatch(/^session-/)
+
+    const task = manager.getTask(result.task_id)!
+    expect(task.status).toBe("running")
+    expect(task.sessionID).toBe(result.session_id)
+
+    manager.shutdown()
+  })
+
+  test("T5: launchAsync resolves category alias to agent name", async () => {
+    const client = createFakeClient({ idleDelay: 60000 })
+    const manager = new BackgroundManager({ client, directory: "/test" })
+
+    const result = await manager.launchAsync({
+      parentSessionID: "p",
+      agent: "vulnhunter",
+      description: "Category routing",
+      prompt: "x",
+      runInBackground: true,
+    })
+
+    const sess = client.sessions.get(result.session_id)!
+    expect(sess.agent).toBe("omp-vulnhunter")
+    expect(manager.getTask(result.task_id)!.agent).toBe("omp-vulnhunter")
+
+    manager.shutdown()
+  })
+
+  test("T5: launchAsync with direct agent name passes through", async () => {
+    const client = createFakeClient({ idleDelay: 60000 })
+    const manager = new BackgroundManager({ client, directory: "/test" })
+
+    const result = await manager.launchAsync({
+      parentSessionID: "p",
+      agent: "omp-exploiter",
+      description: "Direct name",
+      prompt: "x",
+      runInBackground: true,
+    })
+
+    expect(client.sessions.get(result.session_id)!.agent).toBe("omp-exploiter")
+    manager.shutdown()
+  })
+
+  test("T5: launchAsync throws on unknown agent/category", async () => {
+    const client = createFakeClient()
+    const manager = new BackgroundManager({ client, directory: "/test" })
+
+    await expect(
+      manager.launchAsync({
+        parentSessionID: "p",
+        agent: "not-a-thing",
+        description: "Bad",
+        prompt: "x",
+        runInBackground: true,
+      }),
+    ).rejects.toThrow(/unknown agent or category/)
+  })
+
+  test("T5: launchAsync — session.create failure throws + task marked failed", async () => {
+    const client = createFakeClient({ createThrows: true })
+    const manager = new BackgroundManager({ client, directory: "/test" })
+
+    await expect(
+      manager.launchAsync({
+        parentSessionID: "p",
+        agent: "omp-vulnhunter",
+        description: "Will fail",
+        prompt: "x",
+        runInBackground: true,
+      }),
+    ).rejects.toThrow(/simulated session.create failure/)
+
+    // Failed task should still exist in the map with consistent state.
+    const failedTasks = manager.getTasksByParent("p")
+    expect(failedTasks.length).toBe(1)
+    expect(failedTasks[0].status).toBe("failed")
+    expect(failedTasks[0].error).toContain("simulated session.create failure")
   })
 
   test("tool restrictions are applied to spawned sessions", async () => {
