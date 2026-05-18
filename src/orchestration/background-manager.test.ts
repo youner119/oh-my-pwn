@@ -266,6 +266,29 @@ describe("BackgroundManager", () => {
     manager.shutdown()
   })
 
+  test("T3: polling emits 'done' on terminal transition", async () => {
+    const client = createFakeClient({ idleDelay: 100 })
+    const manager = new BackgroundManager({ client, directory: "/test" })
+
+    const events: string[] = []
+    manager.taskEvents.on("done", (id: string) => events.push(id))
+
+    const launch = await manager.launch({
+      parentSessionID: "p",
+      agent: "omp-vulnhunter",
+      description: "Emit test",
+      prompt: "x",
+      runInBackground: true,
+    })
+
+    // Wait for polling (3s interval) + idleDelay buffer
+    await new Promise((r) => setTimeout(r, 4000))
+
+    expect(events).toContain(launch.taskId)
+
+    manager.shutdown()
+  }, 10000)
+
   test("tool restrictions are applied to spawned sessions", async () => {
     const client = createFakeClient()
     const manager = new BackgroundManager({ client, directory: "/test" })

@@ -19,6 +19,7 @@ import type {
 import { ConcurrencyManager } from "./concurrency"
 import { getAgentToolRestrictions } from "./agent-tool-restrictions"
 import { isInsideTmux, spawnSubagentPane, closeTmuxPane, resetPaneTracking } from "./tmux"
+import { EventEmitter } from "node:events"
 import { appendFileSync, mkdirSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
 
@@ -104,12 +105,21 @@ export class BackgroundManager {
   private readonly concurrency: ConcurrencyManager
   private pollingInterval?: ReturnType<typeof setInterval>
   private pollingInFlight = false
+  /**
+   * Emits "done" with the taskId when a task transitions to a terminal
+   * status (completed / failed / cancelled). Consumed by waitAll / waitAny
+   * (added in T6) to resolve their Promises immediately instead of polling.
+   */
+  readonly taskEvents = new EventEmitter()
 
   constructor(options: BackgroundManagerOptions) {
     this.client = options.client
     this.directory = options.directory
     this.serverUrl = options.serverUrl
     this.concurrency = new ConcurrencyManager(options.concurrency)
+    // wait_all/wait_any may attach many listeners concurrently (e.g., VH
+    // ensemble + SA race at the same time). Default cap of 10 would warn.
+    this.taskEvents.setMaxListeners(0)
 
     // Initialize log file at .omp/logs/orchestration.log
     try {
@@ -515,6 +525,7 @@ export class BackgroundManager {
             this.concurrency.release(task.concurrencyKey)
             this.closePaneForTask(task.id)
             void this.dumpTranscript(task)
+            this.taskEvents.emit("done", task.id)
           }
           continue
         }
@@ -529,6 +540,7 @@ export class BackgroundManager {
         this.concurrency.release(task.concurrencyKey)
         this.closePaneForTask(task.id)
         void this.dumpTranscript(task)
+        this.taskEvents.emit("done", task.id)
       }
 
       // Stop polling if no running tasks remain
