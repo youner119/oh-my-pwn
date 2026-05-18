@@ -36,7 +36,8 @@
  */
 
 import { spawnSync } from "node:child_process"
-import { copyFileSync, existsSync, readFileSync } from "node:fs"
+import { copyFileSync, existsSync, mkdirSync, readFileSync } from "node:fs"
+import { dirname } from "node:path"
 import { createHash } from "node:crypto"
 import { EnvSetupError } from "./envsetup-error"
 
@@ -149,6 +150,136 @@ export function patchBinaryInterpreter(
 
 function sha256File(path: string): string {
   return createHash("sha256").update(readFileSync(path)).digest("hex")
+}
+
+/* ── omp-setup agent generic patchelf (T07) ────────────────────────────── */
+
+/**
+ * Generic ELF patcher used by `omp_setup_patch_elf` (T07).
+ *
+ * Differences vs the legacy `patchBinaryInterpreter`:
+ *
+ *   - **No backup, no restore-before-patch.** The omp-setup design (D3)
+ *     keeps the input file untouched by writing patched output to
+ *     `dstPath` (when supplied). If `dstPath === undefined`, the patch is
+ *     applied in-place to `srcPath` — appropriate for libraries already
+ *     copied into `.omp/artifacts/` or `workspace/<id>/`.
+ *   - **`--replace-needed` instead of `--set-rpath`.** NEEDED entries are
+ *     rewritten to absolute paths so ld does not consult any search path.
+ *     Each `replacements[soname] = absPath` produces one
+ *     `--replace-needed <soname> <absPath>` flag pair.
+ *   - **`--set-interpreter` is optional.** Libraries do not carry an
+ *     interpreter; pass `undefined` to skip the flag.
+ *   - **No-op safety.** When neither `interpreter` nor `replacements` is
+ *     supplied, patchelf is not invoked. The function still performs the
+ *     copy (if `dstPath !== srcPath`) and returns sha matching for both
+ *     fields — callers can use this as a defensive "validate but don't
+ *     mutate" path.
+ */
+export interface PatchElfInputs {
+  /** Absolute path to the source ELF. Never modified when `dstPath` differs. */
+  srcPath: string
+  /**
+   * Absolute path for the patched copy. When omitted, patchelf runs
+   * in-place on `srcPath`. Parent directory is auto-created.
+   */
+  dstPath?: string
+  /** Absolute path to set as ELF interpreter (`--set-interpreter`). */
+  interpreter?: string
+  /**
+   * SONAME → absolute path map. Each entry becomes one
+   * `--replace-needed <soname> <absPath>` argument pair. Use empty map or
+   * `undefined` to skip NEEDED rewrites.
+   */
+  replacements?: Record<string, string>
+  /** Optional challenge_dir for error reporting. */
+  challengeDir?: string
+}
+
+export interface PatchElfResult {
+  /** Effective patched path (`dstPath ?? srcPath`). */
+  patchedPath: string
+  /** SHA-256 of the source ELF BEFORE any modification. */
+  originalSha256: string
+  /** SHA-256 of `patchedPath` AFTER patchelf runs. */
+  patchedSha256: string
+  /** True iff patchelf was actually invoked (false on the no-op path). */
+  invokedPatchelf: boolean
+}
+
+/**
+ * Apply patchelf to an ELF file with the generic input shape used by
+ * `omp_setup_patch_elf`. See the type doc above for semantics.
+ *
+ * @throws EnvSetupError on `patchelf-not-available` or `patchelf-failed`.
+ */
+export function patchElf(
+  inputs: PatchElfInputs,
+  opts: PatchelfOptions = {},
+): PatchElfResult {
+  const spawn = opts.spawn ?? realSpawn
+
+  const target = inputs.dstPath ?? inputs.srcPath
+
+  // Original sha — captured BEFORE any copy/patch so callers can detect
+  // tampering or compare to a recorded identity.
+  const originalSha256 = sha256File(inputs.srcPath)
+
+  // Copy src → dst (only when the two paths differ).
+  if (inputs.dstPath !== undefined && inputs.dstPath !== inputs.srcPath) {
+    mkdirSync(dirname(inputs.dstPath), { recursive: true })
+    copyFileSync(inputs.srcPath, inputs.dstPath)
+  }
+
+  // Build patchelf args from interpreter + replacements. No args ⇒ no-op.
+  const args: string[] = []
+  if (inputs.interpreter !== undefined && inputs.interpreter !== "") {
+    args.push("--set-interpreter", inputs.interpreter)
+  }
+  if (inputs.replacements !== undefined) {
+    for (const [soname, absPath] of Object.entries(inputs.replacements)) {
+      args.push("--replace-needed", soname, absPath)
+    }
+  }
+
+  if (args.length === 0) {
+    // No-op: copy already done (if any), sha matches original.
+    return {
+      patchedPath: target,
+      originalSha256,
+      patchedSha256: originalSha256,
+      invokedPatchelf: false,
+    }
+  }
+
+  args.push(target)
+  let result: SpawnResult
+  try {
+    result = spawn("patchelf", args)
+  } catch (err) {
+    throw translatePatchelfSpawnError(err, inputs.challengeDir ?? "")
+  }
+
+  if (result.exitCode !== 0) {
+    throw new EnvSetupError({
+      kind: "patchelf-failed",
+      challengeDir: inputs.challengeDir ?? "",
+      binaryPath: target,
+      exitCode: result.exitCode,
+      stderr: truncate(result.stderr.toString("utf-8"), 1024),
+      message:
+        `patchelf failed with exit code ${result.exitCode} on ${target}. ` +
+        `stderr: ${truncate(result.stderr.toString("utf-8"), 200)}`,
+    })
+  }
+
+  const patchedSha256 = sha256File(target)
+  return {
+    patchedPath: target,
+    originalSha256,
+    patchedSha256,
+    invokedPatchelf: true,
+  }
 }
 
 function translatePatchelfSpawnError(
