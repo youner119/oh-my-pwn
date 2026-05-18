@@ -358,6 +358,51 @@ Max depth = 3 (OmO 기본값). Orchestrator → SA → Exploiter.
 다음 라운드 SA는 `omp_read_state`로 blackboard를 읽어 어떤 primitive가
 증명됐고 어떤 것을 COMBINE할 수 있는지 파악.
 
+### Operating modes — 자율 vs 사용자 주도 (2026-05-18)
+
+Orchestrator는 두 모드 중 하나로 동작. 매 사용자 turn 시작 시 메시지를
+보고 결정. **기본은 자율 모드**, 사용자가 명시적 명령 시 주도 모드로
+전환.
+
+| 모드 | 트리거 | LLM autonomy | 종료 조건 |
+|---|---|---|---|
+| **자율 (default)** | (기본) | 매 도구 호출 LLM이 결정 | 4가지 (아래) |
+| **사용자 주도** | "주도로 가" / 명시적 도구 호출 지시 | LLM = thin wrapper, 자율 결정 0 | 사용자가 stop 명령 |
+
+#### 자율 모드 종료 조건 (priority 순)
+
+1. **`flag_found`** — flag 캡쳐 OR shell 획득. 성공 종료.
+2. **`stagnated`** — LLM-judged "no progress". 정량 (0 verified + 0 combine + 0 VH new) AND 정성 (LLM 종합 "더 시도할 angle 없음") 둘 다 충족 시 trigger.
+3. **`budget_exceeded`** — `state.parallel_config.max_cycles` (default **20**) 초과. **safety net.** 정상 종료 1/2가 먼저 발동되는 것이 기대.
+4. **`user_intervention`** — orthogonal. 사용자가 직접 stop.
+
+### Deferred VH transition — Pattern 4b (2026-05-18)
+
+이전 디자인에서는 매 SA round 끝마다 "cascading VH" 단일 launch가 *자동*
+실행됐음 (Phase 2.5). 새 디자인은 **단일/ensemble 구분 없음** — LLM이 매
+SA 결과 후 "VH가 필요한가?"를 판단하고 `vh_pending` flag를 set. SA loop
+**자연 종료** 후 (`ids === []`) flag가 true이면 VH ensemble 재실행
+(`state.parallel_config.vh_instance_count` 모두 사용).
+
+**Layer invariant:** VH launch는 **실행 중인 SA가 0개일 때만** 발생.
+LLM이 "VH 필요"를 인지해도 즉시 launch하지 않고 flag만 set, SA loop가
+자연스럽게 drain되도록 둠. drain 가속 위해 cancel 호출 안 함 — SA 결과는
+가능한 한 다 받음.
+
+**Wait 루프 iteration 순서 (CRITICAL):**
+
+```
+parse first result → omp_patch_state (record)
+                  → maybe omp_task_launch (extra SA / 그냥 둠)
+                  → maybe set vh_pending = true
+                  → omp_task_wait_any (next iteration)
+```
+
+`record-then-launch` 순서가 핵심. SA는 자기 task 시작 시 `omp_read_state`로
+blackboard를 읽는데, launch 전에 record를 안 하면 새 SA가 outdated state
+보고 같은 primitive 중복 verify 가능. patch_state는 local file write ~수ms로
+빠르므로 latency penalty 무시 가능.
+
 ---
 
 ## 프롬프트 구성 원칙
