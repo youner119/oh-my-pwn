@@ -241,7 +241,7 @@ describe("ChallengeStateSchema", () => {
     const parsed = ChallengeStateSchema.parse(state)
     expect(parsed.parallel_config?.vh_instance_count).toBe(3)
     expect(parsed.parallel_config?.sa_instance_count).toBe(3)
-    expect(parsed.parallel_config?.max_cycles).toBe(5)
+    expect(parsed.parallel_config?.max_cycles).toBe(20)
     expect(parsed.parallel_config?.max_retries_per_candidate).toBe(3)
   })
 

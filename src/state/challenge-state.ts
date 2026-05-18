@@ -162,8 +162,12 @@ export const ParallelConfigSchema = z.object({
   vh_instance_count: z.number().int().min(1).default(3),
   /** Number of StrategyAgent+Exploiter pairs to run in parallel (one per candidate). */
   sa_instance_count: z.number().int().min(1).default(3),
-  /** Max VH→SA→Exploiter→cascading cycles before stopping. */
-  max_cycles: z.number().int().min(1).default(5),
+  /**
+   * Safety-net cycle cap for autonomous mode. Orchestrator's normal
+   * termination is LLM-judged stagnation (no progress) or success
+   * (flag/shell); this cap only fires if the loop runs away.
+   */
+  max_cycles: z.number().int().min(1).default(20),
   /** Max retries per candidate before escalating to next candidate. */
   max_retries_per_candidate: z.number().int().min(1).default(3),
 })
