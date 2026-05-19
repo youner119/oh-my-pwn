@@ -120,6 +120,43 @@ describe("loadChallengeFolder", () => {
       expect(result.state.workspace_root).toBeUndefined()
     })
 
+    test("seeds binary_input_path === binary_path on fresh init (input identity invariant)", () => {
+      const { binaryPath } = seedMinimalChallenge(dir)
+      const result = loadChallengeFolder(dir)
+      expect(result.state.binary_input_path).toBe(binaryPath)
+      expect(result.state.binary_input_path).toBe(result.state.binary_path)
+    })
+
+    test("seeds binary_input_sha256 === binary_sha256 on fresh init", () => {
+      seedMinimalChallenge(dir)
+      const expectedSha = sha256(ELF_HEADER)
+      const result = loadChallengeFolder(dir)
+      expect(result.state.binary_input_sha256).toBe(expectedSha)
+      expect(result.state.binary_input_sha256).toBe(result.state.binary_sha256)
+    })
+
+    test("backfills binary_input_{path,sha256} on reload of pre-T01.6 state", () => {
+      // Simulate a state.json written before the input-identity fields existed
+      // (e.g. seeded by an earlier OmP version): binary_sha256 set but
+      // binary_input_* missing. The loader must backfill on reload because
+      // omp_patch_state cannot (those fields are protected by T+b5d1208).
+      const { binaryPath } = seedMinimalChallenge(dir)
+      const expectedSha = sha256(ELF_HEADER)
+      const first = loadChallengeFolder(dir)
+      // Strip the input-identity fields to mimic a stale state.json.
+      const { statePath } = getStatePaths(dir)
+      const raw = JSON.parse(readFileSync(statePath, "utf-8"))
+      delete raw.binary_input_path
+      delete raw.binary_input_sha256
+      writeFileSync(statePath, JSON.stringify(raw))
+
+      const reloaded = loadChallengeFolder(dir)
+      expect(reloaded.state.binary_input_path).toBe(binaryPath)
+      expect(reloaded.state.binary_input_sha256).toBe(expectedSha)
+      expect(reloaded.state.binary_sha256).toBe(first.state.binary_sha256)
+      expect(reloaded.shaDrift).toBe(false)
+    })
+
     test("records C source when present and sets source_present=true", () => {
       seedMinimalChallenge(dir, { sourceFile: "chall.c" })
 

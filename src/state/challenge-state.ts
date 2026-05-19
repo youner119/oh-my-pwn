@@ -527,6 +527,12 @@ export function createInitialChallengeState(
     schema_version: CHALLENGE_STATE_SCHEMA_VERSION,
     challenge_dir: input.challenge_dir,
     binary_path: input.binary_path,
+    // Seed binary_input_path with the loader's chosen file. This is the
+    // canonical input identity invariant — the omp-setup agent never
+    // mutates it (Phase 3 makes a separate patched copy at
+    // .omp/artifacts/<basename>). Pre-setup state has
+    // binary_input_path === binary_path; post-setup they diverge.
+    binary_input_path: input.binary_path,
     dockerfile_path: input.dockerfile_path,
     source_present: input.source_present ?? false,
     source_paths: input.source_paths ?? [],

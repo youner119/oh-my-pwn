@@ -178,8 +178,17 @@ export function loadChallengeFolder(
   if (state.binary_sha256 === undefined) {
     // Either a fresh init or a partially-seeded state from an earlier crash;
     // either way, complete the seed by recording the SHA-256 and announce the
-    // load in the journal.
-    state = saveChallengeState({ ...state, binary_sha256: binarySha256 }, now)
+    // load in the journal. binary_input_sha256 captures the same value at
+    // load time — it is the input identity invariant the omp-setup agent
+    // checks for setup-gate idempotency (mismatch → force re-setup).
+    state = saveChallengeState(
+      {
+        ...state,
+        binary_sha256: binarySha256,
+        binary_input_sha256: binarySha256,
+      },
+      now,
+    )
     appendJournalSection(
       challengeDir,
       "challenge loaded",
@@ -204,8 +213,23 @@ export function loadChallengeFolder(
       now,
     )
     // state preserved on purpose — see module doc.
+  } else if (state.binary_input_sha256 === undefined) {
+    // Backfill for state files seeded before T01.6 added the input identity
+    // fields. The loader is the only writer that can set these (they are
+    // protected from omp_patch_state, so an agent cannot fill them after
+    // the fact). Without this backfill, post-T01.6 setup agent reads
+    // null/undefined and stalls trying to "patch" a protected field.
+    state = saveChallengeState(
+      {
+        ...state,
+        binary_input_path: state.binary_input_path ?? binaryPath,
+        binary_input_sha256: binarySha256,
+      },
+      now,
+    )
   }
-  // else: silent reload of an unchanged challenge. No journal noise.
+  // else: silent reload of an unchanged challenge with input identity
+  // already populated. No journal noise.
 
   return { state, freshlyInitialized, shaDrift }
 }
