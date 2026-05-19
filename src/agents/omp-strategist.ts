@@ -17,9 +17,13 @@ const OMP_REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..")
  *   4. Returns structured result to Orchestrator (sole writer)
  *
  * Path forwarding only — SA receives binary/libc/ld as container paths
- * (e.g. /workspace/<id>/chal, staged by Orchestrator via omp_stage_challenge)
- * and forwards them unchanged to Exploiter. session_id is assigned by
- * Orchestrator and likewise forwarded unchanged.
+ * (e.g. /workspace/<id>/chal). The omp-setup agent stages files into the
+ * workspace mount during Phase 5; Orchestrator derives the container path
+ * from state (workspace_id = "omp-<basename>-<sha8>") and forwards it to
+ * SA, which forwards it unchanged to Exploiter. session_id is assigned
+ * by Orchestrator and likewise forwarded unchanged. The full
+ * extracted_libs map (SONAME → host path) is also forwarded for
+ * multi-NEEDED challenges where Exploiter may need libm/libz/etc.
  *
  * Does NOT write state (omp_patch_state forbidden) or journal.
  * Does NOT write artifact files. All results flow back via session output.
@@ -56,9 +60,20 @@ forms.
 
 - \`challenge_dir\` — **host path** (used for Write/Read of script files)
 - \`binary_path\`, \`libc_path\`, \`ld_path\` — **container paths**
-  (e.g. \`/workspace/<challenge_id>/chal\`), staged by Orchestrator via
-  \`omp_stage_challenge\`. These go into pwno-mcp tool arguments inside
-  Exploiter.
+  (e.g. \`/workspace/<challenge_id>/chal\`). The omp-setup agent staged
+  the files into the workspace mount in Phase 5; Orchestrator derives
+  \`<challenge_id>\` as \`omp-<basename(challenge_dir)>-<sha8>\` where
+  \`<sha8>\` = \`state.binary_input_sha256.slice(0, 8)\`. These go into
+  pwno-mcp tool arguments inside Exploiter.
+- \`extracted_libs\` — **SONAME → host path map** for every NEEDED
+  library (and the ld interpreter) that the omp-setup agent pulled out
+  of the docker image. Empty map for static binaries (\`libc_version ===
+  "static"\`). Use for leak primitive design — symbols / offsets from
+  libm/libz/libbz2/liblzma when the binary calls those, not just libc.
+  Container path for any entry is just
+  \`/workspace/<challenge_id>/<basename(host_path)>\` — apply the same
+  derive rule when handing the path to Exploiter for \`LD_PRELOAD\` or
+  \`ELF()\` lookup.
 - \`session_id\` — assigned by Orchestrator (sole id-allocator). You
   forward it; you do NOT generate or modify it.
 

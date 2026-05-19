@@ -168,10 +168,24 @@ describe("createOmpStrategistAgent", () => {
     expect(p).toContain("don't pre-prescribe it")
   })
 
-  test("prompt references staging via omp_stage_challenge", () => {
+  test("prompt attributes workspace staging to omp-setup Phase 5 (T15.5)", () => {
     const agent = createOmpStrategistAgent("test-model")
     const p = agent.prompt ?? ""
-    expect(p).toContain("omp_stage_challenge")
+    expect(p).toContain("omp-setup agent")
+    expect(p).toContain("Phase 5")
+    // Legacy tool name stays only in the doc-comment header; prompt body
+    // (the STRATEGIST_PROMPT template) must not instruct calling it.
+    const promptBody = p.split("const STRATEGIST_PROMPT").slice(-1)[0] ?? p
+    expect(promptBody).not.toContain("`omp_stage_challenge`")
+  })
+
+  test("prompt teaches extracted_libs map for multi-NEEDED leak primitives (T15.5)", () => {
+    const agent = createOmpStrategistAgent("test-model")
+    const p = agent.prompt ?? ""
+    expect(p).toContain("extracted_libs")
+    // workspace_id derive rule embedded in path forwarding rules
+    expect(p).toContain('omp-<basename(challenge_dir)>-<sha8>')
+    expect(p).toContain('state.binary_input_sha256.slice(0, 8)')
   })
 
   test("Key principles include Path forwarding rule", () => {
