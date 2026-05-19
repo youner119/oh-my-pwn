@@ -291,6 +291,20 @@ export const ChallengeStateSchema = z.object({
   /* ── Setup gate (T01 omp-setup agent) ────────────────────────────────── */
 
   /**
+   * Absolute host path to the OmP plugin's canonical workspace mount source
+   * (`<plugin-root>/workspace/`). Seeded by `omp_load_challenge` from the
+   * plugin's `OMP_WORKSPACE_PATH` constant so every agent — Setup, Reverser,
+   * VH, SA, Exploiter — can derive per-challenge container paths
+   * deterministically without bash-time inference.
+   *
+   * Setup agent uses this together with `binary_input_sha256` and
+   * `basename(challenge_dir)` to compute the per-challenge workspace
+   * subdirectory `<workspace_root>/omp-<basename>-<sha8>/` in Phase 5.
+   *
+   * Added by spec `deep-interview-envsetup-agent.md` (T01.6).
+   */
+  workspace_root: z.string().optional(),
+  /**
    * Challenge classification decided by the omp-setup agent in Phase 0
    * (inspect & classify). Currently only "user-mode-elf" is supported;
    * everything else lands in "unsupported" and the orchestrator hands off
@@ -491,6 +505,13 @@ export interface InitialChallengeStateInput {
   dockerfile_path: string
   source_present?: boolean
   source_paths?: string[]
+  /**
+   * Absolute host path to the plugin's workspace mount source. Seeded into
+   * `state.workspace_root` so downstream agents (Setup, Reverser, VH, SA,
+   * Exploiter) can compute per-challenge container paths without inferring
+   * the plugin root themselves.
+   */
+  workspace_root?: string
 }
 
 /**
@@ -509,6 +530,9 @@ export function createInitialChallengeState(
     dockerfile_path: input.dockerfile_path,
     source_present: input.source_present ?? false,
     source_paths: input.source_paths ?? [],
+    ...(input.workspace_root !== undefined
+      ? { workspace_root: input.workspace_root }
+      : {}),
     created_at: timestamp,
     updated_at: timestamp,
   })

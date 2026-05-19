@@ -106,6 +106,20 @@ describe("loadChallengeFolder", () => {
       expect(journal).toContain(expectedSha)
     })
 
+    test("seeds workspace_root from opts (T01.6)", () => {
+      seedMinimalChallenge(dir)
+      const result = loadChallengeFolder(dir, {
+        workspaceRoot: "/abs/plugin-root/workspace",
+      })
+      expect(result.state.workspace_root).toBe("/abs/plugin-root/workspace")
+    })
+
+    test("workspace_root stays undefined when opts.workspaceRoot omitted", () => {
+      seedMinimalChallenge(dir)
+      const result = loadChallengeFolder(dir)
+      expect(result.state.workspace_root).toBeUndefined()
+    })
+
     test("records C source when present and sets source_present=true", () => {
       seedMinimalChallenge(dir, { sourceFile: "chall.c" })
 

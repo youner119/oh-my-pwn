@@ -376,6 +376,19 @@ describe("ChallengeStateSchema", () => {
     expect(stateWithout.challenge_summary).toBeUndefined()
   })
 
+  test("createInitialChallengeState seeds workspace_root when supplied (T01.6)", () => {
+    const state = createInitialChallengeState({
+      ...baseInput,
+      workspace_root: "/abs/plugin-root/workspace",
+    })
+    expect(state.workspace_root).toBe("/abs/plugin-root/workspace")
+  })
+
+  test("workspace_root is optional (test / standalone path)", () => {
+    const stateWithout = createInitialChallengeState(baseInput)
+    expect(stateWithout.workspace_root).toBeUndefined()
+  })
+
   test("challenge_summary accepts the unsupported-case shape (kernel example)", () => {
     const state = {
       ...createInitialChallengeState(baseInput),

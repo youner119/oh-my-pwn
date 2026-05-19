@@ -30,7 +30,7 @@ import {
   ompPatchStateTool,
   ompAppendJournalTool,
   ompRunEnvsetupTool,
-  ompLoadChallengeTool,
+  createOmpLoadChallengeTool,
   ompGetTemplateTool,
   ompVerifyTemplateOutputTool,
   createOmpStageChallengeTool,
@@ -112,6 +112,13 @@ const OmpPlugin: Plugin = async (input) => {
   const ompTaskWaitAllTool = manager ? createOmpTaskWaitAllTool(manager) : undefined
   const ompTaskWaitAnyTool = manager ? createOmpTaskWaitAnyTool(manager) : undefined
   const ompTaskCancelTool = manager ? createOmpTaskCancelTool(manager) : undefined
+
+  // omp_load_challenge — factory so we can wire OMP_WORKSPACE_PATH into
+  // state.workspace_root (T01.6). Downstream agents read this for
+  // deterministic per-challenge workspace path derivation.
+  const ompLoadChallengeTool = createOmpLoadChallengeTool({
+    workspacePath: OMP_WORKSPACE_PATH,
+  })
 
   // pwno-mcp health check tool. Container lifecycle is the user's
   // responsibility — they start it before omp. This tool just probes the

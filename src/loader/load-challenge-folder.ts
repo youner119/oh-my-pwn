@@ -80,6 +80,16 @@ export interface LoadChallengeFolderOptions {
    * `current-task.md` → "Option A 결정사항").
    */
   dockerfile?: string
+  /**
+   * Absolute host path to the plugin's workspace mount source
+   * (`<plugin-root>/workspace/`). When supplied, seeded into
+   * `state.workspace_root` so downstream agents (Setup, Reverser, VH, SA,
+   * Exploiter) can derive per-challenge container paths without inferring
+   * the plugin root themselves. Plugin.ts wires `OMP_WORKSPACE_PATH` here.
+   *
+   * Added by spec `deep-interview-envsetup-agent.md` (T01.6).
+   */
+  workspaceRoot?: string
 }
 
 export interface LoadChallengeFolderResult {
@@ -155,6 +165,9 @@ export function loadChallengeFolder(
       dockerfile_path: dockerfilePath,
       source_present: sourcePresent,
       source_paths: sourcePaths,
+      ...(opts.workspaceRoot !== undefined
+        ? { workspace_root: opts.workspaceRoot }
+        : {}),
     },
     now,
   )

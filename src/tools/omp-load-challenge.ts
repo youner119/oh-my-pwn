@@ -23,65 +23,99 @@ import { tool, type ToolDefinition } from "@opencode-ai/plugin/tool"
 import { loadChallengeFolder } from "../loader/load-challenge-folder"
 import { ChallengeLoadError } from "../loader/challenge-load-error"
 
-export const ompLoadChallengeTool: ToolDefinition = tool({
-  description:
-    "Load and validate a CTF challenge folder, bootstrapping its .omp/ state directory. " +
-    "This is the ONLY correct way to initialize a new challenge — do NOT scan the folder with " +
-    "bash/ls/find. The loader enforces the input contract (directory exists, Dockerfile present, " +
-    "exactly one executable ELF binary), computes the binary's SHA-256, and creates " +
-    "<challenge-dir>/.omp/{state.json, journal.md, artifacts/, logs/, exploit/}. " +
-    "Idempotent: calling it again on an already-loaded folder reloads state and records sha drift " +
-    "in the journal without mutating state.json. " +
-    "Call this BEFORE omp_run_envsetup. " +
-    "On ambiguous-binary error, the `detail.candidates` list tells you what to ask the user about — " +
-    "then re-call with a `binary` hint. Same for dockerfile disambiguation.",
-  args: {
-    challenge_dir: tool.schema
-      .string()
-      .describe("Absolute path to the challenge directory (the folder that will contain .omp/)"),
-    binary: tool.schema
-      .string()
-      .optional()
-      .describe(
-        "Optional disambiguation hint for the challenge binary. Basename relative to " +
-        "challenge_dir (e.g. 'chall'), relative subpath (e.g. 'deploy/chall'), or absolute path. " +
-        "Pass this when auto-detection returned ambiguous-binary, or when the binary lives in a " +
-        "subdirectory like 'deploy/'.",
-      ),
-    dockerfile: tool.schema
-      .string()
-      .optional()
-      .describe(
-        "Optional disambiguation hint for the Dockerfile. Same forms as `binary`. " +
-        "Pass this when the Dockerfile lives in a subdirectory (e.g. 'deploy/Dockerfile') " +
-        "or has a non-standard name (e.g. 'Dockerfile.prod'). When omitted, the loader looks " +
-        "for 'Dockerfile' or 'dockerfile' in the immediate children of challenge_dir.",
-      ),
-  },
-  execute: async ({ challenge_dir, binary, dockerfile }) => {
-    try {
-      const opts: { binary?: string; dockerfile?: string } = {}
-      if (binary !== undefined) opts.binary = binary
-      if (dockerfile !== undefined) opts.dockerfile = dockerfile
-      const result = loadChallengeFolder(challenge_dir, opts)
-      return JSON.stringify({
-        ok: true,
-        state: result.state,
-        freshlyInitialized: result.freshlyInitialized,
-        shaDrift: result.shaDrift,
-      })
-    } catch (err) {
-      if (err instanceof ChallengeLoadError) {
+export interface OmpLoadChallengeToolOptions {
+  /**
+   * Absolute host path to the plugin's workspace mount source
+   * (`<plugin-root>/workspace/`). When set, the loader seeds
+   * `state.workspace_root` so downstream agents (Setup, Reverser, VH, SA,
+   * Exploiter) can derive per-challenge container paths without inferring
+   * the plugin root themselves. plugin.ts wires `OMP_WORKSPACE_PATH` here.
+   * When omitted (tests / standalone CLI), `state.workspace_root` stays
+   * undefined.
+   */
+  workspacePath?: string
+}
+
+export function createOmpLoadChallengeTool(
+  options: OmpLoadChallengeToolOptions = {},
+): ToolDefinition {
+  return tool({
+    description:
+      "Load and validate a CTF challenge folder, bootstrapping its .omp/ state directory. " +
+      "This is the ONLY correct way to initialize a new challenge — do NOT scan the folder with " +
+      "bash/ls/find. The loader enforces the input contract (directory exists, Dockerfile present, " +
+      "exactly one executable ELF binary), computes the binary's SHA-256, and creates " +
+      "<challenge-dir>/.omp/{state.json, journal.md, artifacts/, logs/, exploit/}. " +
+      "Idempotent: calling it again on an already-loaded folder reloads state and records sha drift " +
+      "in the journal without mutating state.json. " +
+      "Call this BEFORE the omp-setup agent runs. " +
+      "On ambiguous-binary error, the `detail.candidates` list tells you what to ask the user about — " +
+      "then re-call with a `binary` hint. Same for dockerfile disambiguation.",
+    args: {
+      challenge_dir: tool.schema
+        .string()
+        .describe(
+          "Absolute path to the challenge directory (the folder that will contain .omp/)",
+        ),
+      binary: tool.schema
+        .string()
+        .optional()
+        .describe(
+          "Optional disambiguation hint for the challenge binary. Basename relative to " +
+            "challenge_dir (e.g. 'chall'), relative subpath (e.g. 'deploy/chall'), or absolute path. " +
+            "Pass this when auto-detection returned ambiguous-binary, or when the binary lives in a " +
+            "subdirectory like 'deploy/'.",
+        ),
+      dockerfile: tool.schema
+        .string()
+        .optional()
+        .describe(
+          "Optional disambiguation hint for the Dockerfile. Same forms as `binary`. " +
+            "Pass this when the Dockerfile lives in a subdirectory (e.g. 'deploy/Dockerfile') " +
+            "or has a non-standard name (e.g. 'Dockerfile.prod'). When omitted, the loader looks " +
+            "for 'Dockerfile' or 'dockerfile' in the immediate children of challenge_dir.",
+        ),
+    },
+    execute: async ({ challenge_dir, binary, dockerfile }) => {
+      try {
+        const opts: {
+          binary?: string
+          dockerfile?: string
+          workspaceRoot?: string
+        } = {}
+        if (binary !== undefined) opts.binary = binary
+        if (dockerfile !== undefined) opts.dockerfile = dockerfile
+        if (options.workspacePath !== undefined) {
+          opts.workspaceRoot = options.workspacePath
+        }
+        const result = loadChallengeFolder(challenge_dir, opts)
         return JSON.stringify({
-          error: err.kind,
-          message: err.message,
-          detail: err.detail,
+          ok: true,
+          state: result.state,
+          freshlyInitialized: result.freshlyInitialized,
+          shaDrift: result.shaDrift,
+        })
+      } catch (err) {
+        if (err instanceof ChallengeLoadError) {
+          return JSON.stringify({
+            error: err.kind,
+            message: err.message,
+            detail: err.detail,
+          })
+        }
+        return JSON.stringify({
+          error: "internal_error",
+          message: String(err),
         })
       }
-      return JSON.stringify({
-        error: "internal_error",
-        message: String(err),
-      })
-    }
-  },
-})
+    },
+  })
+}
+
+/**
+ * @deprecated Use {@link createOmpLoadChallengeTool} so the plugin can wire
+ * `workspacePath` into `state.workspace_root`. The constant remains so
+ * existing callers (tests, standalone tools) keep compiling — it just
+ * cannot seed `workspace_root`.
+ */
+export const ompLoadChallengeTool: ToolDefinition = createOmpLoadChallengeTool()
