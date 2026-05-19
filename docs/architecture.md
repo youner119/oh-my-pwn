@@ -118,15 +118,14 @@ config: async (cfg) => {
   `OMP_PWNO_MCP_DISABLED=1`로 opt-out. Exploiter agent가 Docker container를
   직접 시작/종료.
 
-### 2. `tool` map — OmP 전용 tool 10개 등록
+### 2. `tool` map — OmP 전용 tool 14개 등록
 
 ```ts
 tool: {
-  omp_load_challenge: ompLoadChallengeTool,
+  omp_load_challenge: ompLoadChallengeTool,        // workspace_root 시드 포함
   omp_read_state: ompReadStateTool,
   omp_patch_state: ompPatchStateTool,
   omp_append_journal: ompAppendJournalTool,
-  omp_run_envsetup: ompRunEnvsetupTool,
   omp_get_template: ompGetTemplateTool,
   omp_verify_template_output: ompVerifyTemplateOutputTool,
   // 4-tool 병렬 인프라 (2026-05-18 cutover):
@@ -134,10 +133,16 @@ tool: {
   omp_task_wait_all: ompTaskWaitAllTool,          // 모두 terminal까지 block, 입력 순서 results[]
   omp_task_wait_any: ompTaskWaitAnyTool,          // 첫 완료자 + remaining_ids (race + dynamic spawn)
   omp_task_cancel: ompTaskCancelTool,             // 멱등 abort RPC + status=cancelled + emit("done")
-  omp_pwno_status: ompPwnoStatusTool,             // pwno 호환성 수정: user-managed container sanity check
-  omp_stage_challenge: ompStageChallengeTool,     // pwno 호환성 수정: copy binary/libc/ld → workspace/<id>/
+  // omp-setup agent atomic 4개 (envsetup 재설계 — T04/T06/T07/T08):
+  omp_setup_docker_build: ompSetupDockerBuildTool,    // Phase 1
+  omp_setup_extract_file: ompSetupExtractFileTool,    // Phase 3 image + Phase 5 host
+  omp_setup_patch_elf: ompSetupPatchElfTool,          // Phase 3 + Phase 5 (--replace-needed)
+  omp_setup_verify_runtime: ompSetupVerifyRuntimeTool, // Phase 4 host + Phase 5 container
 }
 ```
+
+폐지된 legacy tool (T12-T14 — `omp_run_envsetup` / `omp_pwno_status` /
+`omp_stage_challenge`) 의 책임은 omp-setup agent (Phase 1-5) 가 흡수.
 
 이 tool들은 **session 레벨**로 등록됩니다 — 즉 모든 agent가 접근 가능.
 Per-agent tool 제한은 T18 Orchestrator 구현 시 `session.prompt tools`
@@ -284,11 +289,14 @@ port 분리 불필요.
 root의 `workspace/` 폴더로 고정** — challenge별로 mount path를 바꾸지
 않는다.
 
-**Challenge 파일은 staging으로 workspace에 들어간다.** Phase 0에서
-Orchestrator가 `omp_stage_challenge`를 호출하면 challenge_dir의
-binary/libc/ld가 `<plugin-root>/workspace/<challenge_id>/`로 copy되고
-컨테이너 안에서는 `/workspace/<id>/...`로 접근된다. staging은 mtime+size
-멱등이라 resume도 cheap.
+**Challenge 파일은 omp-setup agent 가 workspace 로 stage 한다.** Phase 0
+에서 Orchestrator 가 omp-setup agent 를 launch 하면, agent Phase 5 가
+`omp_setup_extract_file` (source="host") + `omp_setup_patch_elf` 로
+`.omp/artifacts/` 의 patched binary + extracted libs 를
+`<plugin-root>/workspace/<challenge_id>/` 로 복사하고 workspace 측
+patchelf 한다. 컨테이너 안에서는 `/workspace/<id>/...` 로 접근.
+`<challenge_id>` = `omp-<basename(challenge_dir)>-<sha8>` (derive 룰 —
+별도 stored field 없음).
 
 **session_id 작명은 Orchestrator 책임 (sole id-allocator):**
 - `verify-<candidate_id>-r<round>` (VERIFY task)
@@ -297,8 +305,11 @@ binary/libc/ld가 `<plugin-root>/workspace/<challenge_id>/`로 copy되고
 Sub-agent (SA/Exploiter)는 받은 session_id를 그대로 forward, 생성/수정
 안 함.
 
-Container health는 `omp_pwno_status` tool로 sanity-check만 — Phase 0에서
-mandatory, 실패 시 docker run hint를 user에게 surface하고 STOP.
+Container health 는 omp-setup agent 가 Phase 5 sanity 단계에서 bash
+(`docker ps` + `curl`) 로 직접 확인. 실패 시 setup agent 가 journal 에
+사유 기록 (단, `setup_unsupported_reason` 은 안 박음 — 컨테이너 lifecycle
+은 사용자 영역이라 setup 자체는 host 검증 통과만으로 valid). 사용자가
+직접 docker run 띄운 뒤 force re-setup 으로 재시도.
 
 ---
 

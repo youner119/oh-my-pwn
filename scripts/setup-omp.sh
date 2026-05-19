@@ -236,8 +236,8 @@ printf '  source ~/.zshrc && omp\n'
 # ── 6) pwno-mcp container (manual — pwno 호환성 수정: user-managed) ────────────
 # OmP는 pwno-mcp 컨테이너 lifecycle을 관리하지 않는다 (pwno 호환성 수정 design). 사용자가
 # omp 실행 전에 직접 docker run 해야 한다. 아래 명령을 그대로 복사해 쓰면 된다.
-# (workspace mount는 이 repo의 workspace/ 폴더로 고정 — omp_stage_challenge가
-# challenge 파일을 거기로 복사한다.)
+# (workspace mount 는 이 repo 의 workspace/ 폴더로 고정 — omp-setup
+# agent 가 Phase 5 에서 challenge 파일을 거기로 복사한다.)
 printf '\n'
 say "pwno-mcp container is user-managed. Start it before running omp:"
 printf '  docker run -d --name omp-pwno \\\n'

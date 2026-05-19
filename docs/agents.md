@@ -126,19 +126,18 @@ correction을 받아 state를 고치고 재계획.
 
 > **인프라 노트:** 병렬 spawn은 OmO의 `task` tool + BackgroundManager + ConcurrencyManager 인프라 포팅 필요. 현재 미구현. 세부 사항은 아래 "병렬 실행 인프라" 섹션 참조.
 
-**현재 구현 상태 (2026-04):**
+**현재 구현 상태 (2026-05):**
 - ✅ 파이프라인 skeleton 프롬프트
-- ✅ Stage 0 (Load) — `omp_load_challenge` tool 호출
-- ✅ EnvSetup stage — `omp_run_envsetup` tool 호출
-- ✅ Reverse stage — `omp-reverser` delegation
-- ⏸ VulnHunt / Strategy / Exploit — sub-agent 미구현, 플레이스홀더만 (3-agent exploit pipeline, Verifier는 Exploiter에 통합)
+- ✅ Phase 0 setup gate — `omp_load_challenge` (fresh init) + omp-setup agent launch (env build + extract + patchelf + verify + stage)
+- ✅ Phase 1 Reverse — `omp-reverser` delegation
+- ✅ Phase 1-3 병렬 VH ensemble / SA race / Exploiter cascading (parallel orchestration spec)
 
 **Tool 사용:**
-- `omp_load_challenge` (첫 stage)
-- `omp_read_state` (매 stage 시작)
-- `omp_patch_state` (수동 상태 교정 시 + Phase 3 결과 기록 — sole writer)
-- `omp_append_journal` (user correction 기록)
-- `omp_run_envsetup` (EnvSetup stage)
+- `omp_load_challenge` (fresh challenge 첫 호출)
+- `omp_read_state` (매 phase 시작)
+- `omp_patch_state` (Phase 1+ 결과 기록 — sole writer. Phase 0 setup 동안에는 omp-setup agent 가 직접 쓰는 D1 relaxation)
+- `omp_append_journal` (user correction 기록 외)
+- `omp_task_launch` / `_wait_all` / `_wait_any` / `_cancel` (sub-agent 인프라)
 
 **파일:** `src/agents/omp-orchestrator.ts`
 
@@ -312,11 +311,11 @@ Orchestrator
 
 | 컴포넌트 | 역할 | OmO 참고 파일 |
 |----------|------|--------------|
-| `omp_task_launch` | fire-and-forget spawn. `{task_id, session_id}` 즉시 반환. category alias 지원 (`reverser`/`vulnhunter`/`strategist`/`exploiter`) | `reference/oh-my-openagent/src/tools/delegate-task/` (디자인만 차용) |
+| `omp_task_launch` | fire-and-forget spawn. `{task_id, session_id}` 즉시 반환. category alias 지원 (`setup`/`reverser`/`vulnhunter`/`strategist`/`exploiter`) | `reference/oh-my-openagent/src/tools/delegate-task/` (디자인만 차용) |
 | `omp_task_wait_all` / `_wait_any` / `_cancel` | explicit wait/cancel. wait는 state-first check + EventEmitter wake-up. wait_any가 dynamic spawn을 가능하게 함 | (OmP 자체 구현) |
 | BackgroundManager | 실행 중 task 추적, polling으로 terminal 감지, `taskEvents` EventEmitter로 wait_* 깨움 | `reference/oh-my-openagent/src/features/background-agent/manager.ts` |
 | ConcurrencyManager | 모델별 동시 실행 제한 (기본 5개) | `reference/oh-my-openagent/src/features/background-agent/concurrency.ts` |
-| (pwno 호환성 수정 이후) | container는 user-managed. OmP는 sanity check (`omp_pwno_status`)만. session_id는 Orchestrator prompt logic으로 이동 | 별도 spec |
+| (envsetup 재설계 이후) | container 는 user-managed. omp-setup agent 가 Phase 5 에서 sanity-check (bash `docker ps` + `curl`). 별도 stored field 없이 workspace path 는 `omp-<basename>-<sha8>` derive | `.omc/specs/deep-interview-envsetup-agent.md` |
 
 ### 통신 흐름
 

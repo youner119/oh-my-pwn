@@ -36,13 +36,16 @@ orch: "omp-orchestrator\n(sole state writer\nsession_id allocator)" {
 
 user -> orch: "omp TUI"
 
-# ============ Phase 0 — Setup ============
-ph0: "Phase 0 — Setup (순차, Orchestrator 단독)" {
-  t01: omp_pwno_status
-  t02: omp_load_challenge
-  t03: omp_stage_challenge
-  t04: omp_run_envsetup
-  t01 -> t02 -> t03 -> t04
+# ============ Phase 0 — Setup gate (envsetup 재설계) ============
+ph0: "Phase 0 — Setup gate (Orchestrator + omp-setup agent)" {
+  t01: "omp_read_state\n(gate decision)"
+  t02: "omp_load_challenge\n(fresh only)"
+  t03: "omp_task_launch(omp-setup)\n+ wait_all"
+  setup: "omp-setup agent\n(Phase 1-5: docker_build /\nextract_file / patch_elf /\nverify_runtime / stage)" {
+    style.fill: "#d3f9d8"
+  }
+  t04: "omp_read_state\n(check setup_complete)"
+  t01 -> t02 -> t03 -> setup -> t04
 }
 
 orch -> ph0

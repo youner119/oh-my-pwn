@@ -1,4 +1,4 @@
-# Tools — OmP가 제공하는 `omp_*` tool 11개
+# Tools — OmP가 제공하는 `omp_*` tool 14개
 
 이 문서는 OmP agent들이 사용하는 **tool 목록**과 각 tool의 **역할 / 시그니처 /
 에러 케이스**를 정리합니다.
@@ -11,45 +11,52 @@ OmP의 기본 원칙: **deterministic 작업은 library로, creative reasoning�
 agent로.** LLM은 판단이 필요한 곳에서 빛나고, 반복적·기계적 작업에서는
 library가 우월합니다. Tool은 agent와 library를 잇는 인터페이스입니다.
 
-예를 들어 `runEnvSetup()`은 `docker build → libc 추출 → ELF parsing →
-glibc detect → patchelf` 파이프라인을 수행합니다. 이 작업은:
+예를 들어 `docker build → libc 추출 → patchelf` 파이프라인은:
 - 결정적 (같은 input → 같은 output)
 - LLM이 추론으로 재현할 수 없음 (ELF magic byte를 LLM이 직접 parse하면 틀림)
 - 실패 케이스가 명확 (docker not running, libc not found 등)
 
-따라서 library 함수로 구현하고 `omp_run_envsetup` tool로 감싸서 agent가
-한 번의 호출로 전체 파이프라인을 돌리게 합니다. Agent는 "envsetup 해줘"를
-"`omp_run_envsetup({ challenge_dir })`"로 번역하기만 하면 됨.
+각 단계는 atomic tool (`omp_setup_docker_build`, `omp_setup_extract_file`,
+`omp_setup_patch_elf`, `omp_setup_verify_runtime`) 로 분리되어 있고,
+이를 호출하는 흐름 제어는 **omp-setup agent** (LLM) 가 담당합니다.
+Polymorphic 입력 (kernel / library-only / multi-binary / source-only 등)
+의 분류는 LLM 판단이 필요하지만, 각 phase 의 state-changing operation
+자체는 deterministic 해야 하므로 분리.
+
+(이전 `omp_run_envsetup` 단일 tool 은 omp-setup agent + atomic tool
+4개로 대체됨 — T12. Spec: `.omc/specs/deep-interview-envsetup-agent.md`.)
 
 반대로 "어느 함수를 `safe_input_copy`라고 이름 짓는다"는 LLM 고유 판단이라
 tool로 만들지 않고 agent prompt에서 자연어로 처리합니다.
 
 ---
 
-## 현재 tool 13개 — 한 눈에
+## 현재 tool 14개 — 한 눈에
 
 | Tool | 역할 | Library-backed? | 읽기/쓰기 |
 |---|---|---|---|
-| `omp_load_challenge` | Challenge 폴더 validate + `.omp/` 초기화 | Yes (T03 loader) | 쓰기 |
-| `omp_run_envsetup` | Docker build + libc 추출 + patchelf | Yes (T04 envsetup) | 쓰기 |
+| `omp_load_challenge` | Challenge 폴더 validate + `.omp/` 초기화 + `state.workspace_root` 시드 | Yes (T03 loader) | 쓰기 |
 | `omp_read_state` | `state.json` 로드 | Yes (T02 io) | 읽기 |
 | `omp_patch_state` | `state.json` 부분 업데이트 (Zod validated, atomic) | Yes | 쓰기 |
 | `omp_append_journal` | `journal.md` append | Yes | 쓰기 |
 | `omp_get_template` | 템플릿 문자열 로드 | Yes (src/templates) | 읽기 |
 | `omp_verify_template_output` | 템플릿 작성물 구조 검증 | Yes | 읽기 (idempotent) |
-| `omp_task_launch` | 단일 sub-agent를 **fire-and-forget**으로 spawn. `{task_id, session_id}` 즉시 반환. `agent`는 category alias (`reverser`/`vulnhunter`/`strategist`/`exploiter`) 또는 full name (`omp-*`). | Yes (orchestration/) | 쓰기 |
+| `omp_task_launch` | 단일 sub-agent를 **fire-and-forget**으로 spawn. `{task_id, session_id}` 즉시 반환. `agent`는 category alias (`setup`/`reverser`/`vulnhunter`/`strategist`/`exploiter`) 또는 full name (`omp-*`). | Yes (orchestration/) | 쓰기 |
 | `omp_task_wait_all` | 주어진 `task_ids[]` **모두** terminal에 도달할 때까지 block. 입력 순서대로 `results[]` 반환. unknown id는 synthetic failed outcome (graceful). | Yes (orchestration/) | 읽기 |
 | `omp_task_wait_any` | 주어진 `task_ids[]` 중 **첫 완료자** + `remaining_ids` 반환. 성공/실패/취소 모두 first-complete로 취급. SA race + dynamic spawn에 사용. | Yes (orchestration/) | 읽기 |
 | `omp_task_cancel` | `task_ids[]`를 best-effort 취소 (멱등). `{cancelled[], not_found[]}` 반환. SDK `session.abort` 호출 + `status="cancelled"` + `done` emit. | Yes (orchestration/) | 쓰기 |
-| `omp_pwno_status` | user-managed pwno-mcp container의 reachability + opencode MCP connect 상태 sanity check. Phase 0에서 mandatory + healthy:false면 hint를 user에게 surface하고 STOP. | Yes (orchestration/) | 읽기 |
-| `omp_stage_challenge` | challenge_dir의 binary/libc/ld를 `<plugin-root>/workspace/<id>/`로 mtime+size 멱등 복사. container_path 반환. Phase 0에서 1회 호출, 결과를 state.pwno_paths에 저장. | Yes (tools/) | 쓰기 (workspace/ 내) |
+| `omp_setup_docker_build` | (omp-setup 전용) Phase 1 — challenge Dockerfile build. `image_tag` policy: hint 우선, 없으면 `omp-<sha8 of binary_input_sha256>`. `force_rebuild` 옵션. | Yes (envsetup/docker-build) | 쓰기 |
+| `omp_setup_extract_file` | (omp-setup 전용) Phase 3 (image → `.omp/artifacts/`) + Phase 5 (`.omp/artifacts/` → `workspace/<id>/`). `source = "image"` (docker cp) 또는 `"host"` (fs.copyFile). `dereference_symlinks` 옵션. | Yes (envsetup/docker-extract) | 쓰기 |
+| `omp_setup_patch_elf` | (omp-setup 전용) Phase 3 + Phase 5. Binary case (dst_path + interpreter + replacements) 또는 Library case (in-place + replacements). `--replace-needed`로 SONAME → 절대경로 rewrite (RUNPATH 미사용 — D3). | Yes (envsetup/patch-elf, 신규 `patchElf` 함수) | 쓰기 |
+| `omp_setup_verify_runtime` | (omp-setup 전용) Phase 4 (`mode=host`) + 옵셔널 Phase 5 (`mode=container`). Host: process spawn + timeout=ok semantics + missing-lib regex. Container: docker run -d + TCP probe. `keep_container_on_fail` 옵션. | Yes (신규) | 읽기 |
 
 모두 `src/tools/*.ts` / `src/orchestration/*.ts`에 구현돼 있고
 `src/plugin.ts`에서 session 레벨로 등록됩니다. 원래 7개 + M5 병렬 인프라
-+ pwno 호환성 수정 + 4-tool cutover (2026-05-18, `omp_task`/`_all`/`_pool`/
-`omp_background_output` 4개 제거, `omp_task_launch`/`_wait_all`/`_wait_any`/
-`_cancel` 4개 추가, net 0). BN 전환으로 `omp_save_decompiled` 제거,
-pwno 호환성 수정으로 `omp_pwno_container` 제거.
++ pwno 호환성 수정 + 4-tool cutover (2026-05-18). 이후 BN 전환으로
+`omp_save_decompiled` 제거, pwno 호환성 수정으로 `omp_pwno_container`
+제거. **envsetup 재설계 (T12-T14)** 로 `omp_run_envsetup` /
+`omp_stage_challenge` / `omp_pwno_status` 3개가 폐지되고 omp-setup
+agent + atomic 4개 (`omp_setup_*`) 가 흡수.
 
 ---
 
@@ -104,53 +111,30 @@ state.json 재로드).
 
 ---
 
-## `omp_run_envsetup`
+## `omp_setup_*` (omp-setup agent 전용 atomic 4개)
 
-**용도:** EnvSetup 파이프라인 full execution. Docker image 빌드, libc/ld
-추출, glibc version detect, ELF mitigations 파싱, patchelf로 binary
-interpreter/rpath rewrite.
+`omp_setup_docker_build`, `omp_setup_extract_file`, `omp_setup_patch_elf`,
+`omp_setup_verify_runtime` 네 atomic tool 은 **omp-setup agent 만** 호출.
+각 tool 의 시그너처 / 에러 케이스 / 사용 패턴은 spec 정본 참조:
 
-**Arguments:**
-```ts
-{
-  challenge_dir: string
-  patch?: boolean   // 기본 true. false면 patchelf skip
-}
-```
+- 디자인 결정 + tool 시그너처: `.omc/specs/deep-interview-envsetup-agent.md`
+  § D4 (Tool surface), § Architecture (Phase 1-5 흐름)
+- 구현: `src/tools/omp-setup-{docker-build,extract-file,patch-elf,verify-runtime}.ts`
+- 호출 흐름 (Phase 0-6) 은 omp-setup agent prompt
+  (`src/agents/omp-setup.ts`) 에 박혀 있음
 
-**성공 응답:**
-```json
-{
-  "ok": true,
-  "state": { /* 업데이트된 ChallengeState */ },
-  "rebuilt": true,          // docker build 실제로 돌았는지 (cache hit이면 false)
-  "staticLinked": false,
-  "patched": true           // patchelf가 이번 run에서 적용됐는지
-}
-```
+폐지된 legacy tool (이 자리에 있었던 `omp_run_envsetup`) 의 책임은:
+- Docker build → `omp_setup_docker_build` (omp-setup Phase 1)
+- libc/ld 추출 → `omp_setup_extract_file` source="image" (Phase 3)
+- patchelf → `omp_setup_patch_elf` (Phase 3 host + Phase 5 workspace,
+  `--replace-needed` 방식, RUNPATH 미사용)
+- 호스트 검증 → `omp_setup_verify_runtime` mode="host" (Phase 4)
 
-**에러 케이스** (EnvSetupError.kind):
-- `state-missing` — T03 loader가 먼저 돌지 않았음
-- `docker-not-available` — `docker` 명령 없음 / 권한 없음
-- `docker-build-failed` — detail에 `exitCode`, `buildLogPath` (사용자가
-  해당 로그 파일 읽어서 진단)
-- `libc-not-found` — docker image의 표준 경로에 libc 없음.
-  detail.candidatesTried (시도한 9개 경로), detail.imageListing
-  (`/lib*` listing — 진단용)
-- `elf-parse-error` — binary가 valid ELF 아님
-- `extraction-failed` — `docker cp` 실패
-- `patchelf-not-available` — `patchelf` 명령 없음 (`apt install patchelf`)
-- `patchelf-failed` — patchelf exit code 0 아님 (원본은 백업에 보존)
-
-**사용 맥락:** Orchestrator pipeline의 **EnvSetup stage**. Load 다음에
-호출. 재실행 시 idempotent (docker image cache hit 가능, patchelf는
-백업에서 복원 후 재패치).
-
-**주의:** 이 tool은 agent가 bash로 docker/readelf/patchelf를 직접 치는 것을
-**대체**합니다. Agent prompt에 "bash로 docker 치지 말 것" 명시.
-
-**파일:** `src/tools/omp-run-envsetup.ts`, backed by
-`src/envsetup/run-envsetup.ts`
+폐지된 `omp_stage_challenge` 책임 (workspace 복사 + patchelf) 은
+`omp_setup_extract_file` source="host" + `omp_setup_patch_elf` workspace
+모드 (Phase 5) 가 흡수. 폐지된 `omp_pwno_status` 책임 (컨테이너
+sanity) 은 omp-setup agent 가 Phase 5 에서 bash (`docker ps` + `curl`)
+로 직접 호출.
 
 ---
 
@@ -457,12 +441,14 @@ export const ompSomethingTool: ToolDefinition = tool({
 
 | 파일 | 역할 |
 |---|---|
-| `src/tools/index.ts` | 10개 tool re-export |
-| `src/tools/omp-*.ts` | 각 tool 구현 (thin wrapper over library) |
+| `src/tools/index.ts` | tool re-export (14개 — state IO + load + 4-tool task + 4-tool omp_setup_*) |
+| `src/tools/omp-*.ts` | 각 tool 구현 (thin wrapper over library 또는 omp-setup atomic) |
+| `src/orchestration/index.ts` | task surface (`omp_task_*` 4개) re-export |
 | `src/plugin.ts` | tool map 등록 (session 레벨) |
-| `src/loader/` | T03 library (load_challenge backed) |
-| `src/envsetup/` | T04 library (run_envsetup backed) |
-| `src/state/` | T02 library (read_state / patch_state / append_journal backed) |
+| `src/loader/` | load-challenge backed |
+| `src/envsetup/` | docker-build / docker-extract / patch-elf library — atomic omp_setup_* 가 wrap (legacy `run-envsetup.ts` 437 줄은 T19 deprecation 영역) |
+| `src/state/` | read_state / patch_state / append_journal backed |
 | `src/templates/` | get_template backed (템플릿 string 저장소) |
+| `src/agents/omp-setup.ts` | atomic 4개 호출 흐름 제어 (Phase 0-6) |
 
 다음 문서에서 **템플릿 시스템의 세부**를 다룹니다 → [templates.md](templates.md).

@@ -82,20 +82,29 @@
 | `mitigations` | `{ nx, pie, canary, relro, seccomp, raw }` |
 | `remote` | `{ host, port, wrapper, command }` (Dockerfile에서 추론) |
 
-### pwno-mcp staging (pwno 호환성 수정)
+### Workspace path derive (envsetup 재설계)
 
-Phase 0의 `omp_stage_challenge` 호출 결과. Orchestrator가 staging 후
-state에 기록하면 SA/Exploiter spawn 시 그대로 forward한다 (path forwarding).
+별도 `pwno_paths` field 는 더 이상 박지 않는다 (T11/T12 폐지). 대신
+**derive 룰** — Orchestrator + SA + Exploiter 모두 동일하게 계산:
 
-| 필드 | 설명 |
-|---|---|
-| `pwno_paths.binary` | container 안 binary 경로 (예: `/workspace/afterimage/chal`) |
-| `pwno_paths.libc` | container 안 libc 경로 |
-| `pwno_paths.ld` | container 안 ld 경로 |
-| `pwno_paths.workspace_dir` | container 안 challenge subdir (예: `/workspace/afterimage`) |
+```
+workspace_id      = "omp-" + basename(state.challenge_dir) + "-" +
+                    state.binary_input_sha256.slice(0, 8)
+host workspace    = state.workspace_root + "/" + workspace_id
+container path    = "/workspace/" + workspace_id
+container binary  = container path + "/" + basename(state.binary_path)
+container libc    = container path + "/" + basename(state.libc_path)
+container ld      = container path + "/" + basename(state.ld_path)
+```
 
-호스트 backing dir은 `<plugin-root>/workspace/<challenge_id>/`. challenge별
-mount path 변경 없이 같은 컨테이너가 challenge들을 subdir로 격리.
+omp-setup agent (Phase 5) 가 `.omp/artifacts/` 의 patched binary + 모든
+extracted lib 를 `state.workspace_root + "/" + workspace_id` 로 stage 한다.
+호스트 backing dir 은 `<plugin-root>/workspace/<workspace_id>/`. challenge
+별 mount path 변경 없이 같은 컨테이너가 challenge 들을 subdir 로 격리.
+
+Multi-NEEDED 챌린지 (libm/libz/libbz2/liblzma 등) 의 추가 라이브러리는
+`state.extracted_libs` map 으로 SONAME → host path 보존. container 경로는
+같은 derive 룰 (basename forward) 로 계산.
 
 ### Reverser (T07)
 
@@ -393,7 +402,8 @@ libc 버전은 2.35가 아니고 2.31이야. Dockerfile에서 ubuntu:20.04를
 
 1. omp_patch_state: libc_version="2.31" 기록
 2. omp_append_journal("User correction", ...)
-3. omp_run_envsetup({ challenge_dir, force: true })
+3. user prompt 에 "setup 재설정" 박아서 force re-setup → Orchestrator
+   Phase 0 gate 가 omp-setup agent 를 force_rebuild=true 로 재실행
 4. 완료 후 reverser 단계로 진행
 ```
 
