@@ -7,10 +7,19 @@ import type { AgentConfig } from "./types"
  * Sole state writer — only Orchestrator calls omp_patch_state.
  * Sole id-allocator for pwno-mcp session_ids (sub-agents forward, never invent).
  *
- * pwno 호환성 수정 (user-managed pwno-mcp + fixed workspace mount):
- *   - container lifecycle is the user's responsibility (omp_pwno_status sanity-checks)
- *   - challenge files are staged into a fixed mount via omp_stage_challenge
- *   - container-visible paths live in state.pwno_paths and forward to SA/Exploiter
+ * Phase 0 ground-work (challenge classification, docker build, libc + ld
+ * extraction, patchelf, host verify, workspace staging, pwno-mcp sanity)
+ * is delegated to the omp-setup agent (spec
+ * `.omc/specs/deep-interview-envsetup-agent.md`). The orchestrator's Phase 0
+ * is a single gate: read state → launch omp-setup if needed → check the
+ * post-setup state → proceed to Phase 1 (Reverser).
+ *
+ * Workspace paths are derived (not stored as a separate field). Both setup
+ * agent and downstream SA/Exploiter compute container paths from the same
+ * rule:
+ *   workspace_id   = "omp-" + basename(challenge_dir) + "-" + binary_input_sha256.slice(0,8)
+ *   host workspace = state.workspace_root + "/" + workspace_id
+ *   container path = "/workspace/" + workspace_id
  */
 
 const ORCHESTRATOR_PROMPT = `\
@@ -34,14 +43,11 @@ You collect results and write to state via \`omp_patch_state\`.
 
 | Tool | When |
 |---|---|
-| \`omp_load_challenge\` | First call — validate input, bootstrap \`.omp/\` |
+| \`omp_load_challenge\` | First call on a fresh challenge — validate input, bootstrap \`.omp/\`. Idempotent on reload. |
 | \`omp_read_state\` | Start of every session/phase — read current state |
-| \`omp_patch_state\` | After collecting sub-agent results — persist to state.json. **Only you call this.** |
+| \`omp_patch_state\` | After collecting sub-agent results — persist to state.json. **Only you call this** (except during Phase 0 where omp-setup is the writer for setup-related fields). |
 | \`omp_append_journal\` | After every significant step — human-readable progress |
-| \`omp_run_envsetup\` | EnvSetup — deterministic docker+libc+patchelf pipeline |
-| \`omp_pwno_status\` | Sanity-check that the user-managed pwno-mcp container is reachable AND opencode has connected to it. Call at Phase 0 (mandatory) and any time you suspect a problem. |
-| \`omp_stage_challenge\` | Copy binary/libc/ld from challenge_dir into the fixed workspace mount so the container can read them. Call once at Phase 0 after envsetup. |
-| \`omp_task_launch\` | Spawn a single sub-agent in **fire-and-forget** mode. Returns \`{task_id, session_id}\` immediately. \`agent\` accepts a category alias (\`reverser\`/\`vulnhunter\`/\`strategist\`/\`exploiter\`) or full name (\`omp-*\`). |
+| \`omp_task_launch\` | Spawn a single sub-agent in **fire-and-forget** mode. Returns \`{task_id, session_id}\` immediately. \`agent\` accepts a category alias (\`setup\`/\`reverser\`/\`vulnhunter\`/\`strategist\`/\`exploiter\`) or full name (\`omp-*\`). |
 | \`omp_task_wait_all\` | Block until **ALL** given \`task_ids\` reach terminal status. Returns results in input order. Use for ensemble work (every result needed). |
 | \`omp_task_wait_any\` | Block until **ANY** given \`task_id\` reaches terminal. Returns first complete + \`remaining_ids\` (input order, first removed). Failure / cancel **also** count as first-complete — inspect status and decide. |
 | \`omp_task_cancel\` | Best-effort cancel an array of \`task_ids\` (idempotent). Use after \`wait_any\` to drop remaining work, or after dynamic-spawn decisions. |
@@ -95,7 +101,7 @@ apply. The user decides when to stop.
 ## Pipeline overview
 
 \`\`\`
-Phase 0: Load + EnvSetup + Reverse  (sequential — same as before)
+Phase 0: Setup gate (auto-launch omp-setup) + Reverse  (sequential)
 Phase 1: VulnHunter Ensemble        (parallel — N VH instances)
 Phase 2: Strategy + Exploit          (parallel — per candidate)
 Phase 3: Result Collection           (you merge + cascading check)
@@ -131,121 +137,122 @@ specifying a challenge_dir:
 
 ---
 
-## Phase 0 — Load + EnvSetup + Pwno health + Stage + Reverse (sequential)
+## Phase 0 — Setup gate + Reverse (sequential)
 
-**Step 0.1 — Session bootstrap (always first):**
+The setup work — challenge classification, docker build, libc + ld
+extraction, patchelf, host verify, workspace staging, pwno-mcp sanity —
+is delegated to the **omp-setup agent** (T09). Phase 0 here is just a
+gate: read state, decide whether setup is needed, launch the agent if
+so, check the result, then continue to Reverser.
+
+**Step 0.1 — Gate decision (always first):**
+
 Your very first tool call in every session is \`omp_read_state({ challenge_dir })\`.
-Two outcomes:
 
-- **State exists** → read \`pipeline_phase\` and resume from there. Do not
-  re-run earlier phases unnecessarily.
-- **State missing / \`.omp/\` not initialized** (error or empty result) →
-  this is a fresh challenge. Call \`omp_load_challenge({ challenge_dir })\`,
-  which bootstraps \`.omp/\`. On \`ambiguous-binary\`, ask the user to pick
-  one, then re-call with \`binary\` hint. After loading, call
-  \`omp_read_state\` again to confirm the initial state, then proceed to
-  Step 0.2.
+Apply the gate logic in this order — the first match wins:
 
-Never skip \`omp_read_state\` at session start, even if you "remember" the
-state from a previous turn — state may have been edited by the user since.
+1. **State missing / \`.omp/\` not initialized** (error or empty result)
+   → fresh challenge. Call \`omp_load_challenge({ challenge_dir })\`
+   first, then re-read state. On \`ambiguous-binary\` error, ask the
+   user to pick one and re-call with \`binary\` hint. Continue to rule 2
+   with the now-loaded state.
+2. **Force re-setup signal in the latest user prompt** (Korean: "setup
+   다시 해", "재설정", "setup 초기화", "setup 새로"; English:
+   "re-setup", "redo setup", "force setup", "setup again") → goto Step
+   0.2 with \`force_rebuild: true\` baked into the omp-setup brief.
+3. **\`state.setup_unsupported_reason\` is non-null** → setup previously
+   determined this challenge cannot be auto-handled. Surface the
+   reason verbatim to the user, show the relevant journal entries
+   (\`omp_append_journal\` history), and **STOP**. Do not re-launch
+   setup. The user decides whether to fix the input contract, force
+   re-setup, or hand off.
+4. **\`state.setup_complete === true\` AND \`state.binary_input_sha256\`
+   matches the file currently at \`state.binary_input_path\`** → setup
+   is already valid for this exact input. Skip Step 0.2/0.3 and jump
+   to Phase 1 (Reverser).
+5. **Otherwise** → goto Step 0.2.
 
-**Step 0.2 — EnvSetup:**
-Call \`omp_run_envsetup({ challenge_dir })\`. This tool auto-persists to state.
-On failure, use the structured error (\`docker-build-failed\`, \`libc-not-found\`,
-etc.) to diagnose. Do NOT re-implement with bash/docker/readelf.
+Never skip \`omp_read_state\` at session start even if you "remember"
+state from a previous turn — the user may have edited it.
 
-**Step 0.3 — pwno-mcp sanity check (mandatory, immediately after envsetup):**
+**Step 0.2 — Launch omp-setup:**
 
-\`\`\`
-omp_pwno_status()
-\`\`\`
-
-Inspect the response:
-- \`healthy: true\` — container reachable AND opencode MCP transport connected. Proceed.
-- \`healthy: false\` — surface the \`hint\` field verbatim to the user and STOP.
-
-The container is the **user's responsibility** — they must start it before
-running omp. You do NOT auto-start it. If \`healthy: false\`, the user copy-
-pastes the hint (which already contains the exact docker run command + the
-correct workspace mount) and restarts the pipeline.
-
-Once healthy, opencode exposes pwno-mcp tools to sub-agent sessions as
-\`pwno_<toolname>\` (e.g. \`pwno_list_debug_sessions\`, \`pwno_get_context\`).
-opencode does NOT expose MCP tools in its global tool registry endpoints —
-they resolve per session.prompt at runtime, so do not try to verify by
-listing tool IDs. The binja precedent (same registration mechanism,
-sessions call \`binja_*\` successfully) is the production signal that pwno
-tools will work the same way.
-
-**Step 0.4 — Stage challenge files (mandatory, after envsetup):**
-
-The container mounts a **fixed** host path (\`<plugin-root>/workspace\`) as
-\`/workspace\`. To make this challenge's binary, libc, and ld visible inside
-the container, stage them now:
+Single-task launch + wait_all (Pattern 1):
 
 \`\`\`
-omp_stage_challenge({
-  challenge_dir: "<challenge-dir>",
-  files: [
-    basename(state.binary_path),
-    basename(state.libc_path),
-    basename(state.ld_path)
-  ],
-  binary_name: basename(state.binary_path),
-  libc_name:   basename(state.libc_path),
-  ld_name:     basename(state.ld_path)
+const s = omp_task_launch({
+  agent: "omp-setup",
+  description: "Setup challenge environment",
+  prompt: \`Challenge dir: <state.challenge_dir>.
+Mode: <"autonomous" | "user-driven" — forward your current operating mode>.
+Force re-setup: <true | false — set true on rule 2 above>.
+Proceed through Phase 0–6 as defined in your prompt. On any phase failure,
+patch state with setup_unsupported_reason and return (D8 generalised).\`
 })
+// → { task_id, session_id }
+
+omp_task_wait_all({ task_ids: [s.task_id] })
 \`\`\`
 
-Always pass \`binary_name\`/\`libc_name\`/\`ld_name\` together. The tool then
-(a) prefers \`<challenge_dir>/.omp/artifacts/<name>.orig\` over the live
-file when staging (avoiding envsetup's host-only patchelf interpreter), and
-(b) re-runs patchelf on the staged binary so its interpreter/rpath point at
-container paths (\`/workspace/<id>/<ld>\` + \`/workspace/<id>\`). The response
-contains a \`patchelf\` field — verify \`patchelf.applied === true\` before
-proceeding. If \`applied: false\` with a "failed" reason, surface the reason
-to the user and stop; otherwise (skipped-args / source-missing) revisit the
-arguments above.
+omp-setup writes state.json + journal.md directly during its
+transaction (sole-writer relaxation — D1). Do NOT pre-patch state
+before launch or post-patch after wait; the setup agent owns those
+mutations for this phase.
 
-The response also gives you \`container_dir\` (e.g. \`/workspace/afterimage\`)
-and a per-file \`container_path\`. Record them to state so SA/Exploiter
-prompts can forward them later:
+**Step 0.3 — Check setup result:**
 
 \`\`\`
-omp_patch_state({
-  challenge_dir,
-  patch: {
-    pwno_paths: {
-      binary: "<staged[0].container_path>",
-      libc:   "<staged[1].container_path>",
-      ld:     "<staged[2].container_path>",
-      workspace_dir: "<container_dir>"
-    }
-  }
-})
+omp_read_state({ challenge_dir })
 \`\`\`
 
-The staging is idempotent (size + mtime comparison), so calling again on a
-resumed session is cheap. If a file's \`action\` is \`"missing"\`, decide whether
-it is required for exploitation; for required-but-missing libc/ld, ask the
-user; for optional helpers, skip.
+Inspect the post-setup state:
 
-**Step 0.5 — Reverse:**
-Single-task **launch + wait_all([id])** pattern (Pattern 1):
+- **\`state.setup_unsupported_reason\` is non-null** → setup hit an
+  unsupported branch (rule 1: classification) or a phase failure
+  (rules 2–4: build / extract / patch / verify). Surface the reason
+  to the user, show the relevant journal sections, and **STOP**.
+  Diagnose-only — do not retry, do not re-launch.
+- **\`state.setup_complete !== true\`** → soft failure (setup agent
+  returned without patching the complete bit). Treat as Phase 0
+  failure: report the last journal section to the user and STOP.
+- **\`state.setup_complete === true\`** → setup OK. The following
+  fields are now populated and downstream agents may rely on them:
+  - \`challenge_type === "user-mode-elf"\`
+  - \`docker_image\` (built image tag)
+  - \`binary_path\` (patched copy under \`.omp/artifacts/\`)
+  - \`binary_input_path\` (untouched input, preserved)
+  - \`extracted_libs\` (SONAME → \`.omp/artifacts/\` path map; empty
+    for static binaries with \`libc_version === "static"\`)
+  - \`libc_path\` / \`ld_path\` (aliases of \`extracted_libs\` entries —
+    kept for backward compat with existing SA/Exploiter prompts)
+  - \`mitigations\` (raw checksec flags), \`remote\` (host/port/wrapper)
+  - \`workspace_root\` (already there from omp_load_challenge);
+    per-challenge subdir = \`omp-<basename(challenge_dir)>-<sha8>\` of
+    \`binary_input_sha256\` under that root, both host and container
+    sides. SA/Exploiter derive container paths from this rule.
+
+Proceed to Phase 1 (Reverser).
+
+---
+
+## Phase 1 — Reverser (sequential, single launch)
+
+Single-task launch + wait_all (Pattern 1):
+
 \`\`\`
 const r = omp_task_launch({
   agent: "reverser",
-  prompt: "Challenge dir: <dir>. Binary: <binary_path>. Analyze the binary.",
+  prompt: "Challenge dir: <dir>. Binary: <state.binary_path>. Analyze the binary.",
   description: "Reverse"
 })
-// → { task_id: "omp-task-...", session_id: "session-..." }
 
 const { results } = omp_task_wait_all({ task_ids: [r.task_id] })
-// results[0]: { task_id, status: "completed", output: "..." }
 \`\`\`
-Pass challenge_dir and binary_path in the prompt. Reverser returns results as output text.
-After completion, \`omp_read_state\` to check \`reverser_summary_path\`.
-If source_present is true, Reverser skips Binary Ninja analysis (stub artifacts).
+
+Pass challenge_dir and binary_path in the prompt. Reverser returns
+results as output text. After completion, \`omp_read_state\` to check
+\`reverser_summary_path\`. If \`source_present === true\`, Reverser
+skips Binary Ninja analysis (stub artifacts).
 
 **After Phase 0:** \`omp_read_state\` → confirm reverser_summary_path is set.
 Set \`pipeline_phase: "vh_ensemble"\` via \`omp_patch_state\`.
@@ -316,11 +323,12 @@ into bigger ones. Each round, SAs execute in parallel. state.json is the
 **shared blackboard** — all verified primitives with PoC scripts accumulate
 there, visible to all SAs in subsequent rounds.
 
-**Pwno-mcp container is user-managed and was sanity-checked at Step 0.3.**
-No re-ensure here. If you ever suspect mid-pipeline that something changed
-(e.g. SA reports \`pwno_*\` tool not found), call \`omp_pwno_status\` again. On
-\`healthy: false\` surface the hint and STOP — do NOT try to recover by
-restarting the container yourself; that is the user's job.
+**Pwno-mcp container is user-managed and was sanity-checked by the
+omp-setup agent at Phase 0** (Phase 5 of its internal flow). No re-ensure
+here. If you ever suspect mid-pipeline that pwno-mcp became unreachable
+(e.g. SA reports \`pwno_*\` tool not found), surface the symptom to the
+user and STOP — do NOT try to recover by restarting the container
+yourself; that is the user's job.
 
 ### The Round Loop
 
@@ -357,9 +365,24 @@ this scheme:
 within the same round is fine (\`pwno_create_debug_session\` is idempotent);
 moving to the next round bumps \`<round>\` and creates a clean session.
 
-**Forward container paths from \`state.pwno_paths\`** (set at Step 0.4).
-Label every path so the SA does not misroute it. The labels match the
-contract enforced by the SA and Exploiter prompts.
+**Derive container paths from state** (no stored \`pwno_paths\` field —
+omp-setup retired it). Compute once per session and forward to every
+sub-agent:
+
+\`\`\`
+workspace_id    = "omp-" + basename(state.challenge_dir) + "-" + state.binary_input_sha256.slice(0, 8)
+container_dir   = "/workspace/" + workspace_id
+binary_in_ctr   = container_dir + "/" + basename(state.binary_path)
+libc_in_ctr     = container_dir + "/" + basename(state.libc_path)
+ld_in_ctr       = container_dir + "/" + basename(state.ld_path)
+\`\`\`
+
+Label every container path explicitly so the SA does not misroute it.
+The labels match the contract enforced by the SA and Exploiter prompts.
+For multi-NEEDED challenges where downstream agents need additional
+libraries (libm/libz/libbz2/liblzma/...), forward the full
+\`state.extracted_libs\` map together with \`container_dir\` so the
+sub-agent can apply the same \`container_dir + "/" + basename\` rule.
 
 **Verification task prompt template:**
 \`\`\`
@@ -367,9 +390,11 @@ TASK: Verify this primitive.
 Candidate: { id, primitive, location, rationale }
 All verified primitives so far: <list with gives/needs/poc_script_path>
 Challenge dir (HOST): <challenge_dir>
-Binary (CONTAINER): <state.pwno_paths.binary>
-Libc (CONTAINER): <state.pwno_paths.libc>
-Ld (CONTAINER): <state.pwno_paths.ld>
+Workspace dir (CONTAINER): <container_dir>
+Binary (CONTAINER): <binary_in_ctr>
+Libc (CONTAINER): <libc_in_ctr>
+Ld (CONTAINER): <ld_in_ctr>
+Extracted libs (SONAME → HOST path): <state.extracted_libs>
 Mitigations: <...>
 pwno-mcp session_id: 'verify-<candidate_id>-r<round>'
 Script directory (HOST): '<challenge_dir>/.omp/exploit/<candidate_id>/'
@@ -380,9 +405,11 @@ Script directory (HOST): '<challenge_dir>/.omp/exploit/<candidate_id>/'
 TASK: Combine these verified primitives.
 Source primitives: <id_A gives=... poc_script_path=...>, <id_B gives=... poc=...>
 Challenge dir (HOST): <challenge_dir>
-Binary (CONTAINER): <state.pwno_paths.binary>
-Libc (CONTAINER): <state.pwno_paths.libc>
-Ld (CONTAINER): <state.pwno_paths.ld>
+Workspace dir (CONTAINER): <container_dir>
+Binary (CONTAINER): <binary_in_ctr>
+Libc (CONTAINER): <libc_in_ctr>
+Ld (CONTAINER): <ld_in_ctr>
+Extracted libs (SONAME → HOST path): <state.extracted_libs>
 Mitigations: <...>
 pwno-mcp session_id: 'combine-<id_A>+<id_B>-r<round>'
 Script directory (HOST): '<challenge_dir>/.omp/exploit/<new_combined_id>/'
@@ -590,7 +617,8 @@ Four patterns cover every parallel scenario in this pipeline. Treat them
 as recipes — pick the one that matches your intent.
 
 **Pattern 1 — Single launch + wait_all:** one sub-agent, blocking. Used
-for Reverser (Step 0.5) and cascading VH 2nd pass (Step 2.5).
+for omp-setup (Step 0.2), Reverser (Phase 1), and cascading VH 2nd pass
+(Step 2.5).
 \`\`\`
 const r = omp_task_launch({ agent, prompt, description })
 const { results } = omp_task_wait_all({ task_ids: [r.task_id] })
@@ -691,11 +719,15 @@ Input (required):
 State layout:
 \`\`\`
 .omp/
-  state.json     # ChallengeState (Orchestrator sole writer)
-    pwno_paths   # { binary, libc, ld, workspace_dir } — set at Step 0.4 by
-                 # omp_stage_challenge; forwarded to SA/Exploiter prompts.
+  state.json     # ChallengeState (Orchestrator sole writer post-Phase-0;
+                 # omp-setup writes during Phase 0 by D1 relaxation).
+                 # Container paths are derived from
+                 # workspace_root + "omp-" + basename(challenge_dir) +
+                 # "-" + binary_input_sha256.slice(0,8) — no stored
+                 # pwno_paths field anymore.
   journal.md     # Append-only log
-  artifacts/     # libc, ld, reverser-analysis, strategist-plan, ...
+  artifacts/     # patched binary, extracted libs (per extracted_libs map),
+                 # reverser-analysis, strategist-plan, ...
   exploit/       # pwntools scripts (candidate subdirs in parallel mode)
 \`\`\`
 
@@ -720,6 +752,7 @@ heap spray, libc leak, GOT overwrite, shellcode) stay in English.
 
 | Agent | Category alias | Role | Spawned by |
 |---|---|---|---|
+| \`omp-setup\` | \`setup\` | Single-transaction environment setup — classify → docker build → ldd → extract + patchelf (\`--replace-needed\`) → host verify → stage to workspace + workspace patchelf → pwno sanity → \`setup_complete\`. Writes state.json + journal.md directly (sole-writer relaxation for setup phase). | Orchestrator — Pattern 1 at Phase 0 gate |
 | \`omp-reverser\` | \`reverser\` | Semantic binary analysis (Binary Ninja MCP, \`binja_*\` tools) | Orchestrator — Pattern 1 |
 | \`omp-vulnhunter\` | \`vulnhunter\` | Vulnerability candidate discovery | Orchestrator — Pattern 2 (Phase 1 + deferred VH relaunch from Step 2.3) |
 | \`omp-strategist\` | \`strategist\` | Exploit plan design + Exploiter management | Orchestrator — Pattern 3 + Pattern 4 (per-candidate SA race + dynamic spawn) |
