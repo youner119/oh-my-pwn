@@ -192,8 +192,11 @@ sanity) 은 omp-setup agent 가 Phase 5 에서 bash (`docker ps` + `curl`)
 ```
 
 **Protected fields (자동 제거):** `challenge_dir`, `schema_version`,
-`binary_path`. 이 셋은 loader 초기 시딩 외에는 변경 금지라 patch에서 자동
-stripping됨.
+`binary_input_path`, `binary_input_sha256`. 이 넷은 loader 초기 시딩 (또는
+challenge identity invariant) 외에는 변경 금지라 patch에서 자동 stripping됨.
+`binary_path` 는 envsetup 재설계 (spec D3) 로 의미가 재정의되어 — omp-setup
+agent Phase 3 에서 patched copy 경로로 update 해야 하므로 stripping 대상
+아님.
 
 **성공 응답:** 업데이트된 전체 state.
 
