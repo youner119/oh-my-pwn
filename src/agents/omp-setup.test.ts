@@ -120,4 +120,26 @@ describe("createOmpSetupAgent", () => {
     expect(p).toContain("docker run --rm <image> ldd <binary_container_path>")
     expect(p).toContain("SONAME → image-path map")
   })
+
+  test("prompt guards Object_Object regression — binary_path must be patched copy, NOT binary_input_path", () => {
+    const agent = createOmpSetupAgent("test-model")
+    const p = agent.prompt ?? ""
+    // Self-check + concrete counter-example
+    expect(p).toContain("binary_path` MUST point at the patched copy")
+    expect(p).toContain("NOT at `binary_input_path")
+    expect(p).toContain("re-read your own `omp_patch_state` payload")
+    // Success criterion makes the inequality explicit
+    expect(p).toContain("state.binary_path !== state.binary_input_path")
+  })
+
+  test("prompt guards extracted_libs must include the ld interpreter entry", () => {
+    const agent = createOmpSetupAgent("test-model")
+    const p = agent.prompt ?? ""
+    // explicit ld inclusion rule + concrete example with ld-linux key
+    expect(p).toContain("MUST include EVERY file you extracted in")
+    expect(p).toContain('"ld-linux-x86-64.so.2":')
+    expect(p).toContain("Omitting ld from the map")
+    // Success criterion mentions the ld entry too
+    expect(p).toContain('includes the ld entry')
+  })
 })

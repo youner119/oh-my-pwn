@@ -368,12 +368,12 @@ DT_RUNPATH is NOT transitive, which is why every library also needs
 its own \`--replace-needed\` rewrite — otherwise libm/libz/etc fall
 back to the host's search path and load the wrong libc.
 
-Patch state:
+Patch state (READ CAREFULLY — two fields are easy to mis-fill):
 
 \`\`\`text
 omp_patch_state {
   binary_path: <artifacts_dir>/<basename(binary_input_path)>,
-  binary_sha256: <sha from patch_elf result>,
+  binary_sha256: <sha from patch_elf result.patched_sha256>,
   extracted_libs: { "<soname>": "<artifacts abs path>", ... },
   libc_path: extracted_libs["libc.so.6"],            // alias for backward compat
   ld_path: extracted_libs["<ld basename>"],          // alias
@@ -385,6 +385,51 @@ omp_append_journal {
          per-lib replace-needed flag pairs as printed by patchelf>"
 }
 \`\`\`
+
+**Two field-filling rules that downstream pipelines depend on — get them
+right or VH / Strategist / Exploiter break silently:**
+
+1. **\`binary_path\` MUST point at the patched copy under
+   \`.omp/artifacts/\`, NOT at \`binary_input_path\`.** \`binary_input_path\`
+   stays as the untouched input identity. Setting \`binary_path =
+   binary_input_path\` looks correct (same file ran through host verify)
+   but leaves Exploiter calling \`process(state.binary_path)\` against
+   the un-patched ELF — ld breaks at runtime with "error while loading
+   shared libraries" because the input has the image's interpreter, not
+   \`.omp/artifacts/ld-linux*\`.
+
+   Concrete example for a challenge at
+   \`/abs/Object_Object/deploy/prob\`:
+   \`\`\`
+   binary_input_path: "/abs/Object_Object/deploy/prob"          // unchanged
+   binary_input_sha256: "<original 056c4a08...>"                 // unchanged
+   binary_path:        "/abs/Object_Object/.omp/artifacts/prob"  // ← patched copy
+   binary_sha256:      "<patched eb8bdf18...>"                   // ← patched sha
+   \`\`\`
+
+2. **\`extracted_libs\` MUST include EVERY file you extracted in
+   Phase 3 — including the ld interpreter.** It is keyed by the
+   SONAME (or basename for ld), so:
+   \`\`\`
+   extracted_libs: {
+     "libstdc++.so.6":        "<artifacts_dir>/libstdc++.so.6",
+     "libgcc_s.so.1":         "<artifacts_dir>/libgcc_s.so.1",
+     "libc.so.6":             "<artifacts_dir>/libc.so.6",
+     "libm.so.6":             "<artifacts_dir>/libm.so.6",
+     "ld-linux-x86-64.so.2":  "<artifacts_dir>/ld-linux-x86-64.so.2"  // ← include the ld
+   }
+   ld_path = extracted_libs["ld-linux-x86-64.so.2"]   // alias points at the SAME entry
+   libc_path = extracted_libs["libc.so.6"]            // alias
+   \`\`\`
+   Omitting ld from the map (it appears only in \`ld_path\`) breaks
+   downstream iteration patterns where Exploiter walks the map for
+   LD_PRELOAD / ELF() lookups in multi-NEEDED challenges.
+
+Before moving on, **re-read your own \`omp_patch_state\` payload** and
+verify both rules hold. The two are silent failures in host verify
+(Phase 4 still passes because it runs the patched copy from
+\`.omp/artifacts/prob\` directly), so the gate that catches them is
+this self-check.
 
 **Failure** (extract_file source_missing, patchelf failure, sha
 mismatch, etc.): set \`setup_unsupported_reason\` with the typed error
@@ -599,13 +644,21 @@ state.setup_complete         === true
 state.setup_unsupported_reason   is null or undefined
 state.challenge_type         === "user-mode-elf"
 state.docker_image           non-empty
-state.binary_path            absolute, inside .omp/artifacts
+state.binary_path            absolute, inside .omp/artifacts/        ← NOT binary_input_path
 state.binary_input_path      absolute, unchanged
-state.extracted_libs         non-empty (or {} for static)
-state.libc_path / ld_path    alias of extracted_libs entries
+state.binary_path !== state.binary_input_path                         ← MUST hold for dynamic-linked
+state.binary_sha256          patched sha (differs from binary_input_sha256)
+state.extracted_libs         non-empty (or {} for static); includes the ld entry
+                             (e.g. "ld-linux-x86-64.so.2" key) — NOT just libs
+state.libc_path / ld_path    alias of extracted_libs entries (same path values)
 state.mitigations            raw flags populated
 state.remote                 populated when the Dockerfile exposes a port
 \`\`\`
+
+(For static-linked binaries: \`extracted_libs === {}\`,
+\`libc_version === "static"\`, \`binary_path === binary_input_path\` is
+acceptable because no patchelf was applied — but \`binary_sha256\` must
+still equal \`binary_input_sha256\` in that case.)
 
 The Orchestrator's Phase 0 (T11) reads exactly these fields after
 calling \`omp_task_wait_all\` on your task, so leaving any required
