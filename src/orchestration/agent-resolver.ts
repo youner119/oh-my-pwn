@@ -7,6 +7,7 @@
  */
 
 export const CATEGORY_MAP = {
+  setup: "omp-setup",
   reverser: "omp-reverser",
   vulnhunter: "omp-vulnhunter",
   strategist: "omp-strategist",

@@ -13,6 +13,14 @@
  */
 
 const AGENT_RESTRICTIONS: Record<string, Record<string, boolean>> = {
+  "omp-setup": {
+    // Leaf agent — single-transaction Phase 0 ground-work. No
+    // child spawning.
+    omp_task_launch: false,
+    omp_task_wait_all: false,
+    omp_task_wait_any: false,
+    omp_task_cancel: false,
+  },
   "omp-reverser": {
     omp_task_launch: false,
     omp_task_wait_all: false,

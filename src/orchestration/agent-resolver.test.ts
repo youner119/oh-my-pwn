@@ -2,6 +2,10 @@ import { describe, expect, test } from "bun:test"
 import { CATEGORY_MAP, resolveAgent } from "./agent-resolver"
 
 describe("resolveAgent — category aliases", () => {
+  test("'setup' → omp-setup (envsetup 재설계 T10/T11)", () => {
+    expect(resolveAgent("setup")).toBe("omp-setup")
+  })
+
   test("'reverser' → omp-reverser", () => {
     expect(resolveAgent("reverser")).toBe("omp-reverser")
   })
@@ -20,6 +24,10 @@ describe("resolveAgent — category aliases", () => {
 })
 
 describe("resolveAgent — direct agent name passthrough", () => {
+  test("omp-setup passes through (envsetup 재설계 T10/T11)", () => {
+    expect(resolveAgent("omp-setup")).toBe("omp-setup")
+  })
+
   test("omp-reverser passes through", () => {
     expect(resolveAgent("omp-reverser")).toBe("omp-reverser")
   })
@@ -71,10 +79,11 @@ describe("resolveAgent — error cases", () => {
 })
 
 describe("CATEGORY_MAP — shape", () => {
-  test("exposes 4 categories: reverser, vulnhunter, strategist, exploiter", () => {
+  test("exposes 5 categories: setup, reverser, vulnhunter, strategist, exploiter", () => {
     expect(Object.keys(CATEGORY_MAP).sort()).toEqual([
       "exploiter",
       "reverser",
+      "setup",
       "strategist",
       "vulnhunter",
     ])
