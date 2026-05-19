@@ -11,9 +11,9 @@
  *   - pwno: pwno-mcp Docker (HTTP remote) — exploiter agent가 사용.
  *     http://127.0.0.1:5500/mcp 기본, OMP_PWNO_MCP_URL로 override.
  *     **컨테이너는 사용자가 omp 실행 전에 직접 띄움.** OmP는 lifecycle 관리하지
- *     않음. omp_pwno_status tool로 컨테이너/MCP 연결 상태만 sanity check.
- *     컨테이너 mount source는 repo root의 workspace/ (고정) — omp_stage_challenge가
- *     challenge 파일을 여기로 복사한다.
+ *     않음. 컨테이너 가용성 sanity-check + 챌린지 파일 staging 은 모두
+ *     omp-setup agent (Phase 5) 가 단일 transaction 으로 처리.
+ *     컨테이너 mount source 는 repo root 의 workspace/ (고정).
  */
 
 import { existsSync } from "node:fs"
@@ -29,11 +29,9 @@ import {
   ompReadStateTool,
   ompPatchStateTool,
   ompAppendJournalTool,
-  ompRunEnvsetupTool,
   createOmpLoadChallengeTool,
   ompGetTemplateTool,
   ompVerifyTemplateOutputTool,
-  createOmpStageChallengeTool,
   createOmpSetupDockerBuildTool,
   createOmpSetupExtractFileTool,
   createOmpSetupPatchElfTool,
@@ -45,7 +43,6 @@ import {
   createOmpTaskWaitAllTool,
   createOmpTaskWaitAnyTool,
   createOmpTaskCancelTool,
-  createOmpPwnoStatusTool,
 } from "./orchestration"
 import type { OmpSessionClient } from "./orchestration"
 
@@ -120,32 +117,22 @@ const OmpPlugin: Plugin = async (input) => {
     workspacePath: OMP_WORKSPACE_PATH,
   })
 
-  // pwno-mcp health check tool. Container lifecycle is the user's
-  // responsibility — they start it before omp. This tool just probes the
-  // configured URL and reports opencode's MCP connection status so the
-  // Orchestrator can fail fast at Phase 2 entry.
+  // pwno-mcp HTTP MCP URL — wired below as an MCP remote for sub-agent
+  // sessions so Exploiter can call `pwno_*` tools. The legacy
+  // omp_pwno_status health-check tool was retired by T14; sanity-check
+  // moved into the omp-setup agent (Phase 5 bash: docker ps + curl).
   const pwnoUrl = process.env["OMP_PWNO_MCP_URL"] || "http://127.0.0.1:5500/mcp"
-  const ompPwnoStatusTool = createOmpPwnoStatusTool({
-    pwnoUrl,
-    serverUrl,
-    workspacePath: OMP_WORKSPACE_PATH,
-  })
 
-  // Stage challenge files into the canonical workspace mount source.
-  // Orchestrator calls this once at Phase 2 entry, then forwards the returned
-  // container_path values to StrategyAgent.
-  const ompStageChallengeTool = createOmpStageChallengeTool({
-    workspacePath: OMP_WORKSPACE_PATH,
-  })
-
-  // omp-setup agent atomic tool surface (T02 skeletons; T04/T06/T07/T08
-  // implementations). Spec: `.omc/specs/deep-interview-envsetup-agent.md`.
-  // Tools currently return not_implemented stubs — full bodies land in
-  // T04/T06/T07/T08. Registered now so the surface is stable when the
-  // omp-setup agent (T09) and Orchestrator Phase 0 rewrite (T11) consume it.
+  // omp-setup agent atomic tool surface (Phase B fully implemented in
+  // T04/T06/T07/T08). Spec: `.omc/specs/deep-interview-envsetup-agent.md`.
   // inspect_folder / probe_image were considered then deferred — Phase 0 is
   // fully agentic (bash inspection), so deterministic tools for those are
   // not needed.
+  //
+  // omp_run_envsetup / omp_stage_challenge / omp_pwno_status were retired
+  // by T12-T14 — omp-setup agent absorbs all three (build via
+  // omp_setup_docker_build, stage via omp_setup_extract_file host-mode,
+  // pwno sanity via bash docker ps + curl).
   const ompSetupDockerBuildTool = createOmpSetupDockerBuildTool()
   const ompSetupExtractFileTool = createOmpSetupExtractFileTool()
   const ompSetupPatchElfTool = createOmpSetupPatchElfTool()
@@ -223,18 +210,17 @@ const OmpPlugin: Plugin = async (input) => {
       omp_read_state: ompReadStateTool,
       omp_patch_state: ompPatchStateTool,
       omp_append_journal: ompAppendJournalTool,
-      omp_run_envsetup: ompRunEnvsetupTool,
       omp_get_template: ompGetTemplateTool,
       omp_verify_template_output: ompVerifyTemplateOutputTool,
       // omp_save_decompiled removed — use BN MCP tool `decompile_to_file` instead.
+      // omp_run_envsetup / omp_stage_challenge / omp_pwno_status retired by
+      // T12-T14 — omp-setup agent absorbs all three.
       // 4-tool sub-agent surface — fire-and-forget + explicit wait/cancel.
       ...(ompTaskLaunchTool ? { omp_task_launch: ompTaskLaunchTool } : {}),
       ...(ompTaskWaitAllTool ? { omp_task_wait_all: ompTaskWaitAllTool } : {}),
       ...(ompTaskWaitAnyTool ? { omp_task_wait_any: ompTaskWaitAnyTool } : {}),
       ...(ompTaskCancelTool ? { omp_task_cancel: ompTaskCancelTool } : {}),
-      omp_pwno_status: ompPwnoStatusTool,
-      omp_stage_challenge: ompStageChallengeTool,
-      // omp-setup agent atomic tools (T02 skeletons — state-changing only).
+      // omp-setup agent atomic tools (Phase B — T04/T06/T07/T08).
       // inspect_folder / probe_image deferred — Phase 0 is fully agentic.
       omp_setup_docker_build: ompSetupDockerBuildTool,
       omp_setup_extract_file: ompSetupExtractFileTool,

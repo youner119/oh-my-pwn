@@ -1,7 +1,6 @@
 export { ompReadStateTool } from "./omp-read-state"
 export { ompPatchStateTool } from "./omp-patch-state"
 export { ompAppendJournalTool } from "./omp-append-journal"
-export { ompRunEnvsetupTool } from "./omp-run-envsetup"
 export {
   createOmpLoadChallengeTool,
   ompLoadChallengeTool,
@@ -9,9 +8,9 @@ export {
 export type { OmpLoadChallengeToolOptions } from "./omp-load-challenge"
 export { ompGetTemplateTool } from "./omp-get-template"
 export { ompVerifyTemplateOutputTool } from "./omp-verify-template-output"
-export { createOmpStageChallengeTool } from "./stage-challenge"
-export type { StageChallengeToolOptions } from "./stage-challenge"
 // omp_save_decompiled removed — BN MCP tool `decompile_to_file` replaces it.
+// omp_run_envsetup / omp_stage_challenge / omp_pwno_status retired by
+// T12-T14 — omp-setup agent absorbs all three.
 
 // omp-setup agent atomic tools (T02 skeletons; T04/T06/T07/T08 implementations).
 // Spec: `.omc/specs/deep-interview-envsetup-agent.md`.
