@@ -147,7 +147,13 @@ omp
   재설계 spec (추가 6라운드 interview, type mutation / stack frame /
   research reports / BN MCP 연동 결정 과정).
 - **`.omc/state/current-task.md`** — 세션 간 task 연속성의 single source
-  of truth. 완료/진행중/대기 task 전부 여기에.
+  of truth. *현재 active phase + Open blockers + Session continuity*.
+  완료된 작업은 `prev-task.md` 로, 생각 중인 후보는 `backlog.md` 로 분리.
+- **`.omc/state/prev-task.md`** — 완료된 작업 아카이브 (envsetup 재설계,
+  Knowledge integration phase K-series, M0–M5 main 등). 최신 우선 정렬.
+- **`.omc/research/backlog.md`** — 생각 중인 작업 후보 idea backlog.
+  Deep-interview 시 `.omc/specs/` 로 spec graduate, 진입 결정 시
+  `current-task.md` active phase 로 이동, 폐기 시 strikethrough 후 유지.
 - **`.omc/specs/deep-interview-parallel-orchestration.md`** — 병렬
   오케스트레이션 파이프라인 재설계 spec (VH ensemble, 병렬 SA+Exploiter,
   cascading, sole-writer 패턴).

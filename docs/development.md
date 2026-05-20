@@ -318,7 +318,12 @@ oh-my-pwn/
 │       └── tcache_poison.md
 ├── .omc/                         ← 세션 / 스펙 상태 (dotfile)
 │   ├── state/
-│   │   └── current-task.md       ← session 연속성 single source of truth
+│   │   ├── current-task.md       ← active phase + Open blockers + Session continuity
+│   │   └── prev-task.md          ← 완료된 작업 아카이브 (최신 우선)
+│   ├── research/
+│   │   ├── backlog.md            ← 생각 중인 작업 후보 idea backlog
+│   │   ├── pwno-mcp-debugging-investigation.md
+│   │   └── reverser-future-ideas.md
 │   ├── specs/
 │   │   ├── deep-interview-oh-my-pwn.md           ← 원본 요구사항
 │   │   ├── deep-interview-reverser-redesign.md   ← Reverser 재설계
@@ -420,12 +425,14 @@ Bun 내부 이슈로 추정. 영구 fix 전까지 `cd src` workaround 사용.
 
 ## Task / session 연속성
 
-OmP는 여러 session에 걸쳐 개발됩니다. 세션 간 연속성은
-**`.omc/state/current-task.md`** 가 single source of truth:
+OmP는 여러 session에 걸쳐 개발됩니다. 세션 간 연속성은 세 파일로 분리:
 
-- 현재 phase / active task / next action
-- 완료된 task 요약 (날짜 + 한 줄)
-- Task catalog (T00–T24 상태)
+- **`.omc/state/current-task.md`** — *현재* active phase + Open blockers
+  + Session continuity. 진입 결정된 항목 만 여기.
+- **`.omc/state/prev-task.md`** — 완료된 작업 아카이브 (최신 우선 정렬).
+- **`.omc/research/backlog.md`** — 생각 중인 작업 후보 idea backlog.
+  Deep-interview 시 `.omc/specs/` 로 spec graduate, 진입 결정 시
+  current-task.md active phase 로 이동.
 
 **설계 결정 기록은 current-task.md에 넣지 않음:**
 - docs/ 에 반영된 내용 → docs/가 정본
@@ -433,7 +440,7 @@ OmP는 여러 session에 걸쳐 개발됩니다. 세션 간 연속성은
 - 구현 상세 → git history
 
 새 Claude Code 세션 시작 시 `CLAUDE.md`와 `.omc/state/current-task.md`를
-**반드시 먼저 읽습니다**. 그래야 이전 세션의 맥락을 유지할 수 있음.
+**반드시 먼저 읽습니다**. backlog 와 prev-task 는 필요할 때만 참조.
 
 **TaskCreate tool은 세션별 휘발성이므로**, 중요한 진행 상태는 반드시
 `current-task.md`에 기록되어야 재부팅 후에도 살아남습니다.
@@ -460,7 +467,9 @@ MVP 단계라 CI 파이프라인이 아직 설정되지 않았습니다. 개인 
 | `scripts/omp-t05.ts` | EnvSetup library 수동 검증 |
 | `scripts/omp-t08.ts` | Reverser library 수동 검증 |
 | `CLAUDE.md` | Claude Code 세션 규칙 |
-| `.omc/state/current-task.md` | 세션 간 task 연속성 |
+| `.omc/state/current-task.md` | 현재 active phase + Open blockers |
+| `.omc/state/prev-task.md` | 완료된 작업 아카이브 (최신 우선) |
+| `.omc/research/backlog.md` | 생각 중인 작업 후보 idea backlog |
 
 ---
 
