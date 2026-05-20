@@ -14,7 +14,7 @@ import { createOmpExploiterAgent } from "./omp-exploiter"
 import { createOmpSetupAgent } from "./omp-setup"
 
 /** MVP default model. T18 model resolution layer 추가 시 교체. */
-const DEFAULT_MODEL = "openai/gpt-5.4"
+const DEFAULT_MODEL = "openai/gpt-5.5"
 
 /**
  * agent name → AgentConfig 매핑.

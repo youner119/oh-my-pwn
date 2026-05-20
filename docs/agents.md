@@ -51,7 +51,7 @@ export function createOmpOrchestratorAgent(model: string): AgentConfig {
 정의합니다:
 
 ```ts
-const DEFAULT_MODEL = "openai/gpt-5.4"
+const DEFAULT_MODEL = "openai/gpt-5.5"
 
 export const ompAgentConfigs: Record<string, AgentConfig> = {
   "omp-orchestrator": createOmpOrchestratorAgent(DEFAULT_MODEL),
@@ -69,7 +69,7 @@ opencode config에 주입됩니다. 결과적으로 opencode TUI agent picker에
 
 ### 기본 모델
 
-현재 기본값은 `openai/gpt-5.4`. 이유:
+현재 기본값은 `openai/gpt-5.5`. 이유:
 - OmP는 JSON 스키마 정확도가 중요 (state patch, BN MCP 호출 등) — GPT-5
   계열은 structured output에 강함
 - Claude Opus는 창의적 판단에 좋지만 script/tool 호출 정밀도는 GPT가 비등
