@@ -182,4 +182,95 @@ describe("createOmpReverserAgent", () => {
     expect(p).toContain("save_bndb")
     expect(p).toContain(".bndb")
   })
+
+  // K4 — Knowledge integration: Reverser prompt surgery
+  // Spec: .omc/specs/deep-interview-knowledge-integration.md
+
+  test("K4: Knowledge base consumption section exists with layer separation", () => {
+    const agent = createOmpReverserAgent("test-model")
+    const p = agent.prompt ?? ""
+    expect(p).toContain("Knowledge base consumption")
+    // BN HLIL = raw, catalog = pattern recognition guide (D-K4-2)
+    expect(p).toMatch(/BN HLIL.*=.*raw|raw.*ground truth/i)
+    expect(p).toMatch(/catalog.*pattern recognition guide|pattern recognition/i)
+    expect(p).toMatch(/different layers|NOT competing/i)
+    expect(p).toMatch(/never overrides BN HLIL|HLIL output itself is what you trust/i)
+  })
+
+  test("K4: Tier 1 — SKILL.md index read once before Pass 1 (D-K4-1)", () => {
+    const agent = createOmpReverserAgent("test-model")
+    const p = agent.prompt ?? ""
+    // Tier 1 strict — catalog index familiarisation
+    expect(p).toMatch(/Tier 1/)
+    expect(p).toContain("ctf-reverse/SKILL.md")
+    expect(p).toMatch(/index familiarisation|familiarisation/i)
+    expect(p).toMatch(/once|read once/i)
+    // Required sequence step 4 prologue references it
+    expect(p).toMatch(/Prologue.*Tier 1|before Pass 1 starts/i)
+  })
+
+  test("K4: Tier 2 — detail md lazy reads with 5-category trigger map", () => {
+    const agent = createOmpReverserAgent("test-model")
+    const p = agent.prompt ?? ""
+    expect(p).toMatch(/Tier 2/)
+    // All 5 main categories present in trigger map
+    expect(p).toContain("anti-analysis.md")
+    expect(p).toContain("languages.md")
+    expect(p).toContain("patterns-ctf.md")
+    expect(p).toContain("patterns-runtime.md")
+    expect(p).toContain("platforms.md")
+    expect(p).toContain("tools-emulation.md")
+    // Lazy read discipline
+    expect(p).toMatch(/at most.*1-2|1-2 files per function/i)
+    expect(p).toMatch(/do NOT bulk read|not bulk/i)
+    // field-notes for long-tail
+    expect(p).toContain("field-notes.md")
+    // "hint, not exhaustive" caveat
+    expect(p).toMatch(/HINT, not exhaustive|not exhaustive/i)
+  })
+
+  test("K4: Cross-category boundary — ctf-pwn + how2heap OFF-LIMITS (D-K4-4)", () => {
+    const agent = createOmpReverserAgent("test-model")
+    const p = agent.prompt ?? ""
+    // Both forbidden vendors mentioned explicitly
+    expect(p).toMatch(/DO NOT read `ctf-pwn\/`, `how2heap\/`|ctf-pwn\/.*how2heap\/.*OFF-LIMITS/is)
+    // Even-when guard: overflow/heap pattern doesn't unlock
+    expect(p).toMatch(/Even if the binary clearly exhibits.*overflow.*heap|even when.*exhibits/is)
+    expect(p).toMatch(/NOT consult.*ctf-pwn|NOT consult.*how2heap/is)
+    // Role separation rationale
+    expect(p).toMatch(/Role separation|VH \/ SA \/ Exploiter territory/i)
+  })
+
+  test("K4: sources/ graceful skip + Tier 3 optional indices", () => {
+    const agent = createOmpReverserAgent("test-model")
+    const p = agent.prompt ?? ""
+    // sources/ graceful
+    expect(p).toContain("sources/")
+    expect(p).toMatch(/skip silently|graceful skip/i)
+    expect(p).toMatch(/git-ignored|machine-local/i)
+    // Tier 3 optional indices
+    expect(p).toMatch(/Tier 3/)
+    expect(p).toContain("notes/INDEX.md")
+    expect(p).toContain("writeups/INDEX.md")
+    expect(p).toMatch(/may be empty|may be absent/)
+  })
+
+  test("K4: Neutrality reminder — reading catalog ≠ copying its vocabulary", () => {
+    const agent = createOmpReverserAgent("test-model")
+    const p = agent.prompt ?? ""
+    // Reverser-specific guard — forbidden words still apply when reading catalog
+    expect(p).toMatch(/Neutrality reminder/i)
+    expect(p).toMatch(/Reading the catalog does NOT mean.*copy.*vocabulary|catalog reading.*understanding/i)
+    expect(p).toMatch(/Forbidden words section still applies|forbidden words still apply/i)
+    // Concrete ❌/✅ example for neutrality (anti-debug pattern)
+    expect(p).toMatch(/Anti-debug check that prevents debugging|TracerPid/i)
+  })
+
+  test("K4: Key principles include Knowledge boundary + Catalog vs HLIL layer", () => {
+    const agent = createOmpReverserAgent("test-model")
+    const p = agent.prompt ?? ""
+    expect(p).toMatch(/Knowledge boundary \(K4\)/)
+    expect(p).toMatch(/Catalog vs HLIL = different layers|different layers/i)
+    expect(p).toMatch(/ctf-pwn\/.*off-limits|off-limits/i)
+  })
 })

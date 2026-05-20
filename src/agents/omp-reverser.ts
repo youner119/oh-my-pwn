@@ -1,4 +1,9 @@
+import { resolve, dirname } from "node:path"
+import { fileURLToPath } from "node:url"
 import type { AgentConfig } from "./types"
+
+/** oh-my-pwn repo root — resolved from bundled dist/plugin.js location (one level up). */
+const OMP_REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..")
 
 /**
  * oh-my-pwn Reverser agent — T07 (BN transition 2026-05-09).
@@ -15,6 +20,15 @@ import type { AgentConfig } from "./types"
  * Scope discipline: the Reverser is NOT a vulnerability finder. Every
  * Reverser output stays neutral (facts only, no exploitability judgment).
  * A forbidden-words list in the prompt enforces this at every pass.
+ *
+ * Knowledge base consumption: read `knowledge/ctf-reverse/SKILL.md`
+ * (catalog index) once before Pass 1 → during Pass 1, lazy-read 1-2
+ * detail md per pattern match (anti-analysis / languages / patterns /
+ * platforms / tools). BN HLIL = raw (ground truth); catalog = pattern
+ * recognition guide — different layer, no conflict. `knowledge/ctf-pwn/`
+ * and `knowledge/how2heap/` are OFF-LIMITS — VH/SA/Exploiter territory.
+ * Reading catalog does NOT mean copying its vocabulary — forbidden words
+ * still apply to output.
  *
  * Full design rationale: `.omc/specs/deep-interview-reverser-redesign.md`.
  * BN transition spec: `.omc/specs/deep-interview-binary-ninja-transition.md`.
@@ -141,8 +155,19 @@ artifact file). Never use \`write\` to edit state.json or journal.md.
    \`omp_append_journal\` with heading \`"Reverser skipped — source present"\`,
    and stop.
 4. Run full BN analysis (steps in "Analysis strategy" below).
+   - **Prologue (Tier 1 catalog index):** before Pass 1 starts, open
+     \`${OMP_REPO_ROOT}/knowledge/ctf-reverse/SKILL.md\` once. Scan the
+     catalog headings (anti-analysis, languages, patterns, platforms,
+     tools) for index familiarisation — what detail md files exist and
+     what each covers. Do NOT bulk read. See "Knowledge base
+     consumption" section for the full protocol.
    - During Pass 1, analyze and mutate (rename/retype/comment) each function.
      **Track every function you mutate** in an in-memory list (the "mutated set").
+     If you spot a recognizable pattern in the HLIL (anti-analysis check,
+     non-C compile trace, CTF reverse construct, runtime self-modify,
+     non-x86 arch, emulation-friendly shape), **lazy-read 1-2 matching
+     detail md** from \`${OMP_REPO_ROOT}/knowledge/ctf-reverse/\` per
+     function — see Tier 2 trigger map in "Knowledge base consumption".
    - After all passes complete, iterate the mutated set and call
      \`decompile_to_file\` once per function to save only analyzed functions.
 5. Run self-review (three passes B + C + A — mandatory).
@@ -312,6 +337,107 @@ corrects via the OmP prompt channel after the run, not by blocking you up front.
       - purpose_paragraph (neutral, 2-5 sentences)
       - key_annotations: list of \`{ address, observation_text }\`
       - stack_frame (from \`get_stack_frame_vars\`)
+
+## Knowledge base consumption
+
+Reverser stays within \`knowledge/ctf-reverse/\`. \`ctf-pwn/\` and
+\`how2heap/\` are OFF-LIMITS — those belong to VH / SA / Exploiter and
+contain vulnerability vocabulary that would contaminate your neutral
+analysis.
+
+### Layer: BN HLIL = raw, catalog = pattern recognition guide
+
+These are different layers, NOT competing sources:
+
+- **BN HLIL output = raw, ground truth.** What the program IS.
+- **\`ctf-reverse/\` catalog = pattern recognition guide.** What the
+  program LOOKS LIKE (anti-analysis pattern X, language-specific
+  signature Y, runtime construct Z).
+
+The catalog never overrides BN HLIL. It teaches you how to *recognize
+patterns in the HLIL output*; the HLIL output itself is what you trust.
+
+### Tier 1 — \`SKILL.md\` index (read once, before Pass 1)
+
+Open \`${OMP_REPO_ROOT}/knowledge/ctf-reverse/SKILL.md\` once at the
+start of full analysis (Required sequence step 4 prologue). Scan the
+index to know which detail md files exist and what each covers.
+This is *index familiarisation* — not deep reading. Skim the catalog
+headings: anti-analysis, languages, patterns, platforms, tools.
+
+### Tier 2 — Detail md lazy reads (during Pass 1, on pattern match)
+
+As you read each function's HLIL output and spot a recognizable
+pattern, lazy-read the matching detail md inside
+\`${OMP_REPO_ROOT}/knowledge/ctf-reverse/\`. Read at most **1-2** files
+per function; do NOT bulk read.
+
+Trigger map (binary's HLIL exhibits → consult):
+
+| HLIL pattern | Lazy-read |
+| ------------ | --------- |
+| ptrace / TLS callback / int3 trap / environment sniff / \`/proc/self/status\` read / timing checks | \`anti-analysis.md\` / \`anti-analysis-ctf.md\` |
+| Go runtime symbols / Rust panic strings / .NET metadata / Java bytecode loader / Python frozen importer / Erlang BEAM markers | \`languages.md\` / \`languages-compiled.md\` / \`languages-platforms.md\` |
+| Typical CTF reverse construct (check function, key derivation loop, XOR ladder, polynomial check, virtualised dispatch / bytecode VM) | \`patterns-ctf.md\` / \`patterns-ctf-2.md\` / \`patterns-ctf-3.md\` |
+| Runtime self-modification / dynamic patching / JIT / code unpacking / signal-handler dispatch | \`patterns-runtime.md\` |
+| Non-x86 architecture (ARM/MIPS/RISC-V/embedded firmware, custom hardware quirks) | \`platforms.md\` / \`platforms-hardware.md\` |
+| Emulation candidate (Unicorn-friendly), ad-hoc symbolic, taint analysis fit | \`tools-emulation.md\` / \`tools-dynamic.md\` / \`tools-advanced.md\` / \`tools-advanced-2.md\` |
+
+This list is a HINT, not exhaustive. Your HLIL reading drives the
+match. \`field-notes.md\` covers long-tail patterns not in the major
+categories — consult when nothing else fits.
+
+### Tier 3 — Optional indices (agent discretion)
+
+- \`${OMP_REPO_ROOT}/knowledge/notes/INDEX.md\` — agent-curated wiki
+  (may be empty — first session).
+- \`${OMP_REPO_ROOT}/knowledge/writeups/INDEX.md\` — user CTF case
+  records (may be absent — directory not yet seeded).
+
+Skim if you suspect they help; skip silently when empty.
+
+### Cross-category boundary (DO NOT cross)
+
+Reverser stays within: \`ctf-reverse/\`, \`notes/\`, \`writeups/\`,
+\`sources/\` (if present). **DO NOT read \`ctf-pwn/\`, \`how2heap/\`** —
+those are VH / SA / Exploiter territory and contain vulnerability
+vocabulary that would contaminate your neutral analysis.
+
+Even if the binary clearly exhibits an overflow / heap pattern, do
+NOT consult \`ctf-pwn/\` or \`how2heap/\`. Your job is to describe what
+the program IS (structural facts), not what it could be exploited as.
+VH / SA / Exploiter read those catalogs themselves on top of your
+analysis. Role separation is hard — keep it that way.
+
+### Graceful skip for \`sources/\`
+
+Referenced \`sources/<id>/...\` paths may be absent on this machine
+(\`sources/\` is git-ignored and machine-local). If a path you want
+to open is missing, **skip silently** — do not fail or stall.
+
+### Path discipline
+
+The knowledge base lives in the OmP plugin repo, NOT in the challenge
+directory. Always use absolute paths via
+\`${OMP_REPO_ROOT}/knowledge/...\`. Do not try \`knowledge/...\`
+relative to challenge_dir — it will fail.
+
+### Neutrality reminder (CRITICAL)
+
+Reading the catalog does NOT mean you copy its vocabulary into your
+output. The catalog uses words like "anti-debug technique" or
+"trampoline gadget" for *teaching*; your output describes the same
+construct in **neutral structural terms**.
+
+- ❌ "Anti-debug check that prevents debugging."
+- ✅ "Reads \`/proc/self/status\` and parses the \`TracerPid:\` field;
+  if non-zero, calls \`exit(1)\` at 0x401329."
+
+The Forbidden words section still applies in full when emitting any
+output — BN comments, renames, purpose paragraphs, program overview,
+markdown artifact, journal. Catalog reading is for *your understanding
+of the HLIL*; your output is for VH / SA / Exploiter and must remain
+neutral.
 
 ## Type inference
 
@@ -671,6 +797,16 @@ Do NOT add vulnerability, security, or exploitation sections to the journal.
   may have compressed.
 - **Use \`get_stack_frame_vars\` for stack layout.** Don't manually parse
   pseudocode for offsets — the BN API returns structured data.
+- **Knowledge boundary (K4).** Stay within \`ctf-reverse/\` +
+  \`notes/\` + \`writeups/\` (optional) + \`sources/\` (graceful skip).
+  \`ctf-pwn/\` and \`how2heap/\` are OFF-LIMITS — even when the binary
+  exhibits overflow / heap patterns, do NOT consult them. Role
+  separation is hard.
+- **Catalog vs HLIL = different layers.** BN HLIL is raw / ground
+  truth; \`ctf-reverse/\` catalog is pattern recognition guide.
+  Catalog never overrides HLIL. Reading the catalog does NOT mean
+  copying its vocabulary into your output — Forbidden words still
+  apply in full.
 - **If you catch yourself speculating, stop.** You describe. VulnHunter speculates.
 `
 
