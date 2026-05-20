@@ -127,4 +127,43 @@ describe("createOmpOrchestratorAgent", () => {
     expect(p).toContain("`setup`")
     expect(p).toContain("Phase 0 gate")
   })
+
+  test("Step 1.3 dedup is literal-match preservation, no synthesis (2026-05-21)", () => {
+    const agent = createOmpOrchestratorAgent("test-model")
+    const p = agent.prompt ?? ""
+    // The merge step's name + framing must signal preservation, not
+    // semantic abstraction.
+    expect(p).toContain("Deduplicate (literal-match preservation)")
+    expect(p).toContain("duplicate removal, not")
+    // The combine rule must require literal primitive equality + location
+    // overlap. Different primitive strings must stay separate.
+    expect(p).toContain("literally identical")
+    expect(p).toContain("do **NOT** collapse")
+    // Synthesis paths must be explicitly forbidden by example.
+    expect(p).toContain("Do NOT synthesise")
+    expect(p).toContain("`uaf_read_write`")
+    expect(p).toContain("`_via_*`")
+    // Specialisation of broad primitives is SA's job, not the merge step's.
+    expect(p).toContain('Do NOT "upgrade" broad to specific')
+    expect(p).toContain("SA will specialise")
+    // The retired semantic-merge example must not leak back in.
+    expect(p).not.toContain("Use your semantic understanding")
+    expect(p).not.toContain("vuln_stack_overflow_read")
+  })
+
+  test("Step 2.4 record allows primitive specialisation but forbids synthesis (2026-05-21)", () => {
+    const agent = createOmpOrchestratorAgent("test-model")
+    const p = agent.prompt ?? ""
+    // SA may narrow a broad candidate's primitive, but only as a literal
+    // narrowing; synthesis stays forbidden at the record step too.
+    expect(p).toContain("Primitive specialisation")
+    expect(p).toContain("narrower than")
+    expect(p).toContain("information gain")
+    expect(p).toContain("must be literal, not synthesised")
+    // Unrelated primitives must not silently rewrite the candidate's
+    // identity — that path is verification_blockers instead. The prompt
+    // body wraps mid-sentence so search on a shorter substring.
+    expect(p).toContain("primitive is unrelated")
+    expect(p).toContain("verification_blockers")
+  })
 })

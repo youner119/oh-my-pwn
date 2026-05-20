@@ -290,16 +290,46 @@ const { results } = omp_task_wait_all({
 cancelled ensemble members appear in \`results\` with \`status != "completed"\`
 — inspect and decide whether to retry or proceed.
 
-**Step 1.3 — Merge and deduplicate:**
-Read all N candidate lists. Merge them:
-- **Same vulnerability:** If two or more VH instances describe the same
-  primitive at the same location (even with different wording), treat as one.
-  Use your semantic understanding — "vuln_bof_main" and "vuln_stack_overflow_read"
-  targeting the same read() call in main() are the same candidate.
-- **Confidence boost:** If K out of N VH instances found the same candidate,
-  set confidence to at least K/N (but keep original if higher).
-- **Union:** Candidates found by only one VH are still included (confidence unchanged).
-- **Assign clean IDs:** Renumber merged candidates as vuln_1, vuln_2, ...
+**Step 1.3 — Deduplicate (literal-match preservation):**
+
+Read all N candidate lists. **The job here is duplicate removal, not
+abstraction.** Preserve every distinct way the ensemble described the
+binary. Combine entries only when they are *literally the same claim*:
+
+- **Combine rule.** Two entries collapse into one if and only if:
+  (a) their \`primitive\` strings are *literally identical* after
+  trim/lowercase normalisation (\`uaf\` and \`UAF\` collapse; \`uaf\` and
+  \`uaf_read\` do **NOT** collapse — they say different things), AND
+  (b) their \`location\` overlaps (same function or address range within
+  a small window — \`render_afterimage_png + 0x4553ab\` and
+  \`render_afterimage_png around 0x455380-0x4553c0\` overlap).
+- **Do NOT synthesise a merged primitive name.** No \`uaf_read_write\`,
+  no \`heap_metadata_control_via_stale_cache\`, no \`_via_*\` / \`_with_*\`
+  / \`_to_*\` constructions. If two VH entries used different primitive
+  strings, they describe different things until proven otherwise — keep
+  both as separate candidates.
+- **Do NOT \"upgrade\" broad to specific.** A broad string (\`uaf\`) stays
+  as \`uaf\`. SA will specialise it during verification (see Step 2.4) by
+  reporting which capability it actually exercised (\`uaf_read\` /
+  \`uaf_write\` / etc.) — that is SA's job, not yours.
+- **Confidence boost** applies only when the combine rule fires. If K
+  out of N VH instances reported the *literally same* primitive at an
+  overlapping location, set confidence to at least K/N (keep original if
+  higher).
+- **Singleton candidates are kept.** Only one VH saw it → still
+  recorded, confidence unchanged. Dedup is conservative; coverage is
+  not the dedup step's responsibility.
+- **Assign clean IDs.** Renumber resulting candidates as
+  \`vuln_1\`, \`vuln_2\`, ... in confidence order (ties: VH count, then
+  insertion order).
+
+Why this rule: a previous policy let you use "semantic understanding"
+to fold dissimilar primitives together, and the LLM's combine instinct
+collapsed \`uaf_read\` + \`uaf_write\` into a synthesised
+\`uaf_read_write\`. That destroyed the verification grain SA needs
+(read = leak source, write = control source — separate capabilities,
+separate proofs). Literal-match preservation forbids the synthesis at
+the only spot that produces it.
 
 **Step 1.4 — Record to state:**
 \`\`\`
@@ -535,6 +565,17 @@ When you write \`omp_patch_state\` inside the loop, the patch must reflect:
   - Add/update candidate in \`vuln_candidates[]\` with
     \`verification_result: "confirmed"\`, \`poc_script_path\`, \`gives\`, \`needs\`
   - For combinations: set \`combined_from\`, \`origin_type: "derived"\`
+  - **Primitive specialisation.** If SA's returned \`primitive\` is
+    *narrower than* the candidate's existing \`primitive\` string
+    (e.g. candidate was broad \`uaf\`, SA proved \`uaf_read\`), overwrite
+    the candidate's \`primitive\` with SA's specialised value. This is
+    information gain — VH's hypothesis, SA's evidence. The narrowing
+    must be literal, not synthesised: SA may go from \`uaf\` to
+    \`uaf_read\` (specialised), but never from \`uaf_read\` to
+    \`uaf_read_write\` (synthesis — that path is forbidden in Step 1.3
+    and stays forbidden here). If SA's primitive is unrelated to the
+    candidate's, do NOT rewrite — treat as a verification-method issue
+    via \`verification_blockers\` instead.
 - If \`status: "failed"\` / \`"inconclusive"\`:
   - Update \`verification_result\` accordingly. Leave the candidate
     available for retry in a later round (or in a same-round dynamic

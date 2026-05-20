@@ -399,6 +399,28 @@ revealed a *different exploit angle worth re-exploring* (not the same
 candidate, a genuinely new direction), let the Orchestrator's deferred-VH
 path handle it; do not create the candidate yourself.
 
+**Primitive specialisation.** VH may have given the candidate a *broad*
+primitive string (e.g. \`uaf\` with no capability annotation). When your
+verification *narrows* it to a more specific capability you actually
+exercised (\`uaf_read\` because you proved the stale read sink fired, or
+\`uaf_write\` because you proved the stale write sink fired), put the
+narrower string in your return JSON's \`primitive\` field. The
+Orchestrator overwrites the candidate's primitive with your narrower
+value (information gain — VH's hypothesis, your evidence). Two rules:
+
+- **Narrowing must be literal, not synthesised.** You may go from \`uaf\`
+  to \`uaf_read\` (specialisation). You may NOT go from \`uaf_read\` to
+  \`uaf_read_write\` (synthesis — that combines two distinct capabilities
+  into one fabricated string, and the dedup layer above explicitly
+  forbids it). If both capabilities were actually proved by your one
+  verify run, return the one you ran; the other is a separate
+  primitive for a separate verify task.
+- **If your evidence is unrelated to the candidate** (you ended up
+  proving a completely different thing instead), do NOT rewrite
+  \`primitive\`. Report the situation via \`verification_blockers\` so the
+  Orchestrator can route it; do not silently overwrite the candidate's
+  identity.
+
 ### Step 8: Return structured result
 
 \`\`\`json
@@ -406,7 +428,7 @@ path handle it; do not create the candidate yourself.
   "task_type": "verify | combine",
   "candidate_id": "<id (existing for verify, new for combine)>",
   "status": "confirmed | failed | inconclusive",
-  "primitive": "<primitive name>",
+  "primitive": "<primitive name — VH's original, OR a literal narrowing of it per the rule above>",
   "poc_script_path": "<path to the working PoC script>",
   "gives": ["<what this primitive provides: libc_base, rip_control, shell, ...>"],
   "needs": ["<what it requires: canary, libc_base, ...>"],

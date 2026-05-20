@@ -109,6 +109,25 @@ describe("createOmpStrategistAgent", () => {
     expect(p).toContain("inconclusive")
   })
 
+  test("prompt allows literal primitive specialisation but forbids synthesis (2026-05-21)", () => {
+    const agent = createOmpStrategistAgent("test-model")
+    const p = agent.prompt ?? ""
+    // SA may narrow a broad VH primitive (`uaf` → `uaf_read`) and the
+    // prompt must say so explicitly.
+    expect(p).toContain("Primitive specialisation")
+    expect(p).toContain("narrows")
+    expect(p).toContain("more specific capability")
+    // The narrowing must be literal, not synthesis — the same rule the
+    // Orchestrator's dedup step enforces. Both ends must agree so the
+    // information-gain edit can't be smuggled into a synthesis path.
+    expect(p).toContain("Narrowing must be literal, not synthesised")
+    expect(p).toContain("`uaf_read_write`")
+    // If SA's evidence is unrelated to the candidate, route it via
+    // verification_blockers — never silently rewrite the candidate.
+    expect(p).toContain("evidence is unrelated")
+    expect(p).toContain("verification_blockers")
+  })
+
   test("prompt routes methodology failures via verification_blockers, not new_candidates (2026-05-21)", () => {
     const agent = createOmpStrategistAgent("test-model")
     const p = agent.prompt ?? ""
