@@ -501,3 +501,77 @@ MVP 단계라 CI 파이프라인이 아직 설정되지 않았습니다. 개인 
 각 milestone의 끝에는 **User test gate** 가 있어서 사용자가 직접 품질
 확인 후 다음 milestone으로 진행합니다. 자세한 gate 정책은
 `.omc/specs/deep-interview-oh-my-pwn.md` 참조.
+
+
+---
+
+## Release branch 운영
+
+`main` 은 개발 자취 (`.omc/`, `src/`, `CLAUDE.md`, `tsconfig.json`) 까지 포함하는 internal repository. **`release` branch** 는 외부 사용자 surface — `dist/plugin.js` bundled + vendor knowledge + docs + scripts 만. Linear history, no force-push, rolling (no tag).
+
+### Branch 운영 모델
+
+- Branch 이름: `release`
+- Worktree: `/mnt/D/Hack/oh-my-pwn-release` (main repo 옆 디렉토리)
+- GitHub default branch: `main` 유지 — 외부 사용자는 `git clone --branch release` 로 명시 접근
+- 매 sync 가 새 commit (`chore(release): sync from main@<sha>`). Force-push 없음.
+
+### 포함 / 제외 surface
+
+| 영역 | release 포함? |
+|---|---|
+| `dist/plugin.js` | ✅ (강제 commit — `.gitignore` 의 `dist/` 라인 자동 제거) |
+| `knowledge/{ctf-pwn,ctf-reverse}` + `README.md` + `sources/README.md` | ✅ |
+| `docs/`, `scripts/`, `assets/`, `README.md`, `LICENSE`, `package.json`, `bun.lock` | ✅ |
+| `.omc/`, `src/`, `CLAUDE.md`, `tsconfig.json` | ❌ (internal) |
+| `references/`, `test_challenge/`, `workspace/`, `node_modules/`, `knowledge/sources/<not README>` | ❌ (gitignored 또는 user data) |
+
+### First-time setup (한 번만)
+
+```bash
+# main repo 의 cwd 에서:
+
+# 1. dist/plugin.js 최신화 (sync-release.sh 의 preflight 가 검증)
+bun run build:plugin
+
+# 2. detached worktree 만든 뒤 orphan release branch 로 전환
+git worktree add --detach /mnt/D/Hack/oh-my-pwn-release main
+git -c safe.directory='*' -C /mnt/D/Hack/oh-my-pwn-release checkout --orphan release
+git -c safe.directory='*' -C /mnt/D/Hack/oh-my-pwn-release rm -rf --cached .
+
+# 3. 첫 sync — 정합한 surface 로 first commit
+bash scripts/sync-release.sh
+
+# 4. (선택) 첫 push — upstream tracking 설정
+git -c safe.directory='*' -C /mnt/D/Hack/oh-my-pwn-release push -u origin release
+```
+
+### 매 release 동기화
+
+```bash
+# main 의 cwd 에서:
+
+bun run build:plugin                 # dist/plugin.js 최신화 (preflight 강제)
+bash scripts/sync-release.sh         # mirror + commit on release worktree
+
+# push (수동 결정)
+git -c safe.directory='*' -C /mnt/D/Hack/oh-my-pwn-release push origin release
+```
+
+### 스크립트 동작
+
+`scripts/sync-release.sh`:
+1. Preflight — `dist/plugin.js` 존재 확인, release worktree 발견
+2. Mirror 전에 destination 의 internal artifact 명시 `rm -rf` (`.omc`, `src`, `CLAUDE.md`, `tsconfig.json`, 기타 옛 fixture leak)
+3. `rsync -a --delete` + exclude 리스트 적용 — main → release worktree (단 `.git` 은 exclude 그대로 보존)
+4. Release 의 `.gitignore` 에서 `dist/` 한 줄 제거 (release 는 `dist/plugin.js` commit)
+5. `git add -A` + commit `chore(release): sync from main@<sha>`. 변경 없으면 commit 0
+6. Push 는 수동
+
+WSL / cross-mount 환경 호환: `safe.directory='*'` 1회용 override, `sed -i` 대신 explicit tmp + mv (sed 권한 유지 fail 회피).
+
+### Trade-off / 알려진 한계
+
+- **History 누적** — 매 sync 가 새 commit. Release branch 가 commit log 로 main 변경 자취를 추적할 수 있지만 main 의 일 대 일 mirror 는 아님 (squashed snapshot).
+- **사용자 인지** — main 작업 중 release sync 잊으면 release 가 stale. CI 자동화 후보지만 현재는 사용자가 명시 sync.
+- **External fork divergence** — 외부 사용자가 release branch fork 후 contribute 하면 main 으로 직접 merge 못 함 (history 차이). PR 받으면 main 에 cherry-pick 으로 적용.
