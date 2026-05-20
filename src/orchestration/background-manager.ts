@@ -23,7 +23,13 @@ import type {
 import { ConcurrencyManager } from "./concurrency"
 import { resolveAgent } from "./agent-resolver"
 import { getAgentToolRestrictions } from "./agent-tool-restrictions"
-import { isInsideTmux, spawnSubagentPane, closeTmuxPane, resetPaneTracking } from "./tmux"
+import {
+  isInsideTmux,
+  spawnSubagentPane,
+  closeTmuxPane,
+  resetPaneTracking,
+  findPaneBySession,
+} from "./tmux"
 import { EventEmitter } from "node:events"
 import { appendFileSync, mkdirSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
@@ -464,7 +470,16 @@ export class BackgroundManager {
     // If the parent session has a pane (e.g., SA), split it to place
     // this agent (e.g., Exploiter) to its right.
     if (this.serverUrl && isInsideTmux()) {
-      const parentPaneId = this.sessionPaneIds.get(input.parentSessionID)
+      // Fast path — parent pane was spawned by *this* manager instance
+      // (e.g. Orchestrator launching VH / SA). Cross-instance lookups
+      // (an SA in its own plugin instance launching an Exploiter) miss
+      // here because each plugin invocation gets its own
+      // `sessionPaneIds` Map; fall back to querying tmux itself, which
+      // is the only store shared across plugin instances.
+      let parentPaneId = this.sessionPaneIds.get(input.parentSessionID)
+      if (!parentPaneId) {
+        parentPaneId = await findPaneBySession(input.parentSessionID)
+      }
       const paneId = await spawnSubagentPane({
         serverUrl: this.serverUrl,
         sessionId: sessionID,

@@ -124,6 +124,26 @@ async function doSpawnPane(options: {
         ["tmux", "set-option", "-t", paneId, "remain-on-exit", "on"],
         { stdout: "ignore", stderr: "ignore" },
       )
+      // Tag the pane with its session_id so a different BackgroundManager
+      // instance (e.g. an SA spawning an Exploiter from its own plugin
+      // session) can locate the parent pane via `tmux list-panes`. Without
+      // this tag, cross-instance parent lookup falls back to undefined and
+      // the Exploiter pane gets stacked in the top-level right column
+      // instead of being placed next to its SA — see the afterimage 2026-
+      // 05-21 run where all five Exploiters were emitted without a
+      // `child of …` log line.
+      Bun.spawn(
+        [
+          "tmux",
+          "set-option",
+          "-p",
+          "-t",
+          paneId,
+          "@omp_session_id",
+          sessionId,
+        ],
+        { stdout: "ignore", stderr: "ignore" },
+      )
     }
 
     return paneId || undefined
@@ -168,7 +188,55 @@ async function rebalanceRightColumn(): Promise<void> {
 }
 
 /**
- * Close a tmux pane by ID.
+ * Locate a tmux pane tagged with the given session_id via the
+ * `@omp_session_id` user-option. Returns the matching pane id, or
+ * undefined if no pane carries that tag.
+ *
+ * `tmux list-panes -a` enumerates every pane across every window in the
+ * current server, so this works for the cross-BackgroundManager-instance
+ * case (an SA's plugin instance asks for the parent paneId that the
+ * Orchestrator's plugin instance created).
+ */
+export async function findPaneBySession(
+  sessionId: string,
+): Promise<string | undefined> {
+  if (!isInsideTmux()) return undefined
+  try {
+    const proc = Bun.spawn(
+      [
+        "tmux",
+        "list-panes",
+        "-a",
+        "-F",
+        "#{pane_id} #{@omp_session_id}",
+      ],
+      { stdout: "pipe", stderr: "ignore" },
+    )
+    const text = await new Response(proc.stdout).text()
+    await proc.exited
+    for (const line of text.split("\n")) {
+      const sep = line.indexOf(" ")
+      if (sep < 0) continue
+      const candidate = line.slice(sep + 1).trim()
+      if (candidate === sessionId) return line.slice(0, sep).trim() || undefined
+    }
+  } catch {
+    // tmux command failed — caller treats undefined as "no parent"
+  }
+  return undefined
+}
+
+/**
+ * Close a tmux pane by ID, then rebalance the top-level right column if
+ * the pane we just killed was part of it. tmux's default behaviour after
+ * `kill-pane` is to give the freed space to one neighbour, which leaves
+ * the remaining panes uneven (e.g. 3-up → one 66% / one 33%). We restore
+ * the n-등분 layout so the user keeps seeing balanced rows.
+ *
+ * Child panes (Exploiter split off an SA pane) are NOT in
+ * `rightColumnPaneIds` — when they close, tmux's default re-absorb gives
+ * all the freed width back to the parent (SA) pane, which is what we
+ * want anyway.
  */
 export async function closeTmuxPane(paneId: string): Promise<void> {
   try {
@@ -179,5 +247,13 @@ export async function closeTmuxPane(paneId: string): Promise<void> {
     await proc.exited
   } catch {
     // Pane might already be closed
+  }
+  const idx = rightColumnPaneIds.indexOf(paneId)
+  if (idx >= 0) {
+    rightColumnPaneIds.splice(idx, 1)
+    if (lastRightPaneId === paneId) {
+      lastRightPaneId = rightColumnPaneIds[rightColumnPaneIds.length - 1]
+    }
+    await rebalanceRightColumn()
   }
 }
