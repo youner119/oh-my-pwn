@@ -116,10 +116,24 @@ export function runEnvSetup(
     })
   }
 
+  // Legacy library: predates the omp-setup agent's binary_path / binary_input_path
+  // split (spec D3). Resolve a single working path by preferring `binary_path`
+  // (post-setup patched copy) and falling back to `binary_input_path` (loader
+  // seed). Both are typed as optional; if neither is set the loader was never
+  // run.
+  const binaryPath = state.binary_path ?? state.binary_input_path
+  if (binaryPath === undefined) {
+    throw new EnvSetupError({
+      kind: "state-missing",
+      challengeDir,
+      message: `state.json at ${challengeDir}/.omp/ has no binary_input_path. Run loadChallengeFolder (T03) before EnvSetup.`,
+    })
+  }
+
   // Step 2: ELF mitigations.
   let mitigations: ElfMitigations
   try {
-    mitigations = parseElfMitigations(state.binary_path)
+    mitigations = parseElfMitigations(binaryPath)
   } catch (cause) {
     if (cause instanceof ElfParseError) {
       recordFailure(challengeDir, state, "elf-mitigations", cause.message, now)
@@ -182,7 +196,7 @@ export function runEnvSetup(
     extractResult = extractLibcAndLd(
       {
         imageTag: buildResult.imageTag,
-        binaryPath: state.binary_path,
+        binaryPath,
         artifactsDir,
         challengeDir,
       },
@@ -237,12 +251,12 @@ export function runEnvSetup(
     if (wantPatch && extractResult.ldPath !== undefined) {
       const backupPath = join(
         artifactsDir,
-        `${basename(state.binary_path)}.orig`,
+        `${basename(binaryPath)}.orig`,
       )
       try {
         const patchResult = patchBinaryInterpreter(
           {
-            binaryPath: state.binary_path,
+            binaryPath,
             backupPath,
             interpreterPath: extractResult.ldPath,
             libcDir: artifactsDir,
@@ -255,10 +269,12 @@ export function runEnvSetup(
             ...state,
             binary_patched: true,
             binary_original_path: backupPath,
-            // Preserve the original sha as the input contract identity.
-            // If a previous run already recorded one, do NOT overwrite it
-            // (the backup is canonical) — but on first patch, the
-            // pre-patch sha is what's currently in `binary_sha256`.
+            // Legacy library used in-place patchelf — the bytes at
+            // `binary_input_path` are the patched bytes after this step.
+            // Mirror that into `binary_path` / `binary_sha256` so downstream
+            // readers see a populated patched-copy invariant (the loader no
+            // longer pre-seeds these).
+            binary_path: binaryPath,
             binary_original_sha256:
               state.binary_original_sha256 ?? patchResult.originalSha256,
             binary_sha256: patchResult.patchedSha256,

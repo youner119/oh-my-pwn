@@ -33,7 +33,7 @@ async function setupHarness(): Promise<Harness> {
   await writeFile(binaryPath, Buffer.from([0x7f, 0x45, 0x4c, 0x46]))
   initializeOmpDir({
     challenge_dir: challengeDir,
-    binary_path: binaryPath,
+    binary_input_path: binaryPath,
     dockerfile_path: dockerfilePath,
   })
   return { challengeDir }
@@ -49,7 +49,7 @@ function seedSha(
 ): ChallengeState {
   const initial = initializeOmpDir({
     challenge_dir: h.challengeDir,
-    binary_path: join(h.challengeDir, "chall"),
+    binary_input_path: join(h.challengeDir, "chall"),
     dockerfile_path: join(h.challengeDir, "Dockerfile"),
   })
   return saveChallengeState({ ...initial, ...fields })

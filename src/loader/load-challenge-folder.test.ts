@@ -79,7 +79,7 @@ describe("loadChallengeFolder", () => {
   })
 
   describe("happy path", () => {
-    test("bootstraps .omp/, persists sha256, marks freshlyInitialized", () => {
+    test("bootstraps .omp/, persists input identity, marks freshlyInitialized", () => {
       const { binaryPath, dockerfilePath } = seedMinimalChallenge(dir)
       const expectedSha = sha256(ELF_HEADER)
 
@@ -87,9 +87,13 @@ describe("loadChallengeFolder", () => {
 
       expect(result.freshlyInitialized).toBe(true)
       expect(result.shaDrift).toBe(false)
-      expect(result.state.binary_path).toBe(binaryPath)
+      // Loader seeds INPUT identity only. The patched-copy fields
+      // (binary_path / binary_sha256) belong to the omp-setup agent.
+      expect(result.state.binary_input_path).toBe(binaryPath)
+      expect(result.state.binary_input_sha256).toBe(expectedSha)
+      expect(result.state.binary_path).toBeUndefined()
+      expect(result.state.binary_sha256).toBeUndefined()
       expect(result.state.dockerfile_path).toBe(dockerfilePath)
-      expect(result.state.binary_sha256).toBe(expectedSha)
       expect(result.state.source_present).toBe(false)
       expect(result.state.source_paths).toEqual([])
 
@@ -99,7 +103,8 @@ describe("loadChallengeFolder", () => {
       expect(existsSync(journalPath)).toBe(true)
 
       const persisted = loadChallengeState(dir)
-      expect(persisted?.binary_sha256).toBe(expectedSha)
+      expect(persisted?.binary_input_sha256).toBe(expectedSha)
+      expect(persisted?.binary_path).toBeUndefined()
 
       const journal = readFileSync(journalPath, "utf-8")
       expect(journal).toContain("## challenge loaded")
@@ -120,41 +125,77 @@ describe("loadChallengeFolder", () => {
       expect(result.state.workspace_root).toBeUndefined()
     })
 
-    test("seeds binary_input_path === binary_path on fresh init (input identity invariant)", () => {
+    test("seeds binary_input_path from the loader-resolved file", () => {
       const { binaryPath } = seedMinimalChallenge(dir)
       const result = loadChallengeFolder(dir)
       expect(result.state.binary_input_path).toBe(binaryPath)
-      expect(result.state.binary_input_path).toBe(result.state.binary_path)
+      // binary_path is reserved for the omp-setup agent's Phase 3 patched
+      // copy. The loader must not pre-seed it.
+      expect(result.state.binary_path).toBeUndefined()
     })
 
-    test("seeds binary_input_sha256 === binary_sha256 on fresh init", () => {
+    test("seeds binary_input_sha256 from the loader-resolved file", () => {
       seedMinimalChallenge(dir)
       const expectedSha = sha256(ELF_HEADER)
       const result = loadChallengeFolder(dir)
       expect(result.state.binary_input_sha256).toBe(expectedSha)
-      expect(result.state.binary_input_sha256).toBe(result.state.binary_sha256)
+      // binary_sha256 stays undefined until omp-setup writes the patched
+      // copy's hash.
+      expect(result.state.binary_sha256).toBeUndefined()
     })
 
-    test("backfills binary_input_{path,sha256} on reload of pre-T01.6 state", () => {
-      // Simulate a state.json written before the input-identity fields existed
-      // (e.g. seeded by an earlier OmP version): binary_sha256 set but
-      // binary_input_* missing. The loader must backfill on reload because
-      // omp_patch_state cannot (those fields are protected by T+b5d1208).
+    test("backfills binary_input_{path,sha256} on reload of a pre-T01.6 state", () => {
+      // Simulate a state.json written before the input-identity fields
+      // existed (an earlier OmP version): binary_input_* are missing but
+      // legacy `binary_path` / `binary_sha256` may be present. The loader
+      // is the only writer that can repair this — `omp_patch_state` would
+      // strip those fields as protected.
       const { binaryPath } = seedMinimalChallenge(dir)
       const expectedSha = sha256(ELF_HEADER)
-      const first = loadChallengeFolder(dir)
-      // Strip the input-identity fields to mimic a stale state.json.
+      loadChallengeFolder(dir)
+      // Strip the input-identity fields to mimic a stale state.json. Also
+      // re-introduce a legacy `binary_path` / `binary_sha256` pair the way
+      // pre-omp-setup OmP versions wrote them.
       const { statePath } = getStatePaths(dir)
       const raw = JSON.parse(readFileSync(statePath, "utf-8"))
       delete raw.binary_input_path
       delete raw.binary_input_sha256
+      raw.binary_path = binaryPath
+      raw.binary_sha256 = expectedSha
       writeFileSync(statePath, JSON.stringify(raw))
 
       const reloaded = loadChallengeFolder(dir)
       expect(reloaded.state.binary_input_path).toBe(binaryPath)
       expect(reloaded.state.binary_input_sha256).toBe(expectedSha)
-      expect(reloaded.state.binary_sha256).toBe(first.state.binary_sha256)
+      // Legacy binary_path / binary_sha256 are preserved untouched; the
+      // omp-setup agent overwrites them on the next setup run.
+      expect(reloaded.state.binary_path).toBe(binaryPath)
+      expect(reloaded.state.binary_sha256).toBe(expectedSha)
       expect(reloaded.shaDrift).toBe(false)
+    })
+
+    test("backfill on reload does NOT append a 'challenge loaded' journal section", () => {
+      // Fresh init records "challenge loaded"; backfill should be silent so
+      // upgrading OmP versions does not retroactively spam the journal.
+      seedMinimalChallenge(dir)
+      const { statePath, journalPath } = getStatePaths(dir)
+      loadChallengeFolder(dir)
+
+      const raw = JSON.parse(readFileSync(statePath, "utf-8"))
+      delete raw.binary_input_path
+      delete raw.binary_input_sha256
+      writeFileSync(statePath, JSON.stringify(raw))
+
+      const journalBefore = readFileSync(journalPath, "utf-8")
+      const occurrencesBefore =
+        journalBefore.split("## challenge loaded").length - 1
+
+      loadChallengeFolder(dir)
+
+      const journalAfter = readFileSync(journalPath, "utf-8")
+      const occurrencesAfter =
+        journalAfter.split("## challenge loaded").length - 1
+      expect(occurrencesAfter).toBe(occurrencesBefore)
     })
 
     test("records C source when present and sets source_present=true", () => {
@@ -173,7 +214,7 @@ describe("loadChallengeFolder", () => {
 
       const result = loadChallengeFolder(dir)
 
-      expect(result.state.binary_path).toBe(binaryPath)
+      expect(result.state.binary_input_path).toBe(binaryPath)
     })
 
     test("accepts an explicit binary basename via opts.binary", () => {
@@ -183,7 +224,7 @@ describe("loadChallengeFolder", () => {
 
       const result = loadChallengeFolder(dir, { binary: "chall" })
 
-      expect(result.state.binary_path).toBe(binaryPath)
+      expect(result.state.binary_input_path).toBe(binaryPath)
     })
 
     test("accepts an explicit binary as an absolute path", () => {
@@ -192,7 +233,7 @@ describe("loadChallengeFolder", () => {
 
       const result = loadChallengeFolder(dir, { binary: binaryPath })
 
-      expect(result.state.binary_path).toBe(binaryPath)
+      expect(result.state.binary_input_path).toBe(binaryPath)
     })
 
     test("accepts dockerfile in lowercase form", () => {
@@ -226,7 +267,7 @@ describe("loadChallengeFolder", () => {
         dockerfile: "deploy/Dockerfile",
       })
 
-      expect(result.state.binary_path).toBe(binaryPath)
+      expect(result.state.binary_input_path).toBe(binaryPath)
       expect(result.state.dockerfile_path).toBe(dockerfilePath)
       expect(result.freshlyInitialized).toBe(true)
     })
@@ -322,7 +363,7 @@ describe("loadChallengeFolder", () => {
       expect(second.shaDrift).toBe(false)
       // updated_at must come from the persisted state, not from the second call's `now`.
       expect(second.state.updated_at).toBe(first.state.updated_at)
-      expect(second.state.binary_sha256).toBe(first.state.binary_sha256)
+      expect(second.state.binary_input_sha256).toBe(first.state.binary_input_sha256)
 
       const journalAfterSecond = readFileSync(journalPath, "utf-8")
       expect(journalAfterSecond).toBe(journalAfterFirst)
@@ -340,10 +381,13 @@ describe("loadChallengeFolder", () => {
   })
 
   describe("binary sha drift", () => {
-    test("flags drift, appends journal section, and does NOT mutate state.json", () => {
+    test("flags drift on input identity change, journals it, and does NOT mutate state.json", () => {
       seedMinimalChallenge(dir)
       const first = loadChallengeFolder(dir)
-      const originalSha = first.state.binary_sha256
+      // Drift is detected against the INPUT identity sha (the loader
+      // captures this; the patched-copy `binary_sha256` is owned by
+      // omp-setup and would false-positive on every post-setup reload).
+      const originalSha = first.state.binary_input_sha256
       expect(originalSha).toBeDefined()
 
       // Replace the binary with different bytes (still valid ELF magic).
@@ -355,17 +399,39 @@ describe("loadChallengeFolder", () => {
       const second = loadChallengeFolder(dir)
 
       expect(second.shaDrift).toBe(true)
-      // state.binary_sha256 must still match the persisted (original) hash.
-      expect(second.state.binary_sha256).toBe(originalSha)
+      // state.binary_input_sha256 must still match the persisted (original)
+      // identity — the loader records drift in the journal but never mutates
+      // state.json.
+      expect(second.state.binary_input_sha256).toBe(originalSha)
 
       const persisted = loadChallengeState(dir)
-      expect(persisted?.binary_sha256).toBe(originalSha)
+      expect(persisted?.binary_input_sha256).toBe(originalSha)
 
       const { journalPath } = getStatePaths(dir)
       const journal = readFileSync(journalPath, "utf-8")
       expect(journal).toContain("## binary sha drift")
       expect(journal).toContain(originalSha!)
       expect(journal).toContain(newSha)
+    })
+
+    test("does NOT flag drift when only the patched copy hash differs", () => {
+      // Simulate a successfully-set-up challenge: omp-setup wrote
+      // `binary_path` + `binary_sha256` (patched copy hash) while
+      // `binary_input_*` describe the untouched input. The next loader call
+      // must compare against `binary_input_sha256`, not `binary_sha256`,
+      // otherwise every post-setup reload looks like drift.
+      seedMinimalChallenge(dir)
+      const first = loadChallengeFolder(dir)
+      // Forge a "post-setup" state by setting a different binary_sha256
+      // while leaving the input identity intact.
+      saveChallengeState({
+        ...first.state,
+        binary_path: `${first.state.challenge_dir}/.omp/artifacts/chall`,
+        binary_sha256: "deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef",
+      })
+
+      const reload = loadChallengeFolder(dir)
+      expect(reload.shaDrift).toBe(false)
     })
   })
 

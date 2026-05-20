@@ -26,7 +26,7 @@ function seedState(challengeDir: string): ChallengeState {
   writeFileSync(binaryPath, Buffer.from([0x7f, 0x45, 0x4c, 0x46]))
   const initial = initializeOmpDir({
     challenge_dir: challengeDir,
-    binary_path: binaryPath,
+    binary_input_path: binaryPath,
     dockerfile_path: dockerfilePath,
   })
   // T03 normally fills binary_sha256; do it manually here so docker-build's
@@ -229,9 +229,18 @@ describe("dockerBuildImage", () => {
   })
 
   describe("invariant", () => {
-    test("throws a programmer-error if binary_sha256 is undefined", () => {
+    test("throws a programmer-error when neither input nor patched sha is set", () => {
       const state = seedState(dir)
-      const broken: ChallengeState = { ...state, binary_sha256: undefined }
+      // Both shas absent — no way to derive `omp-<sha8>`. The default tag
+      // path prefers `binary_input_sha256` (loader invariant) and falls
+      // back to `binary_sha256` (legacy patched-copy sha); throwing only
+      // when both are missing keeps `omp_setup_docker_build` (which
+      // supplies its own override) and legacy `runEnvSetup` both working.
+      const broken: ChallengeState = {
+        ...state,
+        binary_sha256: undefined,
+        binary_input_sha256: undefined,
+      }
       const runner = new FakeDockerRunner(() => ({ exitCode: 0 }))
 
       try {
@@ -239,7 +248,7 @@ describe("dockerBuildImage", () => {
         throw new Error("expected throw")
       } catch (err) {
         expect(err).toBeInstanceOf(Error)
-        expect((err as Error).message).toContain("binary_sha256")
+        expect((err as Error).message).toContain("binary_input_sha256")
       }
     })
   })

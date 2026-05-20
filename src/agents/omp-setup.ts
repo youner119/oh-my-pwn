@@ -152,6 +152,13 @@ Read these from state first (\`omp_read_state\` once at the top):
   workspace mount source (\`<plugin-root>/workspace/\`). When this is
   missing, abort with
   \`setup_unsupported_reason: "workspace_root missing — re-run omp_load_challenge from the plugin"\`.
+- \`state.binary_path\` / \`state.binary_sha256\` — **start undefined.**
+  The loader does not seed these; they are YOUR write target. Phase 3
+  (dynamic-linked) sets them to the patched copy under
+  \`.omp/artifacts/\`. Phase 2's static-linked branch mirrors them from
+  \`binary_input_path\` / \`binary_input_sha256\` (no patchelf applies).
+  Either way the post-setup invariant
+  \`setup_complete === true ⇒ binary_path is set\` MUST hold.
 
 Compute these in your head when you need them:
 
@@ -305,17 +312,27 @@ every NEEDED entry is covered.
 \`\`\`text
 omp_patch_state {
   libc_version: "static",
-  extracted_libs: {}
+  extracted_libs: {},
+  binary_path: <state.binary_input_path>,        // mirror — no patchelf
+  binary_sha256: <state.binary_input_sha256>     // mirror — same bytes
 }
 omp_append_journal {
   section: "phase 2 dependencies",
-  body: "static binary — ld dependency discovery skipped."
+  body: "static binary — ld dependency discovery skipped; binary_path
+         mirrored from binary_input_path (no patchelf)."
 }
 \`\`\`
 
+The mirror is mandatory: downstream agents read \`state.binary_path\`
+through the \`setup_complete === true\` gate, so leaving it undefined
+breaks Reverser / VH / SA / Exploiter. Mirroring is correct because
+patchelf was a no-op (no NEEDED entries to rewrite, no interpreter to
+swap).
+
 Then skip Phase 3 entirely and jump to Phase 4 (host verify runs
-directly against \`binary_input_path\`) and Phase 5 (stage only the
-binary, no libs, no patchelf).
+directly against \`binary_input_path\` — equivalent to \`binary_path\`
+in this branch) and Phase 5 (stage only the binary, no libs, no
+patchelf).
 
 **Dynamic-linked branch:** if some SONAMEs are unresolved, fall back
 to \`docker run --rm <image> sh -c 'ldconfig -p | grep <soname>'\` or

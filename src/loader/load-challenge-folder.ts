@@ -161,7 +161,7 @@ export function loadChallengeFolder(
   const seeded = initializeOmpDir(
     {
       challenge_dir: challengeDir,
-      binary_path: binaryPath,
+      binary_input_path: binaryPath,
       dockerfile_path: dockerfilePath,
       source_present: sourcePresent,
       source_paths: sourcePaths,
@@ -175,50 +175,21 @@ export function loadChallengeFolder(
   let state = seeded
   let shaDrift = false
 
-  if (state.binary_sha256 === undefined) {
-    // Either a fresh init or a partially-seeded state from an earlier crash;
-    // either way, complete the seed by recording the SHA-256 and announce the
-    // load in the journal. binary_input_sha256 captures the same value at
-    // load time — it is the input identity invariant the omp-setup agent
-    // checks for setup-gate idempotency (mismatch → force re-setup).
-    state = saveChallengeState(
-      {
-        ...state,
-        binary_sha256: binarySha256,
-        binary_input_sha256: binarySha256,
-      },
-      now,
-    )
-    appendJournalSection(
-      challengeDir,
-      "challenge loaded",
-      buildLoadedJournalBody({
-        binaryPath,
-        binarySha256,
-        dockerfilePath,
-        sourcePaths,
-      }),
-      now,
-    )
-  } else if (state.binary_sha256 !== binarySha256) {
-    shaDrift = true
-    appendJournalSection(
-      challengeDir,
-      "binary sha drift",
-      buildDriftJournalBody({
-        previous: state.binary_sha256,
-        current: binarySha256,
-        binaryPath,
-      }),
-      now,
-    )
-    // state preserved on purpose — see module doc.
-  } else if (state.binary_input_sha256 === undefined) {
-    // Backfill for state files seeded before T01.6 added the input identity
-    // fields. The loader is the only writer that can set these (they are
-    // protected from omp_patch_state, so an agent cannot fill them after
-    // the fact). Without this backfill, post-T01.6 setup agent reads
-    // null/undefined and stalls trying to "patch" a protected field.
+  if (state.binary_input_sha256 === undefined) {
+    // Fresh init (state.json just created) OR a pre-T01.6 state.json that
+    // predates the input-identity fields. Seed `binary_input_path` /
+    // `binary_input_sha256` from the loader-resolved binary. The loader is
+    // the *only* writer that can set these (they are protected from
+    // omp_patch_state), and without them the omp-setup agent stalls trying
+    // to patch a guarded field.
+    //
+    // NOTE: `binary_path` / `binary_sha256` are deliberately NOT seeded —
+    // those describe the patched copy produced by the omp-setup agent in
+    // Phase 3 (or the static-linked mirror in Phase 2). Seeding them here
+    // would force the post-setup invariant
+    // `setup_complete === true ⇔ binary_path is the patched copy` to be
+    // re-derived by every downstream reader (see schema doc on
+    // `binary_path`).
     state = saveChallengeState(
       {
         ...state,
@@ -227,9 +198,40 @@ export function loadChallengeFolder(
       },
       now,
     )
+    if (freshlyInitialized) {
+      appendJournalSection(
+        challengeDir,
+        "challenge loaded",
+        buildLoadedJournalBody({
+          binaryPath,
+          binarySha256,
+          dockerfilePath,
+          sourcePaths,
+        }),
+        now,
+      )
+    }
+    // else: silent backfill on a pre-T01.6 state — no journal noise.
+  } else if (state.binary_input_sha256 !== binarySha256) {
+    // Input identity drift: the file at `binary_input_path` no longer
+    // matches the sha persisted from the first load. Comparison is against
+    // `binary_input_sha256` (not `binary_sha256`) because the latter is the
+    // patched copy's hash post-setup and would false-positive on every
+    // reload of a successfully-set-up challenge.
+    shaDrift = true
+    appendJournalSection(
+      challengeDir,
+      "binary sha drift",
+      buildDriftJournalBody({
+        previous: state.binary_input_sha256,
+        current: binarySha256,
+        binaryPath,
+      }),
+      now,
+    )
+    // state preserved on purpose — see module doc.
   }
-  // else: silent reload of an unchanged challenge with input identity
-  // already populated. No journal noise.
+  // else: silent reload of an unchanged challenge. No journal noise.
 
   return { state, freshlyInitialized, shaDrift }
 }

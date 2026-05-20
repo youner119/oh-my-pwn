@@ -116,7 +116,7 @@ function buildInitialJournal(state: ChallengeState, now: Date): string {
     "",
     "## Inputs",
     "",
-    `- binary: \`${state.binary_path}\``,
+    `- binary (input): \`${state.binary_input_path ?? "(unset)"}\``,
     `- Dockerfile: \`${state.dockerfile_path}\``,
     `- source present: ${state.source_present}`,
     "",

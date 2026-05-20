@@ -73,12 +73,17 @@ export function dockerBuildImage(
   if (opts.imageTagOverride !== undefined) {
     imageTag = opts.imageTagOverride
   } else {
-    if (state.binary_sha256 === undefined) {
+    // Default tag derives from the input-identity sha — that is the
+    // challenge identity (spec D7 idempotent skip). Fall back to
+    // `binary_sha256` for legacy callers that pre-date the
+    // `binary_input_sha256` field.
+    const sha = state.binary_input_sha256 ?? state.binary_sha256
+    if (sha === undefined) {
       throw new Error(
-        "internal: dockerBuildImage requires state with binary_sha256 (T03 invariant) when no imageTagOverride is supplied",
+        "internal: dockerBuildImage requires state with binary_input_sha256 (loader invariant) when no imageTagOverride is supplied",
       )
     }
-    imageTag = `omp-${state.binary_sha256.slice(0, 8)}`
+    imageTag = `omp-${sha.slice(0, 8)}`
   }
 
   const dockerfilePath = state.dockerfile_path

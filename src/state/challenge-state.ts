@@ -218,36 +218,43 @@ export const ChallengeStateSchema = z.object({
   /* ── Input contract (T03 fills) ───────────────────────────────────────── */
 
   /**
-   * Absolute path to the binary OmP operates on.
+   * Absolute path to the **patched binary** that downstream agents
+   * (Reverser / VulnHunter / Strategist / Exploiter) analyse and exploit
+   * against. Written **only** by the omp-setup agent in Phase 3 (dynamic-
+   * linked) or mirrored from `binary_input_path` in Phase 2 (static-linked
+   * branch). The loader does NOT seed this field — it remains `undefined`
+   * until omp-setup runs, which is correct because the patched copy
+   * literally does not exist on disk before Phase 3 produces it.
    *
-   * **Semantics depend on whether the omp-setup agent has run:**
-   * - Pre-setup (T03 loader phase): points at the loader's chosen file
-   *   inside the challenge folder (e.g. `deploy/prob`). Same as
-   *   `binary_input_path`.
-   * - Post-setup (omp-setup agent, see `.omc/specs/deep-interview-envsetup-agent.md`):
-   *   points at the **patched copy** under `.omp/artifacts/<basename>`.
-   *   The original input file is preserved at `binary_input_path` and is
-   *   never mutated (patchelf in-place was retired with the omp-setup agent
-   *   to keep `docker build` deterministic).
+   * Dynamic-linked post-setup: `<challenge_dir>/.omp/artifacts/<basename>`
+   * with patched interpreter + `--replace-needed` rewrites. Distinct from
+   * `binary_input_path` (which is preserved untouched).
    *
-   * Reverser / VulnHunter / Strategist / Exploiter read this field as
-   * "the binary to analyse / exploit against". They do not need to know
-   * whether it is the input or the patched copy.
+   * Static-linked post-setup: equal to `binary_input_path` because no
+   * patchelf is applied — but the omp-setup agent still explicitly mirrors
+   * the field so the post-setup invariant "`binary_path` populated iff
+   * `setup_complete === true`" holds uniformly.
+   *
+   * Downstream agents read this field through the `setup_complete === true`
+   * gate enforced by the Orchestrator's Phase 0 wait_all, so they never
+   * see the pre-setup `undefined` state.
    */
-  binary_path: z.string().min(1),
+  binary_path: z.string().min(1).optional(),
   /**
-   * SHA-256 of the binary bytes at `binary_path` *as it currently exists on
-   * disk*. Post-setup, this is the patched binary's hash. The original
-   * input's hash is preserved separately in `binary_input_sha256`
-   * (formerly `binary_original_sha256`, now deprecated).
+   * SHA-256 of the bytes at `binary_path` as they exist on disk. Set by the
+   * omp-setup agent in Phase 3 alongside `binary_path`. Diverges from
+   * `binary_input_sha256` for dynamic-linked binaries (patched bytes) and
+   * equals it for the static-linked branch.
    */
   binary_sha256: z.string().optional(),
   /**
-   * Absolute path to the **untouched input binary**. The omp-setup agent
-   * never modifies this file — this is the canonical input identity the
-   * challenge owner provided (`deploy/prob`, etc.). `binary_path` is a
-   * separate patched copy under `.omp/artifacts/`. Equal to `binary_path`
-   * during the pre-setup phase (T03 loader output).
+   * Absolute path to the **untouched input binary** — the canonical input
+   * identity the challenge owner provided (`deploy/prob`, etc.). Seeded by
+   * the loader (`omp_load_challenge`) from the resolved binary candidate
+   * and never mutated thereafter. The omp-setup agent makes a separate
+   * patched copy at `binary_path`; downstream agents must NOT execute or
+   * analyse `binary_input_path` directly post-setup (its interpreter still
+   * points at the image's ld).
    *
    * Added by spec `deep-interview-envsetup-agent.md` (T01).
    */
@@ -496,12 +503,21 @@ export const ChallengeStateSchema = z.object({
 export type ChallengeState = z.infer<typeof ChallengeStateSchema>
 
 /**
- * Input required to seed a fresh ChallengeState. Everything else is defaulted
- * to empty so T03 (loader) can call this with the bare input contract.
+ * Input required to seed a fresh ChallengeState. The loader (T03) supplies
+ * only the input identity (`binary_input_path` + dockerfile + workspace
+ * root); `binary_path` / `binary_sha256` are intentionally absent because
+ * those describe the patched copy produced by the omp-setup agent in
+ * Phase 3 — they cannot be known at load time.
  */
 export interface InitialChallengeStateInput {
   challenge_dir: string
-  binary_path: string
+  /**
+   * Absolute path to the untouched input binary as resolved by the loader.
+   * Seeded verbatim into `state.binary_input_path` (the input identity
+   * invariant). The loader does NOT seed `binary_path` — that field stays
+   * undefined until omp-setup Phase 3 writes the patched copy path.
+   */
+  binary_input_path: string
   dockerfile_path: string
   source_present?: boolean
   source_paths?: string[]
@@ -517,6 +533,13 @@ export interface InitialChallengeStateInput {
 /**
  * Build a minimal valid ChallengeState for a fresh challenge. Use this from
  * T03's loader when initializing `.omp/state.json` for the first time.
+ *
+ * Seeds the **input identity** only — `binary_input_path` plus
+ * dockerfile / workspace_root / source flags. The patched-copy fields
+ * (`binary_path`, `binary_sha256`) remain undefined until the omp-setup
+ * agent populates them in Phase 3 (or mirrors `binary_input_path` for the
+ * static-linked branch). This separation is what makes
+ * `setup_complete === true` a meaningful gate for downstream agents.
  */
 export function createInitialChallengeState(
   input: InitialChallengeStateInput,
@@ -526,13 +549,7 @@ export function createInitialChallengeState(
   return ChallengeStateSchema.parse({
     schema_version: CHALLENGE_STATE_SCHEMA_VERSION,
     challenge_dir: input.challenge_dir,
-    binary_path: input.binary_path,
-    // Seed binary_input_path with the loader's chosen file. This is the
-    // canonical input identity invariant — the omp-setup agent never
-    // mutates it (Phase 3 makes a separate patched copy at
-    // .omp/artifacts/<basename>). Pre-setup state has
-    // binary_input_path === binary_path; post-setup they diverge.
-    binary_input_path: input.binary_path,
+    binary_input_path: input.binary_input_path,
     dockerfile_path: input.dockerfile_path,
     source_present: input.source_present ?? false,
     source_paths: input.source_paths ?? [],

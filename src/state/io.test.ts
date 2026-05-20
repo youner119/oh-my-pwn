@@ -38,7 +38,7 @@ describe("omp state io", () => {
     test("creates .omp/, standard subdirs, state.json, and journal.md", () => {
       const state = initializeOmpDir({
         challenge_dir: challengeDir,
-        binary_path: `${challengeDir}/chall`,
+        binary_input_path: `${challengeDir}/chall`,
         dockerfile_path: `${challengeDir}/Dockerfile`,
       })
 
@@ -54,21 +54,22 @@ describe("omp state io", () => {
       const reloaded = loadChallengeState(challengeDir)
       expect(reloaded).not.toBeNull()
       expect(reloaded?.challenge_dir).toBe(challengeDir)
-      expect(reloaded?.binary_path).toBe(state.binary_path)
+      expect(reloaded?.binary_input_path).toBe(state.binary_input_path)
+      expect(reloaded?.binary_path).toBeUndefined()
       expect(reloaded?.schema_version).toBe(state.schema_version)
     })
 
     test("is idempotent: second call does not overwrite state.json", () => {
       const first = initializeOmpDir({
         challenge_dir: challengeDir,
-        binary_path: `${challengeDir}/chall`,
+        binary_input_path: `${challengeDir}/chall`,
         dockerfile_path: `${challengeDir}/Dockerfile`,
       })
       // Mutate and persist, then re-init
       const mutated = saveChallengeState({ ...first, libc_version: "2.35" })
       const second = initializeOmpDir({
         challenge_dir: challengeDir,
-        binary_path: `${challengeDir}/chall`,
+        binary_input_path: `${challengeDir}/chall`,
         dockerfile_path: `${challengeDir}/Dockerfile`,
       })
       expect(second.libc_version).toBe("2.35")
@@ -78,7 +79,7 @@ describe("omp state io", () => {
     test("does not overwrite an existing journal.md", () => {
       initializeOmpDir({
         challenge_dir: challengeDir,
-        binary_path: `${challengeDir}/chall`,
+        binary_input_path: `${challengeDir}/chall`,
         dockerfile_path: `${challengeDir}/Dockerfile`,
       })
       const { journalPath } = getStatePaths(challengeDir)
@@ -86,7 +87,7 @@ describe("omp state io", () => {
 
       initializeOmpDir({
         challenge_dir: challengeDir,
-        binary_path: `${challengeDir}/chall`,
+        binary_input_path: `${challengeDir}/chall`,
         dockerfile_path: `${challengeDir}/Dockerfile`,
       })
       expect(readFileSync(journalPath, "utf-8")).toBe(originalJournal)
@@ -117,7 +118,7 @@ describe("omp state io", () => {
     test("round-trips a state through the filesystem", () => {
       const seeded = initializeOmpDir({
         challenge_dir: challengeDir,
-        binary_path: `${challengeDir}/chall`,
+        binary_input_path: `${challengeDir}/chall`,
         dockerfile_path: `${challengeDir}/Dockerfile`,
       })
       const saved = saveChallengeState(
@@ -135,7 +136,7 @@ describe("omp state io", () => {
     test("leaves no .tmp artifact after a successful atomic write", () => {
       const seeded = initializeOmpDir({
         challenge_dir: challengeDir,
-        binary_path: `${challengeDir}/chall`,
+        binary_input_path: `${challengeDir}/chall`,
         dockerfile_path: `${challengeDir}/Dockerfile`,
       })
       saveChallengeState({ ...seeded, libc_version: "2.31" })
@@ -146,7 +147,7 @@ describe("omp state io", () => {
     test("re-validates and throws on hand-mutated invalid state", () => {
       const seeded = initializeOmpDir({
         challenge_dir: challengeDir,
-        binary_path: `${challengeDir}/chall`,
+        binary_input_path: `${challengeDir}/chall`,
         dockerfile_path: `${challengeDir}/Dockerfile`,
       })
       // Simulate a caller that mutated the object past schema constraints.
