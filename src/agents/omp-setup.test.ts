@@ -81,18 +81,19 @@ describe("createOmpSetupAgent", () => {
     expect(p).toContain("sole writer")
   })
 
-  test("prompt routes the static-linked branch to unsupported (pending decision)", () => {
-    // The earlier "mirror binary_path from binary_input_path" policy was
-    // rejected as a design decision (binary_path is, by definition, the
-    // post-patchelf output — there is no mirror semantic). Until the
-    // static-linked handling is decided (undefined+fallback / copy-only
-    // / explicit unsupported), the prompt routes static-linked binaries
-    // to the unsupported branch.
+  test("prompt covers the static-linked branch (patchelf no-op → binary_path = binary_input_path)", () => {
+    // User-confirmed semantics: static-linked binaries have no NEEDED and
+    // no interpreter, so patchelf is a no-op. The "post-patchelf output"
+    // therefore IS the input bytes — `binary_path = binary_input_path` is
+    // the no-op result of the patchelf step, not an ad-hoc alias.
     const agent = createOmpSetupAgent("test-model")
     const p = agent.prompt ?? ""
     expect(p).toContain("not a dynamic executable")
-    expect(p).toContain("static-linked binary — handling decision pending")
-    expect(p).toContain("setup_unsupported_reason")
+    expect(p).toContain('libc_version: "static"')
+    expect(p).toContain("extracted_libs: {}")
+    // The static branch records binary_path as a copy of binary_input_path
+    // (patchelf no-op), so downstream agents see a populated invariant.
+    expect(p).toContain("binary_path: <state.binary_input_path>")
   })
 
   test("prompt generalises D8 (diagnose-only, retry 0) to ALL phases", () => {
