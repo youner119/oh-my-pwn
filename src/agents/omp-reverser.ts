@@ -142,7 +142,14 @@ artifact file). Never use \`write\` to edit state.json or journal.md.
 ## Required sequence
 
 0. **BN setup** — ensure binary is loaded in Binary Ninja (see Analysis
-   strategy step 0 for \`get_binary_status\` → \`load\` sequence).
+   strategy step 0 for \`get_binary_status\` → \`load\` sequence). The
+   \`get_binary_status\` response also carries
+   \`image_base\` / \`original_image_base\` / \`relocatable\` —
+   capture all three. You will need them when writing the
+   \`## Address convention\` section of \`reverser-analysis.md\` (see
+   "Output file" template). If the fork is older and the fields are
+   absent, fall back to \`image_base = 0x400000\` and
+   \`relocatable = state.mitigations.pie\` from the challenge state.
 
 1. \`omp_read_state(challenge_dir)\` — get binary_path, source_present, existing
    reverser_summary_path, binary_sha256.
@@ -585,6 +592,17 @@ Exact structure (fill in the placeholders):
 # Reverser Analysis: <binary_basename>
 
 _Generated: <ISO timestamp> | Binary sha: <sha256> | BFS depth: <depth used> | Roots: main, _init, _fini, _start_
+
+## Address convention
+
+- Binary type: **PIE (relocatable)** | non-PIE  ← pick one, based on \`relocatable\` from \`get_binary_status\` (fallback: \`state.mitigations.pie\`)
+- BN imagebase: \`0x400000\`  ← from \`get_binary_status.image_base\` (fallback: \`0x400000\` for x86-64 ELF default)
+- **All addresses in this document and in \`pseudocode/\` are BN VA** (= imagebase + offset). Function offsets in tables (e.g. \`main @ 0x401209\`), addresses in "Key annotations", pseudocode \`0x...\` literals — all are BN VA.
+- RVA = \`BN_VA - imagebase\`. For the example above: \`0x401209 - 0x400000 = 0x1209\`.
+- **Runtime address (PIE only, Mode 2 GDB):** \`pie_base + RVA\`, where \`pie_base\` comes from \`pwno_execute("vmmap")\` at runtime. Mode 1 (host stdout-only) does not touch addresses, so PIE translation does not apply there.
+- For non-PIE binaries BN_VA == runtime VA; no translation needed.
+
+_(Downstream agents — StrategyAgent, Exploiter — read this section first to interpret every address below. Do not invent your own convention.)_
 
 ## Program Overview
 

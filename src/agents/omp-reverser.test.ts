@@ -273,4 +273,27 @@ describe("createOmpReverserAgent", () => {
     expect(p).toMatch(/Catalog vs HLIL = different layers|different layers/i)
     expect(p).toMatch(/ctf-pwn\/.*off-limits|off-limits/i)
   })
+
+  test("reverser-analysis.md template carries Address convention block (2026-05-21)", () => {
+    const agent = createOmpReverserAgent("test-model")
+    const p = agent.prompt ?? ""
+    // The output-file template must include an Address convention section
+    // so SA / Exploiter can interpret every BN VA in the document.
+    expect(p).toContain("## Address convention")
+    expect(p).toContain("PIE (relocatable)")
+    expect(p).toContain("BN imagebase")
+    // The formulas must spell out BN_VA / RVA / runtime so the consumer
+    // doesn't reinvent them (the vuln_1 / afterimage failure mode came
+    // from each downstream agent guessing its own convention).
+    expect(p).toContain("BN_VA - imagebase")
+    expect(p).toContain("pie_base + RVA")
+    expect(p).toContain("vmmap")
+    // Required sequence must instruct Reverser to capture image_base /
+    // relocatable from get_binary_status (with fallback) so the
+    // convention block has real values, not placeholders.
+    expect(p).toContain("get_binary_status")
+    expect(p).toContain("image_base")
+    expect(p).toContain("relocatable")
+    expect(p).toContain("0x400000")
+  })
 })
