@@ -151,7 +151,7 @@ omp
   완료된 작업은 `prev-task.md` 로, 생각 중인 후보는 `backlog.md` 로 분리.
 - **`.omc/state/prev-task.md`** — 완료된 작업 아카이브 (envsetup 재설계,
   Knowledge integration phase K-series, M0–M5 main 등). 최신 우선 정렬.
-- **`.omc/research/backlog.md`** — 생각 중인 작업 후보 idea backlog.
+- **`.omc/state/backlog.md`** — 생각 중인 작업 후보 idea backlog.
   Deep-interview 시 `.omc/specs/` 로 spec graduate, 진입 결정 시
   `current-task.md` active phase 로 이동, 폐기 시 strikethrough 후 유지.
 - **`.omc/specs/deep-interview-parallel-orchestration.md`** — 병렬

@@ -319,17 +319,15 @@ oh-my-pwn/
 ├── .omc/                         ← 세션 / 스펙 상태 (dotfile)
 │   ├── state/
 │   │   ├── current-task.md       ← active phase + Open blockers + Session continuity
-│   │   └── prev-task.md          ← 완료된 작업 아카이브 (최신 우선)
-│   ├── research/
-│   │   ├── backlog.md            ← 생각 중인 작업 후보 idea backlog
-│   │   ├── pwno-mcp-debugging-investigation.md
-│   │   └── reverser-future-ideas.md
+│   │   ├── prev-task.md          ← 완료된 작업 아카이브 (최신 우선)
+│   │   └── backlog.md            ← 생각 중인 작업 후보 idea backlog
 │   ├── specs/
 │   │   ├── deep-interview-oh-my-pwn.md           ← 원본 요구사항
 │   │   ├── deep-interview-reverser-redesign.md   ← Reverser 재설계
 │   │   ├── deep-interview-exploit-pipeline.md    ← Exploit pipeline redesign (3-agent)
 │   │   └── deep-interview-parallel-orchestration.md  ← 병렬 오케스트레이션 재설계
 │   └── research/
+│       ├── pwno-mcp-debugging-investigation.md   ← Mode 2 무한루프 조사
 │       └── reverser-future-ideas.md              ← post-MVP 아이디어
 ├── reference/                    ← (gitignored) OmO clone — 패턴 참조용
 │   └── oh-my-openagent/
@@ -430,7 +428,7 @@ OmP는 여러 session에 걸쳐 개발됩니다. 세션 간 연속성은 세 파
 - **`.omc/state/current-task.md`** — *현재* active phase + Open blockers
   + Session continuity. 진입 결정된 항목 만 여기.
 - **`.omc/state/prev-task.md`** — 완료된 작업 아카이브 (최신 우선 정렬).
-- **`.omc/research/backlog.md`** — 생각 중인 작업 후보 idea backlog.
+- **`.omc/state/backlog.md`** — 생각 중인 작업 후보 idea backlog.
   Deep-interview 시 `.omc/specs/` 로 spec graduate, 진입 결정 시
   current-task.md active phase 로 이동.
 
@@ -469,7 +467,7 @@ MVP 단계라 CI 파이프라인이 아직 설정되지 않았습니다. 개인 
 | `CLAUDE.md` | Claude Code 세션 규칙 |
 | `.omc/state/current-task.md` | 현재 active phase + Open blockers |
 | `.omc/state/prev-task.md` | 완료된 작업 아카이브 (최신 우선) |
-| `.omc/research/backlog.md` | 생각 중인 작업 후보 idea backlog |
+| `.omc/state/backlog.md` | 생각 중인 작업 후보 idea backlog |
 
 ---
 
