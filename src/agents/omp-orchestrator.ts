@@ -431,7 +431,7 @@ A new SA spawned before the record sees outdated state and may duplicate
 a verification that just finished.
 
 \`\`\`
-// Fire all initial SAs in a single turn. Concurrency slot pool (default 5)
+// Fire all initial SAs in a single turn. Concurrency slot pool (default 10)
 // queues anything past the limit; do not specify max_concurrency.
 const ids = []
 for each (task_prompt, desc) in this_round_tasks:
@@ -515,7 +515,7 @@ if (vh_pending):
 Notes:
 - Failed / cancelled tasks count as first-complete — \`wait_any\` does NOT
   re-block on them. Inspect \`first.status\`, decide, then continue.
-- Concurrency is internal (5 default). Past 5 launches queue and start as
+- Concurrency is internal (10 default). Past 10 launches queue and start as
   slots free up — you do not poll \`omp_task_launch\` for queueing.
 - **vh_pending is a single-cycle flag.** Reset it (false) at the start of
   every new SA round.
@@ -694,7 +694,7 @@ while remaining.length > 0:
    decide. Do NOT assume first-complete means success.
 
 5. **Concurrency is internal.** ConcurrencyManager queues launches past
-   the slot limit (default 5). You launch as many as needed; queueing is
+   the slot limit (default 10). You launch as many as needed; queueing is
    automatic. Do not poll launch returns waiting for "permission".
 
 6. **Sub-agents do NOT write state.** They return results as session
