@@ -456,18 +456,25 @@ export const ChallengeStateSchema = z.object({
 
   /* ── VulnHunter (T10) ──────────────────────────────────────────────────── */
 
+  /**
+   * Merged + deduped vulnerability candidate list. Written by the
+   * Orchestrator from the JSON arrays returned by each VulnHunter
+   * ensemble instance — VulnHunter agents themselves do not call
+   * `omp_patch_state`. (`vulnhunter_analysis_path` / `vulnhunter_analyzed_at`
+   * existed in the pre-ensemble T10 design and were retired with the
+   * parallel orchestration cutover; markdown artifact is gone too.)
+   */
   vuln_candidates: z.array(VulnCandidateSchema).default([]),
-  /** Path to VulnHunter's analysis artifact (vulnhunter-analysis.md). */
-  vulnhunter_analysis_path: z.string().optional(),
-  /** When VulnHunter last completed analysis. */
-  vulnhunter_analyzed_at: IsoTimestampSchema.optional(),
 
   /* ── StrategyAgent (T14) ────────────────────────────────────────────────── */
 
-  /** Path to StrategyAgent's plan artifact (strategist-plan.md). */
-  strategist_plan_path: z.string().optional(),
-  /** When StrategyAgent last designed/updated the plan. */
-  strategist_planned_at: IsoTimestampSchema.optional(),
+  // StrategyAgent operates state-only — no markdown plan artifact, no
+  // dedicated state field. Plan state lives in `stages[]` +
+  // `vuln_candidates[].verification_result` / `gives` / `needs` /
+  // `combined_from`. (`strategist_plan_path` / `strategist_planned_at`
+  // existed in an earlier T14 sketch and were retired with the
+  // parallel orchestration cutover — "PoC code is the unit of
+  // knowledge", per `.omc/specs/deep-interview-parallel-orchestration.md`.)
 
   /* ── Stage map + exploitation progress (T14 / T16) ─────────────────────── */
 

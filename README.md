@@ -126,7 +126,6 @@ opencode agent picker 에서 `omp-orchestrator` 선택 → prompt 로 "challenge
 │   ├── libc.so.6, ld-*.so.2, ...  # NEEDED libs (extracted)
 │   ├── reverser-analysis.md
 │   ├── reverser-research.md / .ko.md
-│   ├── vulnhunter-analysis.md
 │   └── pseudocode/*.txt      # BN HLIL dumps
 ├── exploit/*.py              # PoC / final exploit
 └── logs/

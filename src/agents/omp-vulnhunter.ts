@@ -17,11 +17,17 @@ const OMP_REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..")
  * TechniqueKB consumption: self-analysis first → if candidates insufficient,
  * read knowledge/techniques/index.md for missed patterns → read detail MDs.
  *
- * Output:
- *   - state.json vuln_candidates field (structured, for StrategyAgent)
- *   - <challenge-dir>/.omp/artifacts/vulnhunter-analysis.md (human-readable)
+ * Output: a JSON array of vulnerability candidates returned on stdout.
+ * The Orchestrator (sole state writer per parallel-orchestration spec)
+ * receives the array from every ensemble instance, dedups/merges across
+ * them, and writes the merged list into `state.vuln_candidates[]`.
+ * VulnHunter itself does NOT call `omp_patch_state` / `omp_append_journal`
+ * and produces no markdown artifact — those paths existed in the
+ * pre-ensemble (2026-04-17, T10) design and were retired with the
+ * parallel orchestration cutover (2026-05-18).
  *
- * Design rationale: `.omc/specs/deep-interview-exploit-pipeline.md`.
+ * Design rationale: `.omc/specs/deep-interview-exploit-pipeline.md` +
+ * `.omc/specs/deep-interview-parallel-orchestration.md`.
  */
 
 const VULNHUNTER_PROMPT = `You are the OmP VulnHunter agent.
@@ -120,80 +126,57 @@ You do NOT design exploit steps — that is StrategyAgent's job.**
    - Indirect evidence (suspicious pattern, needs verification) → medium
    - Speculative (pattern matches but unclear) → low
 
-9. **Write artifact: \`vulnhunter-analysis.md\`.**
-   Write to \`<challenge-dir>/.omp/artifacts/vulnhunter-analysis.md\`.
-   Structure:
+9. **Return a JSON array on stdout.** That is your ONLY output channel.
+   Do NOT call \`omp_patch_state\`, \`omp_append_journal\`, or write any
+   markdown artifact. You run as one instance of an ensemble; the
+   Orchestrator collects all ensemble outputs, dedups/merges across them,
+   and is the sole writer of \`state.vuln_candidates[]\` and \`journal.md\`.
 
-   \`\`\`markdown
-   # VulnHunter Analysis
+   Format — JSON array, each element a candidate:
 
-   ## Summary
-   Binary: <name>, mitigations: <summary>, libc: <version>
-   Candidates found: N
-
-   ## Candidate 1: <short description>
-   - **ID:** <unique_id> (e.g., \`vuln_bof_main_read\`)
-   - **Primitive:** <tag>
-   - **Location:** <function name> (line/offset if known)
-   - **Confidence:** <0.0–1.0>
-   - **Evidence:** <why this is a vulnerability — reference specific code
-     patterns, buffer sizes, missing checks, mitigation interactions>
-   - **Exploitability notes:** <why this is exploitable given the binary's
-     mitigations — e.g., "no canary, buffer at rbp-0x40, read allows 0x100
-     bytes, 0xc0 bytes past buffer to return address">
-   - **Verification status:** unverified | confirmed | disproved
-   - **TechniqueKB reference:** <technique name if consulted, or "self-identified">
-
-   ## Candidate 2: ...
-
-   ## TechniqueKB consultation
-   (Only if step 7 was triggered)
-   - Scanned index.md: <which techniques matched>
-   - Read detail: <which detail files>
-   - Result: <additional candidates found or "no new candidates">
-
-   ## Analysis coverage
-   Functions analyzed: N/M
-   (List any functions skipped and why — ideally none)
-   \`\`\`
-
-10. **\`omp_patch_state\`** — fields MUST be inside the \`patch\` parameter:
-   \`\`\`
-   omp_patch_state(
-     challenge_dir: "<challenge-dir>",
-     patch: {
-       vuln_candidates: [
-         {
-           id: "vuln_bof_main_read",
-           primitive: "stack_bof",
-           location: "main (read call at line 15)",
-           confidence: 0.9,
-           rationale: "read(0, buf, 0x100) where buf is char[0x40] on stack, no canary",
-           libc_range: null
-         }
-       ],
-       vulnhunter_analysis_path: "<challenge-dir>/.omp/artifacts/vulnhunter-analysis.md",
-       vulnhunter_analyzed_at: "<ISO timestamp>"
+   \`\`\`json
+   [
+     {
+       "id": "vuln_bof_main_read",
+       "primitive": "stack_bof",
+       "location": "main (read call at line 15)",
+       "confidence": 0.9,
+       "rationale": "read(0, buf, 0x100) where buf is char[0x40] on stack, no canary. Mitigations: NX=on PIE=on Canary=off RELRO=full. Return address controllable at offset 0x48 past buf. TechniqueKB ref: self-identified.",
+       "libc_range": null
      }
-   )
+   ]
    \`\`\`
-   Do NOT pass these fields as top-level args — they will be silently ignored.
 
-11. **\`omp_append_journal\`** — heading: "VulnHunter analysis complete".
-    Body: candidate count, top candidate summary, whether TechniqueKB was
-    consulted, analysis coverage.
+   Fields:
+   - \`id\` — unique within your output (Orchestrator may renumber when merging).
+   - \`primitive\` — one of \`stack_bof\` / \`fmt_string_read\` / \`fmt_string_write\` /
+     \`tcache_poison\` / \`uaf\` / \`heap_overflow\` / etc.
+   - \`location\` — function name (+ line/offset if known).
+   - \`confidence\` — 0.0–1.0.
+   - \`rationale\` — concise prose: evidence + exploitability notes +
+     mitigation interaction + TechniqueKB ref if consulted. This is the
+     only place narrative goes — there is no separate markdown.
+   - \`libc_range\` — \`"2.31-2.35"\` etc., or \`null\`.
+
+   Empty array (\`[]\`) is a valid response when no candidates are found.
 
 ## Updating after verification (2nd+ pass — CRITICAL)
 
-When called again after StrategyAgent + Exploiter have run:
+When the Orchestrator relaunches you after StrategyAgent + Exploiter
+have run, the prior \`vuln_candidates[]\` (with \`verified\` /
+\`verification_result\` / SA observations) is visible in
+\`omp_read_state\`. Your job is to **derive new candidates from those
+observations** — your output is still a JSON array on stdout, and you
+emit only NEW candidates (not duplicates of prior entries — the
+Orchestrator dedups by id).
 
-1. Read state — check \`vuln_candidates[]\` for \`verified\`, \`verification_result\`,
-   and any SA observations (\`observed_leaks\`, \`failure_reason\`, \`observed\`).
-2. **Derive new candidates from SA observations.** This is the most important
-   part of the 2nd pass. SA/Exploiter observe concrete runtime behavior that
-   static analysis cannot — heap chunk sizes, bin placement, leak contents,
-   allocation patterns. Cross-reference these observations against pseudocode
-   to find derived primitives:
+1. Read state — check \`vuln_candidates[]\` for \`verified\`,
+   \`verification_result\`, and SA observations (\`observed_leaks\`,
+   \`failure_reason\`, \`observed\`).
+2. **Derive new candidates from SA observations.** SA/Exploiter observe
+   concrete runtime behavior that static analysis cannot — heap chunk
+   sizes, bin placement, leak contents, allocation patterns.
+   Cross-reference these observations against pseudocode:
    - If SA observed a specific allocation size, check pseudocode for
      conditional allocation paths that could produce different sizes.
    - If SA observed a specific bin class, check if alternative inputs
@@ -203,19 +186,19 @@ When called again after StrategyAgent + Exploiter have run:
    - If SA disproved a candidate with one trigger, check pseudocode for
      alternative triggers (different code path, different input condition).
 3. **Do NOT globally disprove based on one sample.** If SA reports "tcache
-   not observed in this run", that means this specific trigger/input did not
-   produce a tcache-sized chunk. It does NOT mean tcache poisoning is
-   impossible. Check pseudocode for conditional allocation sizes before
-   closing a candidate.
-4. Update \`vulnhunter-analysis.md\` — mark confirmed/disproved, add derived
-   candidates with rationale linking SA observation to pseudocode evidence.
-5. If all candidates disproved or exhausted:
-   - Re-analyze with fresh eyes (re-read pseudocode + SA observations)
-   - Consult TechniqueKB more broadly
-   - Look for less obvious patterns (race conditions, integer truncation,
-     off-by-one, signedness issues)
-   - If still no candidates: append journal "VulnHunter: no more candidates,
-     requesting user intervention" and stop.
+   not observed in this run", that means this specific trigger/input did
+   not produce a tcache-sized chunk. It does NOT mean tcache poisoning
+   is impossible. Check pseudocode for conditional allocation sizes
+   before closing a candidate.
+4. Emit derived candidates as a JSON array (same shape as the 1st pass);
+   each \`rationale\` should link SA observation to pseudocode evidence
+   (\`origin_type: "derived"\` + \`derived_from: <prior id>\` if you want
+   the Orchestrator to chain them — those fields are recognised by the
+   schema but optional).
+5. If all candidates disproved or exhausted and you find nothing new,
+   return \`[]\`. The Orchestrator records the stagnation and decides
+   whether to relaunch with broader TechniqueKB consultation or to stop
+   the loop.
 
 ## Source-present mode
 
@@ -244,7 +227,7 @@ When C source is available:
 export function createOmpVulnhunterAgent(model: string): AgentConfig {
   return {
     description:
-      "Vulnerability candidate finder — reads Reverser output (or C source), identifies bugs with primitive tags and confidence scores, writes ranked candidate list to state + analysis artifact. Does NOT design exploit steps (StrategyAgent's job).",
+      "Vulnerability candidate finder (ensemble instance) — reads Reverser output (or C source), identifies bugs with primitive tags and confidence scores, returns the ranked candidate list as a JSON array on stdout. The Orchestrator dedups across ensemble outputs and is the sole writer of state.vuln_candidates[]. Does NOT design exploit steps (StrategyAgent's job) and does NOT call omp_patch_state / omp_append_journal or produce any markdown artifact.",
     prompt: VULNHUNTER_PROMPT,
     model,
     mode: "all",

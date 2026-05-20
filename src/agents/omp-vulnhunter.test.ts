@@ -30,12 +30,16 @@ describe("createOmpVulnhunterAgent", () => {
     expect(p).toContain("ROP")
   })
 
-  test("prompt uses omp_read_state, omp_patch_state, omp_append_journal", () => {
+  test("prompt reads via omp_read_state but does NOT write state or journal (ensemble paradigm)", () => {
     const agent = createOmpVulnhunterAgent("test-model")
     const p = agent.prompt ?? ""
+    // Read-only state access.
     expect(p).toContain("omp_read_state")
+    // Explicit prohibition on writes — Orchestrator is sole writer.
+    expect(p).toContain("Do NOT call")
     expect(p).toContain("omp_patch_state")
     expect(p).toContain("omp_append_journal")
+    expect(p).toContain("sole writer")
   })
 
   test("prompt reads reverser_summary_path for binary analysis", () => {
@@ -89,20 +93,27 @@ describe("createOmpVulnhunterAgent", () => {
     const agent = createOmpVulnhunterAgent("test-model")
     const p = agent.prompt ?? ""
     expect(p).toContain("vuln_candidates")
-    // Required candidate fields (may appear as JSON keys or object keys)
-    expect(p).toContain("id:")
-    expect(p).toContain("primitive:")
-    expect(p).toContain("location:")
-    expect(p).toContain("confidence:")
-    expect(p).toContain("rationale:")
+    // Required candidate fields appear as JSON keys (the prompt's
+    // output format example).
+    expect(p).toContain('"id"')
+    expect(p).toContain('"primitive"')
+    expect(p).toContain('"location"')
+    expect(p).toContain('"confidence"')
+    expect(p).toContain('"rationale"')
   })
 
-  test("prompt specifies vulnhunter-analysis.md artifact", () => {
+  test("prompt returns a JSON array on stdout (no markdown artifact)", () => {
+    // Ensemble paradigm: VH produces no on-disk artifact. The single
+    // output channel is a JSON array on stdout that the Orchestrator
+    // merges across ensemble instances.
     const agent = createOmpVulnhunterAgent("test-model")
     const p = agent.prompt ?? ""
-    expect(p).toContain("vulnhunter-analysis.md")
-    expect(p).toContain("vulnhunter_analysis_path")
-    expect(p).toContain("vulnhunter_analyzed_at")
+    expect(p).toContain("JSON array")
+    expect(p).toContain("stdout")
+    // Markdown artifact + per-VH state field references are gone.
+    expect(p).not.toContain("vulnhunter-analysis.md")
+    expect(p).not.toContain("vulnhunter_analysis_path")
+    expect(p).not.toContain("vulnhunter_analyzed_at")
   })
 
   test("prompt handles verification result updates", () => {
@@ -114,11 +125,14 @@ describe("createOmpVulnhunterAgent", () => {
     expect(p).toContain("disproved")
   })
 
-  test("prompt specifies exhaustion → user intervention handoff", () => {
+  test("prompt signals stagnation via empty JSON array", () => {
+    // VH no longer appends a journal "no more candidates" entry — the
+    // Orchestrator records stagnation when ensemble outputs collapse to
+    // empty arrays.
     const agent = createOmpVulnhunterAgent("test-model")
     const p = agent.prompt ?? ""
-    expect(p).toContain("no more candidates")
-    expect(p).toContain("user intervention")
+    expect(p).toContain("[]")
+    expect(p).toContain("stagnation")
   })
 
   test("prompt specifies confidence scoring criteria", () => {
@@ -134,14 +148,12 @@ describe("createOmpVulnhunterAgent", () => {
     const agent = createOmpVulnhunterAgent("test-model")
     const p = agent.prompt ?? ""
     expect(p).toContain("Required sequence")
-    // Key steps
+    // Key steps — ensemble paradigm: read + analyze + return JSON.
     expect(p).toContain("omp_read_state")
     expect(p).toContain("Analyze ALL functions")
     expect(p).toContain("Cross-reference mitigations")
     expect(p).toContain("TechniqueKB")
     expect(p).toContain("Rank candidates")
-    expect(p).toContain("Write artifact")
-    expect(p).toContain("omp_patch_state")
-    expect(p).toContain("omp_append_journal")
+    expect(p).toContain("Return a JSON array")
   })
 })
