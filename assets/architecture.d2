@@ -1,6 +1,3 @@
-# oh-my-pwn 파이프라인 — 간단한 버전.
-# Render: d2 assets/architecture.d2 assets/architecture.svg
-
 direction: right
 
 user: {
@@ -34,8 +31,6 @@ sa -> exp: "verify / combine"
 
 setup -> state
 rev -> state: "reverser-analysis.md"
-vh -> state: "vulnhunter-analysis.md"
-sa -> state: "strategist-plan.md"
-exp -> state: "PoC scripts / leaks / flag"
+exp -> state: "PoC scripts / flag"
 
 state -> user: "handoff journal"

@@ -19,54 +19,6 @@ CTF 챌린지의 binary 와 Dockerfile 한 쌍만 주면 envsetup → 역분석 
 
 ![architecture](assets/architecture.svg)
 
-빌드하려면 (D2 필요):
-
-```bash
-d2 assets/architecture.d2 assets/architecture.svg
-```
-
-<details>
-<summary>D2 source (이미지가 안 보일 때)</summary>
-
-```d2
-direction: right
-
-user: {
-  label: "User\n(prompt + challenge folder)"
-  shape: person
-}
-
-state: {
-  label: ".omp/\nstate.json + journal.md\n+ artifacts/"
-  shape: cylinder
-}
-
-orch: omp-orchestrator
-setup: omp-setup
-rev: omp-reverser
-vh: { label: "VulnHunter\n(ensemble × N)" }
-sa: { label: "Strategist\n(parallel race)" }
-exp: Exploiter
-
-user -> orch: "challenge dir"
-
-orch -> setup: "Phase 0\ndocker build / patchelf / verify"
-orch -> rev: "Phase 1\nBN MCP analysis"
-orch -> vh: "Phase 2\nensemble"
-vh -> sa: "candidates"
-sa -> exp: "verify / combine"
-
-setup -> state
-rev -> state: "reverser-analysis.md"
-vh -> state: "vulnhunter-analysis.md"
-sa -> state: "strategist-plan.md"
-exp -> state: "PoC scripts / leaks / flag"
-
-state -> user: "handoff journal"
-```
-
-</details>
-
 ## Prerequisites
 
 | 항목 | 버전 / 비고 |
