@@ -109,6 +109,20 @@ describe("createOmpStrategistAgent", () => {
     expect(p).toContain("inconclusive")
   })
 
+  test("prompt routes methodology failures via verification_blockers, not new_candidates (2026-05-21)", () => {
+    const agent = createOmpStrategistAgent("test-model")
+    const p = agent.prompt ?? ""
+    // The result-JSON shape must advertise verification_blockers and must
+    // not carry the retired new_candidates slot.
+    expect(p).toContain('"verification_blockers"')
+    expect(p).not.toContain('"new_candidates"')
+    // The body must spell out the rule so future edits cannot re-add the
+    // smuggling path SA used in the vuln_3 incident.
+    expect(p).toContain("verification_blockers channel")
+    expect(p).toContain("VH is the sole producer")
+    expect(p).toContain("No vuln_candidates invention")
+  })
+
   test("prompt specifies mitigation awareness", () => {
     const agent = createOmpStrategistAgent("test-model")
     const p = agent.prompt ?? ""

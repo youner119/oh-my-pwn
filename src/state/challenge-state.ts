@@ -73,7 +73,14 @@ export const CandidateOriginSchema = z.enum([
   "initial",
   /** Derived from a confirmed candidate via VulnHunter 2nd-pass analysis. */
   "derived",
-  /** Discovered incidentally by Exploiter during verification (unexpected leak, heap state, etc.). */
+  /**
+   * Legacy / forward-compat only. The active pipeline no longer produces
+   * `incidental` candidates: VH is the sole producer of `vuln_candidates`,
+   * and SA/Exploiter report findings via `verification_blockers` (verification
+   * methodology) or by signalling vh_pending (new exploration angle) instead
+   * of inventing candidates themselves. Kept in the enum so historical
+   * state.json files still parse.
+   */
   "incidental",
 ])
 export type CandidateOrigin = z.infer<typeof CandidateOriginSchema>
@@ -113,6 +120,23 @@ export const VulnCandidateSchema = z.object({
   needs: z.array(z.string()).optional(),
   /** For combined primitives: IDs of candidates that were combined to create this one. */
   combined_from: z.array(z.string()).optional(),
+  /**
+   * SA-reported verification methodology issues that blocked the verify task
+   * (e.g. PIE base translation needed, GDB attach failed for tooling reason).
+   * NOT a vulnerability primitive — these are tool/method corrections forwarded
+   * to the next SA spawn for the same candidate. VH is the sole producer of
+   * vuln_candidates; SA must never invent a new candidate to express a
+   * verification failure cause.
+   */
+  verification_blockers: z
+    .array(
+      z.object({
+        cause: z.string().min(1),
+        suggested_fix: z.string().optional(),
+        retry_recommended: z.boolean().default(false),
+      }),
+    )
+    .optional(),
 })
 export type VulnCandidate = z.infer<typeof VulnCandidateSchema>
 

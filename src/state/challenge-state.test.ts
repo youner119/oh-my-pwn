@@ -214,6 +214,51 @@ describe("ChallengeStateSchema", () => {
     expect(() => ChallengeStateSchema.parse(bad)).toThrow()
   })
 
+  test("accepts vuln_candidates with verification_blockers (2026-05-21)", () => {
+    const state = {
+      ...createInitialChallengeState(baseInput),
+      vuln_candidates: [
+        {
+          id: "vuln_1",
+          primitive: "uaf_read_write",
+          verification_result: "inconclusive",
+          verification_blockers: [
+            {
+              cause:
+                "BN VA 0x4553ab includes imagebase 0x400000; PIE breakpoints did not fire",
+              suggested_fix:
+                "translate via PIE_BASE + (BN_ADDR - 0x400000) before pwno_set_breakpoint",
+              retry_recommended: true,
+            },
+          ],
+        },
+      ],
+    }
+    const parsed = ChallengeStateSchema.parse(state)
+    const blockers = parsed.vuln_candidates[0]?.verification_blockers
+    expect(blockers).toHaveLength(1)
+    expect(blockers?.[0]?.cause).toContain("BN VA")
+    expect(blockers?.[0]?.suggested_fix).toContain("PIE_BASE")
+    expect(blockers?.[0]?.retry_recommended).toBe(true)
+  })
+
+  test("verification_blockers.retry_recommended defaults to false when omitted", () => {
+    const state = {
+      ...createInitialChallengeState(baseInput),
+      vuln_candidates: [
+        {
+          id: "vuln_1",
+          primitive: "bof",
+          verification_blockers: [{ cause: "missing debug info" }],
+        },
+      ],
+    }
+    const parsed = ChallengeStateSchema.parse(state)
+    expect(
+      parsed.vuln_candidates[0]?.verification_blockers?.[0]?.retry_recommended,
+    ).toBe(false)
+  })
+
   test("accepts parallel_config with defaults", () => {
     const state = {
       ...createInitialChallengeState(baseInput),

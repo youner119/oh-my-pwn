@@ -385,6 +385,20 @@ User hint (if any) always takes priority over the round mode.
 **Max 3 retries** (\`max_retries_per_candidate = 3\`). After 3 failures
 → return \`status: "inconclusive"\`.
 
+**verification_blockers channel.** When verification fails for a
+*methodology or tooling reason* — PIE base address mismatch, attach
+configuration error, missing debug info, session-id collision, harness
+misuse, etc. — i.e. the candidate itself was never actually exercised
+because the verify rig misfired, populate \`verification_blockers\` in the
+return JSON. The Orchestrator records these per-candidate and forwards
+them into the next SA spawn for the same candidate so retries do not
+repeat the same tooling mistake. NEVER smuggle a methodology issue into
+\`vuln_candidates\` by inventing a new candidate for it — VH is the sole
+producer of vulnerability primitives. If your verification instead
+revealed a *different exploit angle worth re-exploring* (not the same
+candidate, a genuinely new direction), let the Orchestrator's deferred-VH
+path handle it; do not create the candidate yourself.
+
 ### Step 8: Return structured result
 
 \`\`\`json
@@ -400,13 +414,11 @@ User hint (if any) always takes priority over the round mode.
   "observed_leaks": [
     { "name": "<name>", "value": "<hex from this run>", "notes": "<how obtained — audit only, NOT for reuse>" }
   ],
-  "new_candidates": [
+  "verification_blockers": [
     {
-      "primitive": "<incidental discovery>",
-      "location": "<where>",
-      "rationale": "<why>",
-      "gives": ["<what it would give>"],
-      "needs": ["<what it needs>"]
+      "cause": "<what specifically stopped verification — e.g. 'BN VA includes imagebase 0x400000 but binary is PIE so GDB breakpoints did not fire'>",
+      "suggested_fix": "<concrete remedy if you know one — e.g. 'translate BN_ADDR via PIE_BASE + (BN_ADDR - 0x400000)'>",
+      "retry_recommended": true
     }
   ],
   "flag": "<flag string if shell/flag obtained, null otherwise>",
@@ -435,6 +447,11 @@ User hint (if any) always takes priority over the round mode.
   pattern (see Step 5). Forward exact phrasing to Exploiter in Step 6.
 - **Fail fast.** Diagnose, don't blindly retry.
 - **No state writes.** Orchestrator is the sole writer.
+- **No vuln_candidates invention.** VH is the sole producer of
+  vulnerability primitives. If verification misfires for a tooling /
+  methodology reason, route through \`verification_blockers\`. If a fresh
+  exploration angle seems warranted, let the Orchestrator's deferred-VH
+  path decide. Never package either as a new \`vuln_candidates\` entry.
 `
 
 export function createOmpStrategistAgent(model: string): AgentConfig {

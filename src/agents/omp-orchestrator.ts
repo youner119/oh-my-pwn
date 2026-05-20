@@ -390,6 +390,10 @@ sub-agent can apply the same \`container_dir + "/" + basename\` rule.
 TASK: Verify this primitive.
 Candidate: { id, primitive, location, rationale }
 All verified primitives so far: <list with gives/needs/poc_script_path>
+Previous verification blockers (if state.vuln_candidates[<id>].verification_blockers
+  is non-empty): <list each { cause, suggested_fix, retry_recommended }
+  verbatim>. Address them before retrying the same methodology — do
+  not repeat a tooling mistake already diagnosed.
 Challenge dir (HOST): <challenge_dir>
 Workspace dir (CONTAINER): <container_dir>
 Binary (CONTAINER): <binary_in_ctr>
@@ -538,8 +542,21 @@ When you write \`omp_patch_state\` inside the loop, the patch must reflect:
 - **Do NOT store leak values for script reuse.** Leak values are
   runtime-dependent (ASLR). The \`poc_script_path\` contains the leak
   logic — future COMBINE tasks reference the PoC code, not stored values.
-- Dedup \`new_candidates\` across SAs (same primitive+location = same)
-  → assign unique IDs, add to \`vuln_candidates[]\`.
+- **Record \`verification_blockers\` per-candidate.** When an SA result
+  carries a non-empty \`verification_blockers\` array, write it onto the
+  same candidate's \`verification_blockers\` field (replace the entire
+  array — last SA wins; do not append-merge across rounds). These are
+  *methodology* corrections (PIE base mismatch, attach config, missing
+  debug info, harness misuse, etc.), not new vulnerabilities. The next
+  SA spawn for the same candidate reads them from state via Step 2.2's
+  prompt template (see "Previous verification blockers" line).
+- **Never accept new \`vuln_candidates\` from SA or Exploiter.** VH is
+  the sole producer. The retired \`new_candidates\` channel — where SA
+  or Exploiter could smuggle "incidental discoveries" into
+  \`vuln_candidates[]\` — must not be re-introduced. If an SA result
+  describes a different exploration angle that you (the Orchestrator)
+  judge worth a fresh VH layer, set \`vh_pending = true\` per Step 2.3
+  rather than minting a candidate yourself.
 
 #### Step 2.5 — (removed)
 
