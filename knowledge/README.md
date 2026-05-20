@@ -1,87 +1,80 @@
 # knowledge/
 
 OmP agent (VulnHunter / StrategyAgent / Reverser / Exploiter) 가 *모르는 것* 을 채우는 재료 창고.
-LLM 단독으로는 닿지 못하는 도메인 지식 — 기법 카탈로그, 과거 CTF writeup, 외부 reference — 을
-누적해서 agent 가 file read 로 직접 소비한다.
+LLM 단독으로는 닿지 못하는 도메인 지식 — 기법 카탈로그, 원자료 dump, 과거 CTF writeup, agent 누적 인사이트 — 을 누적해서 agent 가 file read 로 직접 소비한다.
 
-## 구성
+Spec: [`.omc/specs/deep-interview-knowledge-integration.md`](../.omc/specs/deep-interview-knowledge-integration.md)
+
+## 4 영역 구조
 
 ```
 knowledge/
-├── ctf-pwn/       ← github.com/ljagiello/ctf-skills 의 ctf-pwn/ 카테고리 vendor
-├── ctf-reverse/   ← 동상 ctf-reverse/ 카테고리 vendor (Reverser agent 용)
-└── writeups/      ← (예정) 사용자가 들고와서 후처리한 과거 CTF 문제별 해설 + exploit
+├── README.md          ← 본 파일
+├── ctf-pwn/           ← Vendor: 정돈된 기법 카탈로그 (MIT). git 안 (~500K).
+├── ctf-reverse/       ← Vendor: Reverser 용 카탈로그 (MIT). git 안 (~430K).
+├── how2heap/          ← (계획) Vendor: heap 기법 C source + README.
+├── sources/           ← Raw original dumps. **git 밖** (사이즈 큼).
+├── notes/             ← Agent-curated wiki. 빈 채로 시작, 자라남.
+└── writeups/          ← User-owned CTF case records. git 안.
 ```
 
-다른 카테고리 (ctf-misc 등) 는 검토 결과 OmP scope 와 fit 약해 vendoring 보류. 필요해지면
-`scripts/sync-ctf-pwn.sh` / `scripts/sync-ctf-reverse.sh` 와 동일한 패턴으로 별도 sync
-스크립트를 추가한다.
+### 영역별 정책
 
-## Vendored 카테고리
+| 영역 | Write | Read | Git 추적 | 비고 |
+|---|---|---|---|---|
+| `<vendor>/` (top-level) | sync 스크립트만 | 모든 agent | ✅ | 정돈된 외부 카탈로그. Touch 금지 — sync 시 덮어씀. |
+| `sources/` | 사용자 (수동 dump) | 모든 agent (있을 때) | ❌ gitignore | 블로그/PDF/writeup binary 등 raw. Repo 밖에 저장 (cloud/외장/별도 dir). 사이즈 큼. |
+| `notes/` | agent + 사용자 | 모든 agent | ✅ | challenge 풀다가 발견한 generic 인사이트. frontmatter 권장. |
+| `writeups/` | 사용자 | 모든 agent | ✅ | `<ctf>/<chal>/{writeup.md, exploit.py, tags.yaml}`. Binary/large blob 는 `sources/` 로 분리. |
 
-| 카테고리 | 주 소비자 | 출처 디렉토리 | sync 스크립트 |
+### Graceful skip
+
+`notes/` / `writeups/` 가 `sources/<id>` 를 참조해도 **부재 시 silently skip**. sources 는 머신마다 있을 수도 없을 수도 있는 "보조 자료" — 본문은 self-contained 하게 작성.
+
+## Vendor 목록
+
+| Vendor | 주 소비자 | 출처 | sync 스크립트 |
 |---|---|---|---|
-| `ctf-pwn/` | VulnHunter / StrategyAgent / Exploiter | `ctf-skills/ctf-pwn/` | `scripts/sync-ctf-pwn.sh` |
-| `ctf-reverse/` | Reverser (anti-debug 인식, custom VM, obfuscation, language-specific 패턴 보강) | `ctf-skills/ctf-reverse/` | `scripts/sync-ctf-reverse.sh` |
+| `ctf-pwn/` | VulnHunter / StrategyAgent / Exploiter | [ljagiello/ctf-skills](https://github.com/ljagiello/ctf-skills) — `ctf-pwn/` 카테고리, MIT | `scripts/sync-ctf-pwn.sh` |
+| `ctf-reverse/` | Reverser (anti-debug, custom VM, obfuscation, language-specific 패턴) | 동상 — `ctf-reverse/` 카테고리, MIT | `scripts/sync-ctf-reverse.sh` |
+| `how2heap/` | (계획) VulnHunter / StrategyAgent / Exploiter (heap 도메인) | [shellphish/how2heap](https://github.com/shellphish/how2heap), MIT | (K8 에서 generic 화 예정) |
 
-### 공통 메타데이터
+### 메타데이터 (각 vendor 폴더)
 
-| 항목 | 값 |
-|---|---|
-| 출처 | <https://github.com/ljagiello/ctf-skills> |
-| 라이선스 | MIT (Lukasz Jagiello, 2026) — 원본 `LICENSE` 가 각 카테고리 폴더에 그대로 보존 |
-| 초기 vendor 날짜 | 2026-05-19 |
-| 초기 upstream commit | `1af14f9030fee9da46014a8a3ed61a555b81ab98` |
-| 가져온 방식 | 수동 vendor (카테고리별 별도 sync 스크립트) |
-
-각 폴더의 `.upstream` 파일에 현재 SHA + sync 날짜가 기록됨.
+- 원본 `LICENSE` 보존
+- `.upstream` 파일 — repo URL, commit SHA, sync 날짜
 
 ## 동기화
 
 ```bash
-# upstream HEAD 로 갱신 (실제 파일 변경)
+# upstream HEAD 로 갱신
 bash scripts/sync-ctf-pwn.sh
 bash scripts/sync-ctf-reverse.sh
 
 # 무엇이 바뀌는지 미리보기 (실제 변경 없음)
 bash scripts/sync-ctf-pwn.sh --dry-run
-bash scripts/sync-ctf-reverse.sh --dry-run
 ```
 
 각 스크립트가 하는 일:
-1. `github.com/ljagiello/ctf-skills` 를 임시 디렉토리에 shallow clone.
-2. 해당 카테고리 하위만 `knowledge/<카테고리>/` 으로 `rsync -a --delete` (단, `LICENSE` 와
-   `.upstream` 은 exclude — 별도로 갱신).
-3. upstream `LICENSE` 를 `knowledge/<카테고리>/LICENSE` 로 복사.
-4. `knowledge/<카테고리>/.upstream` 에 새 SHA + 날짜 기록.
+1. upstream repo 를 임시 디렉토리에 shallow clone
+2. 해당 카테고리만 `knowledge/<vendor>/` 으로 `rsync -a --delete` (단 `LICENSE` 와 `.upstream` 은 exclude)
+3. upstream `LICENSE` 복사
+4. `.upstream` 에 새 SHA + 날짜 기록
 
-동기화 후 `git diff knowledge/<카테고리>/` 로 변경분 확인하고 commit.
+동기화 후 `git diff knowledge/<vendor>/` 로 변경분 확인하고 commit.
 
-## 수정 정책 (중요)
+## 수정 정책
 
-- **vendored 폴더 (`ctf-pwn/`, `ctf-reverse/`) 안의 파일을 직접 수정하지 말 것.** sync 시
-  `--delete` 옵션으로 upstream 에 없는/다른 내용은 덮어쓰여진다.
-- 우리만의 추가 기법, 노트, 본인 writeup 등은 **`knowledge/writeups/`** 또는 `knowledge/` 의
-  다른 폴더에 둔다.
-- vendored 카테고리 자체에 기여하고 싶으면 upstream 에 PR 보낸 뒤 다음 sync 에 반영되도록
-  한다.
+- **Vendor 폴더 안의 파일 직접 수정 금지** — sync 시 `--delete` 로 덮어쓰여짐. 추가 인사이트는 `notes/` 또는 `writeups/`.
+- **`sources/` 는 사용자 본인 dump 만** — repo 안에 commit 안 함 (gitignore). 외부 공유 금지 (라이선스 무관 private use).
+- **`notes/` / `writeups/` 는 사용자 + agent 자유** — agent 가 challenge 풀다가 발견하면 정해진 INDEX 패턴 따라 in-line 추가.
 
-## MIT 라이선스 의무
+## MIT 라이선스 의무 (vendor)
 
-원본 `LICENSE` 가 각 카테고리 폴더 안에 그대로 보존되므로 *copyright + permission notice
-유지* 의무 충족.
+원본 `LICENSE` 가 각 vendor 폴더에 보존되므로 *copyright + permission notice 유지* 의무 충족.
 
-## writeups/ (예정)
+## Agent prompt 와의 관계
 
-사용자가 직접 들고와서 후처리한 과거 CTF 문제 모음. 형식 미정 — 도입할 때 본 README 갱신.
+VH/SA/Exploiter/Reverser prompt 가 default base 로 vendor SKILL.md 를 lazy read, domain trigger 시 추가 vendor (how2heap 등) lazy add. 자세한 path 매핑은 spec 의 "Per-agent reference 모델" 섹션 참조.
 
----
-
-## VH/SA prompt 와의 관계 (2026-05-19 시점)
-
-기존 `knowledge/techniques/` (5 technique md + index.md, 구조화 schema) 는 폐기됨. VH/SA prompt
-(`src/agents/omp-vulnhunter.ts`, `src/agents/omp-strategist.ts`) 에는 아직 옛 경로
-(`knowledge/techniques/index.md`, `knowledge/techniques/stack_bof.md`) 가 hardcode 되어 있어
-runtime read 시 깨진다. prompt 를 `knowledge/ctf-pwn/SKILL.md` 기반으로 재작성하는 작업은
-별도 task 로 이월. Reverser agent prompt 도 `knowledge/ctf-reverse/SKILL.md` 참조 추가 검토
-필요.
+옛 `knowledge/techniques/index.md` hardcode 가 일부 prompt 에 남아있다 — K1-K4 task 에서 새 path (`knowledge/ctf-pwn/SKILL.md` 등) 로 정정 예정.

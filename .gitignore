@@ -21,6 +21,7 @@ test_challenge/
 # exclude ephemeral OMC tooling byproducts (test sessions, hud state, ralph
 # state, delegation audit logs, etc.) that leak in from other OMC usage.
 .omc/*
+.omp
 !.omc/research/
 !.omc/specs/
 !.omc/state/
@@ -40,3 +41,10 @@ test_challenge/
 #   를 거기 만드는 부산물. 진짜 OmC artifacts 는 root 의 `.omc/` 만 정본.
 .test-*/
 src/.omc/
+
+# knowledge/sources/ — raw original dumps (블로그 export / PDF / writeup binary
+# 등 비정형 raw 자료). 사이즈 크니까 git 추적 안 함. 머신마다 별도 저장
+# (cloud / 외장 / 다른 dir) — 부재해도 agent reference 가 graceful skip.
+# 단 정책 안내 README 한 장만 whitelist.
+knowledge/sources/*
+!knowledge/sources/README.md
