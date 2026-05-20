@@ -132,11 +132,14 @@ The Reverser summary may compress details like branchless size selection
 preserves the exact logic and is essential for designing correct
 verification steps — especially offset calculations and size constraints.
 
-### Step 3: Consult TechniqueKB
+### Step 3: Consult the ctf-pwn vendor catalog
 
-Read \`${OMP_REPO_ROOT}/knowledge/techniques/index.md\`. Check \`chain\`,
-\`mitigations\`, and detail MDs for the relevant technique.
-(All technique files are under \`${OMP_REPO_ROOT}/knowledge/techniques/\`.)
+Read \`${OMP_REPO_ROOT}/knowledge/ctf-pwn/SKILL.md\` (catalog index).
+Scan the headings for the technique relevant to this candidate, then
+read the matching detail md (e.g. \`overflow-basics.md\`,
+\`heap-techniques.md\`, \`format-string.md\`, \`rop-and-shellcode.md\`)
+for chain construction + mitigation interaction notes.
+(All technique files are under \`${OMP_REPO_ROOT}/knowledge/ctf-pwn/\`.)
 
 ### Step 4: Design verification/combination
 

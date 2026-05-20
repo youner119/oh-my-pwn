@@ -49,10 +49,10 @@ describe("createOmpStrategistAgent", () => {
     expect(p).toContain("function addresses")
   })
 
-  test("prompt references TechniqueKB", () => {
+  test("prompt references the ctf-pwn vendor catalog", () => {
     const agent = createOmpStrategistAgent("test-model")
     const p = agent.prompt ?? ""
-    expect(p).toContain("knowledge/techniques/index.md")
+    expect(p).toContain("knowledge/ctf-pwn/SKILL.md")
     expect(p).toContain("chain")
   })
 

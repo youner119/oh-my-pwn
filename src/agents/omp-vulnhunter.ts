@@ -15,7 +15,7 @@ const OMP_REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..")
  * Scope: "what's there" + "why it's exploitable". Not "how to exploit it".
  *
  * TechniqueKB consumption: self-analysis first → if candidates insufficient,
- * read knowledge/techniques/index.md for missed patterns → read detail MDs.
+ * read knowledge/ctf-pwn/SKILL.md for missed patterns → read detail MDs.
  *
  * Output: a JSON array of vulnerability candidates returned on stdout.
  * The Orchestrator (sole state writer per parallel-orchestration spec)
@@ -105,21 +105,21 @@ You do NOT design exploit steps — that is StrategyAgent's job.**
    - Check \`libc_version\` for heap technique compatibility (e.g., tcache
      poison + safe-linking in glibc >= 2.34)
 
-7. **If candidates are insufficient — consult TechniqueKB.**
-   Read \`${OMP_REPO_ROOT}/knowledge/techniques/index.md\` (the technique
-   catalog). Scan the \`tags\`, \`needs\`, and \`mitigations\` fields to find
-   techniques that match what you observed in the binary but may not have
-   identified as a full candidate. If a technique looks relevant, read its
-   detail file (e.g., \`${OMP_REPO_ROOT}/knowledge/techniques/stack_bof.md\`)
-   for the "Reverser output에서 찾을 패턴" section — these are specific
-   code patterns to look for.
+7. **If candidates are insufficient — consult the ctf-pwn vendor catalog.**
+   Read \`${OMP_REPO_ROOT}/knowledge/ctf-pwn/SKILL.md\` (the catalog
+   index). Scan the section headings + descriptions to find techniques
+   that match what you observed in the binary but may not have been
+   identified as a full candidate. If a technique looks relevant, read
+   its detail file (e.g., \`${OMP_REPO_ROOT}/knowledge/ctf-pwn/overflow-basics.md\`,
+   \`heap-techniques.md\`, \`format-string.md\`) for concrete code
+   patterns to look for in the pseudocode.
 
-   **Important:** TechniqueKB lives in the OmP plugin repo, NOT in the
+   **Important:** the catalog lives in the OmP plugin repo, NOT in the
    challenge directory. Always use the absolute paths above. Do not try
-   \`knowledge/techniques/...\` relative to the challenge_dir — it will fail.
+   \`knowledge/ctf-pwn/...\` relative to the challenge_dir — it will fail.
 
-   TechniqueKB is a **fallback reference**, not a primary analysis tool.
-   Your own reasoning comes first.
+   The vendor catalog is a **fallback reference**, not a primary analysis
+   tool. Your own reasoning comes first.
 
 8. **Rank candidates.** Order by confidence (highest first). Confidence
    factors:

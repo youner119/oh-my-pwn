@@ -82,8 +82,8 @@ describe("createOmpVulnhunterAgent", () => {
     const agent = createOmpVulnhunterAgent("test-model")
     const p = agent.prompt ?? ""
     // TechniqueKB paths
-    expect(p).toContain("knowledge/techniques/index.md")
-    expect(p).toContain("knowledge/techniques/stack_bof.md")
+    expect(p).toContain("knowledge/ctf-pwn/SKILL.md")
+    expect(p).toContain("knowledge/ctf-pwn/overflow-basics.md")
     // Fallback nature
     expect(p).toContain("fallback")
     expect(p).toContain("insufficient")
