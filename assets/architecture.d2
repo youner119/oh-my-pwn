@@ -1,0 +1,41 @@
+# oh-my-pwn 파이프라인 — 간단한 버전.
+# Render: d2 assets/architecture.d2 assets/architecture.svg
+
+direction: right
+
+user: {
+  label: "User\n(prompt + challenge folder)"
+  shape: person
+}
+
+state: {
+  label: ".omp/\nstate.json + journal.md\n+ artifacts/"
+  shape: cylinder
+}
+
+orch: omp-orchestrator
+setup: omp-setup
+rev: omp-reverser
+vh: {
+  label: "VulnHunter\n(ensemble × N)"
+}
+sa: {
+  label: "Strategist\n(parallel race)"
+}
+exp: Exploiter
+
+user -> orch: "challenge dir"
+
+orch -> setup: "Phase 0\ndocker build / patchelf / verify"
+orch -> rev: "Phase 1\nBN MCP analysis"
+orch -> vh: "Phase 2\nensemble"
+vh -> sa: "candidates"
+sa -> exp: "verify / combine"
+
+setup -> state
+rev -> state: "reverser-analysis.md"
+vh -> state: "vulnhunter-analysis.md"
+sa -> state: "strategist-plan.md"
+exp -> state: "PoC scripts / leaks / flag"
+
+state -> user: "handoff journal"
