@@ -155,10 +155,8 @@ Read these from state first (\`omp_read_state\` once at the top):
 - \`state.binary_path\` / \`state.binary_sha256\` — **start undefined.**
   The loader does not seed these; they are YOUR write target. Phase 3
   (dynamic-linked) sets them to the patched copy under
-  \`.omp/artifacts/\`. Phase 2's static-linked branch mirrors them from
-  \`binary_input_path\` / \`binary_input_sha256\` (no patchelf applies).
-  Either way the post-setup invariant
-  \`setup_complete === true ⇒ binary_path is set\` MUST hold.
+  \`.omp/artifacts/\`. \`binary_path\` is, by definition, the post-patchelf
+  output — there is no "mirror" semantic.
 
 Compute these in your head when you need them:
 
@@ -306,33 +304,29 @@ into a SONAME → image-path map. Cross-check with
 \`readelf -d <binary_input_path> | grep NEEDED\` so you can confirm
 every NEEDED entry is covered.
 
-**Static-linked branch:** if \`ldd\` says \`not a dynamic executable\`
-(or \`readelf -d\` shows no NEEDED entries), record:
+**Static-linked branch — currently unsupported (handling decision pending).**
+
+If \`ldd\` says \`not a dynamic executable\` (or \`readelf -d\` shows no
+NEEDED entries), the binary has nothing to patchelf — but the
+\`binary_path = post-patchelf output\` invariant then leaves the field
+genuinely undefined. The resolution (a: leave undefined + downstream
+fallback / b: copy-only into \`.omp/artifacts/\` / c: classify as
+unsupported) is **pending user decision**. Until it is decided, treat
+the static-linked case as out of scope:
 
 \`\`\`text
 omp_patch_state {
-  libc_version: "static",
-  extracted_libs: {},
-  binary_path: <state.binary_input_path>,        // mirror — no patchelf
-  binary_sha256: <state.binary_input_sha256>     // mirror — same bytes
+  setup_unsupported_reason:
+    "static-linked binary — handling decision pending (see future work in prev-task.md)"
 }
 omp_append_journal {
-  section: "phase 2 dependencies",
-  body: "static binary — ld dependency discovery skipped; binary_path
-         mirrored from binary_input_path (no patchelf)."
+  section: "setup stopped — static-linked",
+  body: "static binary detected (ldd: not a dynamic executable / readelf
+         -d: no NEEDED). binary_path handling is undecided — stopping."
 }
 \`\`\`
 
-The mirror is mandatory: downstream agents read \`state.binary_path\`
-through the \`setup_complete === true\` gate, so leaving it undefined
-breaks Reverser / VH / SA / Exploiter. Mirroring is correct because
-patchelf was a no-op (no NEEDED entries to rewrite, no interpreter to
-swap).
-
-Then skip Phase 3 entirely and jump to Phase 4 (host verify runs
-directly against \`binary_input_path\` — equivalent to \`binary_path\`
-in this branch) and Phase 5 (stage only the binary, no libs, no
-patchelf).
+**Return** without setting \`setup_complete\`. Do not run Phase 3/4/5.
 
 **Dynamic-linked branch:** if some SONAMEs are unresolved, fall back
 to \`docker run --rm <image> sh -c 'ldconfig -p | grep <soname>'\` or

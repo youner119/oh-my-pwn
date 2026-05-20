@@ -81,12 +81,18 @@ describe("createOmpSetupAgent", () => {
     expect(p).toContain("sole writer")
   })
 
-  test("prompt covers the static-linked branch explicitly", () => {
+  test("prompt routes the static-linked branch to unsupported (pending decision)", () => {
+    // The earlier "mirror binary_path from binary_input_path" policy was
+    // rejected as a design decision (binary_path is, by definition, the
+    // post-patchelf output — there is no mirror semantic). Until the
+    // static-linked handling is decided (undefined+fallback / copy-only
+    // / explicit unsupported), the prompt routes static-linked binaries
+    // to the unsupported branch.
     const agent = createOmpSetupAgent("test-model")
     const p = agent.prompt ?? ""
     expect(p).toContain("not a dynamic executable")
-    expect(p).toContain('libc_version: "static"')
-    expect(p).toContain("extracted_libs: {}")
+    expect(p).toContain("static-linked binary — handling decision pending")
+    expect(p).toContain("setup_unsupported_reason")
   })
 
   test("prompt generalises D8 (diagnose-only, retry 0) to ALL phases", () => {
