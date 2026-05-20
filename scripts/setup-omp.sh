@@ -85,11 +85,24 @@ say "plugin path: $PLUGIN_PATH"
 # `bun install`은 plugin.js의 external import (@opencode-ai/plugin/tool 등)를
 # node_modules에 가져온다. opencode가 plugin.js를 로드할 때 Node ESM resolver는
 # plugin.js의 부모 트리에서 node_modules를 찾으므로 OmP repo 안에 있어야 함.
+#
+# Release branch 감지: `src/` 가 없으면 build step 자동 skip (dist/plugin.js 는
+# 이미 commit 되어 있어야 함). `bun install` 은 release 도 필요 (runtime
+# import).
+HAS_SRC=0
+if [[ -d "$REPO_ROOT/src" ]]; then
+  HAS_SRC=1
+fi
+
 if [[ "$DO_BUILD" == "1" ]]; then
   say "installing dependencies (bun install)"
   run "cd '$REPO_ROOT' && bun install"
-  say "building plugin (bun run build:plugin)"
-  run "cd '$REPO_ROOT' && bun run build:plugin"
+  if [[ "$HAS_SRC" == "1" ]]; then
+    say "building plugin (bun run build:plugin)"
+    run "cd '$REPO_ROOT' && bun run build:plugin"
+  else
+    say "release branch detected (no src/) — skipping build, using bundled dist/plugin.js"
+  fi
 else
   say "skipping install + build (--no-build)"
 fi
