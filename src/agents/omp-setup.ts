@@ -502,14 +502,43 @@ evidence block (timed_out / exit_code / stdout_head), then continue.
 ## Phase 5 — Stage to workspace + workspace-side patchelf + pwno sanity
 
 Compute \`<workspace_dir>\` and \`<container_dir>\` from \`state\` (see
-"Path conventions" above). Stage the binary + every extracted lib
-into \`<workspace_dir>\`:
+"Path conventions" above).
+
+**Invariant — never re-patch a patched ELF.** \`patchelf --replace-needed
+<soname> <path>\` only matches NEEDED entries that *still are* the bare
+SONAME (\`libc.so.6\`). The Phase 3 artifacts have absolute-path NEEDED
+already rewritten in them (\`/mnt/.../artifacts/libc.so.6\`), so if you
+stage \`<artifacts_dir>\` → \`<workspace_dir>\` and then run patchelf on the
+copy, every \`--replace-needed libc.so.6 ...\` no-ops and the workspace
+binary keeps the host absolute paths. Always re-extract from a fresh
+source for the workspace stage.
+
+Stage rule (dynamic-linked):
+
+- **Binary**: source \`host\`, src \`<state.binary_input_path>\` (the
+  unpatched original — same sha as \`state.binary_input_sha256\`).
+- **Each library + the ld interpreter**: source \`image\`, src is the
+  image-side absolute path you discovered in Phase 2's
+  \`ldd map inside image\` (e.g. \`/lib/x86_64-linux-gnu/libc.so.6\`,
+  \`/lib64/ld-linux-x86-64.so.2\`). \`state.extracted_libs\` only stores
+  the artifacts-side host path; the image-side path lives in the
+  Phase 2 ldd table you just produced.
 
 \`\`\`text
+# Binary — fresh from host input
 omp_setup_extract_file {
   source: "host",
-  src_path: <artifacts_dir>/<file>,
-  dest_path: <workspace_dir>/<basename(file)>,
+  src_path: <state.binary_input_path>,
+  dest_path: <workspace_dir>/<basename(state.binary_input_path)>,
+  dereference_symlinks: true
+}
+
+# Each library — fresh from image (use the Phase 2 ldd path)
+omp_setup_extract_file {
+  source: "image",
+  image_tag: <state.docker_image>,
+  src_path: <image abs path from Phase 2>,
+  dest_path: <workspace_dir>/<basename(src_path)>,
   dereference_symlinks: true
 }
 \`\`\`
@@ -517,8 +546,8 @@ omp_setup_extract_file {
 (For static-linked: stage only the binary; skip patchelf entirely
 and skip the verify step below or run it for sanity, your call.)
 
-For dynamic-linked, patch the staged copy with container-absolute
-paths:
+Now patchelf the freshly-staged copies. NEEDED entries are still bare
+SONAMEs, so \`--replace-needed\` rewrites them cleanly:
 
 \`\`\`text
 omp_setup_patch_elf {
@@ -539,6 +568,11 @@ omp_setup_patch_elf {
   replacements: { "<soname>": "<container_dir>/<basename>", ... }
 }
 \`\`\`
+
+After patchelf, confirm with \`readelf -d <workspace_dir>/<binary>\` (or
+spot-check one library) that NEEDED entries point at
+\`<container_dir>/...\`. If you still see \`<artifacts_dir>\` paths there,
+you re-patched a patched copy — re-stage from input/image.
 
 **pwno-mcp sanity** (bash, read-only):
 

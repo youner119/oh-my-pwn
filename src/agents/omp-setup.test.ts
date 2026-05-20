@@ -149,4 +149,27 @@ describe("createOmpSetupAgent", () => {
     // Success criterion mentions the ld entry too
     expect(p).toContain('includes the ld entry')
   })
+
+  test("Phase 5 stages from input/image, not from patched artifacts (2026-05-21)", () => {
+    const agent = createOmpSetupAgent("test-model")
+    const p = agent.prompt ?? ""
+    // Invariant must be spelled out — the bug was Phase 5 copying
+    // artifacts (already absolute-path NEEDED) → workspace and re-running
+    // patchelf, which silently no-ops the --replace-needed pass.
+    expect(p).toContain("never re-patch a patched ELF")
+    expect(p).toContain("no-ops")
+    // Binary source must be the unpatched input, not the artifacts copy.
+    expect(p).toContain("Binary — fresh from host input")
+    expect(p).toContain("<state.binary_input_path>")
+    // Libraries / ld must come from the docker image, using the Phase 2
+    // ldd map (not the artifacts path).
+    expect(p).toContain("Each library — fresh from image")
+    expect(p).toContain('source: "image"')
+    expect(p).toContain("image abs path from Phase 2")
+    // Verification step prevents silent regression — the agent is told
+    // to readelf -d after patchelf and re-stage if NEEDED still points at
+    // <artifacts_dir>.
+    expect(p).toContain("readelf -d")
+    expect(p).toContain("re-stage from input/image")
+  })
 })
