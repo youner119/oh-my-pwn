@@ -29,3 +29,14 @@ test_challenge/
 !.omc/state/current-task.md
 !.omc/state/prev-task.md
 .omx/
+
+# Test fixture leak guards.
+#
+# - .test-*/ — OmO claude-tasks / session-storage / task-create / task-get /
+#   task-update test 가 cwd 에 상대경로로 만드는 fixture 폴더. cleanup
+#   누락. OmP 가 root 에서 `bun test` 를 잘못 돌릴 때만 생기지만 (정상
+#   경로는 `cd src && bun test`) untracked 노이즈 방지.
+# - src/.omc/ — OmP test 가 cwd=src 에서 돌 때 `.omc/state/last-tool-error.json`
+#   를 거기 만드는 부산물. 진짜 OmC artifacts 는 root 의 `.omc/` 만 정본.
+.test-*/
+src/.omc/
