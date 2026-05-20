@@ -166,6 +166,21 @@ describe("createOmpStrategistAgent", () => {
     expect(p).toMatch(/Read these FIRST|do not call binja_\*/)
   })
 
+  test("spawn template forwards Knowledge paths consulted in Step 4 (K3 pre)", () => {
+    const agent = createOmpStrategistAgent("test-model")
+    const p = agent.prompt ?? ""
+    // SA forwards the absolute paths it actually lazy-read in Step 4 so
+    // Exploiter can trust the list and skip its own catalog read.
+    expect(p).toContain("Knowledge paths consulted")
+    expect(p).toMatch(/paths YOU opened in Step 4/i)
+    // Mentions the three category sources SA may lazy-read
+    expect(p).toMatch(/ctf-pwn detail md|how2heap PoC|writeup\.md/)
+    // Explicit "none" placeholder when SA opened nothing extra
+    expect(p).toMatch(/or "none"/)
+    // Anti-fabrication guard — list is empirical, not aspirational
+    expect(p).toMatch(/Paths YOU did not open MUST NOT appear/i)
+  })
+
   test("prompt emits recommended_mode hint with 2-way classification", () => {
     const agent = createOmpStrategistAgent("test-model")
     const p = agent.prompt ?? ""

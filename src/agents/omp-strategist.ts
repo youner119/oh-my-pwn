@@ -343,6 +343,9 @@ const r = omp_task_launch({
     NOTE: Do NOT pass hardcoded leak values. The PoC must obtain
     leaks fresh at runtime (ASLR). Reference source PoC code instead.
 
+    Knowledge paths consulted (HOST, optional — absolute paths YOU opened in Step 4: ctf-pwn detail md / how2heap PoC / writeup.md, or "none"): <list>
+    NOTE: Exploiter may trust this list and skip its own ctf-pwn catalog read. Paths YOU did not open MUST NOT appear here.
+
     WORKSPACE: ALL file writes MUST stay inside <challenge_dir>.
     Scripts go in the script_dir above. Do NOT create or write
     files anywhere outside <challenge_dir>.
