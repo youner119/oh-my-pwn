@@ -67,11 +67,12 @@ export {
   looksLikeSharedObject,
 } from "./loader"
 
-// EnvSetup (T04)
+// EnvSetup helpers (post-T19) — surface trimmed to what the omp-setup
+// agent's atomic tools still need. Legacy `runEnvSetup` + sub-helpers
+// (dockerfile parser, ELF mitigations, glibc detect, docker-extract,
+// patchelf) were removed in T19; the omp-setup agent does those via bash
+// + the typed atomic tools now.
 export {
-  runEnvSetup,
-  type RunEnvSetupOptions,
-  type RunEnvSetupResult,
   EnvSetupError,
   type EnvSetupErrorKind,
   type EnvSetupErrorDetail,
@@ -79,29 +80,9 @@ export {
   type DockerRunner,
   type DockerRunResult,
   type DockerRunOptions,
-  parseDockerfile,
-  parseDockerfileText,
-  type ParsedDockerfile,
-  parseElfMitigations,
-  hasInterpSegment,
-  ElfParseError,
-  type ElfMitigations,
-  detectGlibcVersion,
-  detectGlibcVersionFromBytes,
   dockerBuildImage,
   type DockerBuildResult,
   type DockerBuildOptions,
-  extractLibcAndLd,
-  type DockerExtractResult,
-  type DockerExtractDynamicResult,
-  type DockerExtractStaticResult,
-  type DockerExtractInputs,
-  patchBinaryInterpreter,
-  type PatchelfInputs,
-  type PatchelfOptions,
-  type PatchelfResult,
-  type SpawnFn,
-  type SpawnResult,
 } from "./envsetup"
 
 // Ghidra-MCP (T06) — removed in feat/binary-ninja branch.
