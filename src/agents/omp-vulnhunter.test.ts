@@ -78,15 +78,37 @@ describe("createOmpVulnhunterAgent", () => {
     expect(p).toContain("libc_version")
   })
 
-  test("prompt specifies TechniqueKB consultation as fallback", () => {
+  test("prompt specifies knowledge base consumption protocol", () => {
     const agent = createOmpVulnhunterAgent("test-model")
     const p = agent.prompt ?? ""
-    // TechniqueKB paths
+    // Step 3 — SKILL.md catalog index read up-front
     expect(p).toContain("knowledge/ctf-pwn/SKILL.md")
-    expect(p).toContain("knowledge/ctf-pwn/overflow-basics.md")
-    // Fallback nature
-    expect(p).toContain("fallback")
-    expect(p).toContain("insufficient")
+    expect(p).toContain("catalog index")
+    expect(p).toContain("index familiarisation")
+    // Step 8a — detail md lazy reads (including field-notes for atypical)
+    expect(p).toContain("knowledge/ctf-pwn/")
+    expect(p).toContain("overflow-basics.md")
+    expect(p).toContain("heap-techniques.md")
+    expect(p).toContain("field-notes.md")
+    // Step 8b — domain trigger lazy add (how2heap + kernel)
+    expect(p).toContain("knowledge/how2heap/README.md")
+    expect(p).toContain("how2heap/glibc_<ver>/<tech>.c")
+    // Step 8c — optional indices (notes, writeups)
+    expect(p).toContain("knowledge/notes/INDEX.md")
+    expect(p).toContain("knowledge/writeups/INDEX.md")
+    // Step 8d — writeup matching reads writeup.md only, not exploit.py
+    expect(p).toContain("writeup.md")
+    expect(p).toContain("DO NOT read")
+    expect(p).toContain("exploit.py")
+    // Step 8e — cross-category boundary: ctf-reverse off-limits
+    expect(p).toContain("Cross-category boundary")
+    expect(p).toContain("ctf-reverse")
+    // Step 8f — sources/ graceful skip
+    expect(p).toContain("sources/")
+    expect(p).toContain("skip silently")
+    // The "fallback / insufficient" pattern is gone — SKILL.md is now
+    // a required up-front read, not a last-resort consult.
+    expect(p).not.toContain("if candidates are insufficient")
   })
 
   test("prompt specifies candidate fields matching ChallengeState schema", () => {
@@ -150,9 +172,10 @@ describe("createOmpVulnhunterAgent", () => {
     expect(p).toContain("Required sequence")
     // Key steps — ensemble paradigm: read + analyze + return JSON.
     expect(p).toContain("omp_read_state")
+    expect(p).toContain("Read the ctf-pwn catalog index")
     expect(p).toContain("Analyze ALL functions")
     expect(p).toContain("Cross-reference mitigations")
-    expect(p).toContain("TechniqueKB")
+    expect(p).toContain("Consult the extended knowledge base")
     expect(p).toContain("Rank candidates")
     expect(p).toContain("Return a JSON array")
   })
