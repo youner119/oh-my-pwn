@@ -62,9 +62,14 @@ case "${VENDOR}" in
     UPSTREAM_URL="https://github.com/ljagiello/ctf-skills.git"
     SUBPATH="ctf-reverse"
     ;;
+  how2heap)
+    UPSTREAM_URL="https://github.com/shellphish/how2heap.git"
+    UPSTREAM_BRANCH="master"
+    SUBPATH=""
+    ;;
   *)
     echo "unknown vendor: ${VENDOR}" >&2
-    echo "known vendors: ctf-pwn, ctf-reverse" >&2
+    echo "known vendors: ctf-pwn, ctf-reverse, how2heap" >&2
     exit 2
     ;;
 esac

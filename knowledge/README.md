@@ -37,7 +37,7 @@ knowledge/
 |---|---|---|---|
 | `ctf-pwn/` | VulnHunter / StrategyAgent / Exploiter | [ljagiello/ctf-skills](https://github.com/ljagiello/ctf-skills) — `ctf-pwn/` 카테고리, MIT | `scripts/sync-ctf-pwn.sh` |
 | `ctf-reverse/` | Reverser (anti-debug, custom VM, obfuscation, language-specific 패턴) | 동상 — `ctf-reverse/` 카테고리, MIT | `scripts/sync-ctf-reverse.sh` |
-| `how2heap/` | (계획) VulnHunter / StrategyAgent / Exploiter (heap 도메인) | [shellphish/how2heap](https://github.com/shellphish/how2heap), MIT | (K8 에서 generic 화 예정) |
+| `how2heap/` | VulnHunter / StrategyAgent / Exploiter (heap 도메인) | [shellphish/how2heap](https://github.com/shellphish/how2heap), MIT (branch: master) | `scripts/sync-how2heap.sh` |
 
 ### 메타데이터 (각 vendor 폴더)
 
@@ -50,15 +50,19 @@ knowledge/
 # upstream HEAD 로 갱신
 bash scripts/sync-ctf-pwn.sh
 bash scripts/sync-ctf-reverse.sh
+bash scripts/sync-how2heap.sh
 
 # 무엇이 바뀌는지 미리보기 (실제 변경 없음)
 bash scripts/sync-ctf-pwn.sh --dry-run
 ```
 
+위 스크립트들은 모두 `scripts/sync-vendored.sh <vendor>` 의 thin wrapper —
+직접 `bash scripts/sync-vendored.sh how2heap` 형태로도 호출 가능.
+
 각 스크립트가 하는 일:
-1. upstream repo 를 임시 디렉토리에 shallow clone
-2. 해당 카테고리만 `knowledge/<vendor>/` 으로 `rsync -a --delete` (단 `LICENSE` 와 `.upstream` 은 exclude)
-3. upstream `LICENSE` 복사
+1. upstream repo 를 임시 디렉토리에 shallow clone (vendor-specific branch — 대부분 `main`, how2heap 만 `master`)
+2. 해당 subpath 만 `knowledge/<vendor>/` 으로 `rsync -a --delete` (단 `.upstream`, `LICENSE`, `.git` 은 exclude). Subpath 가 빈 문자열이면 repo root 전체.
+3. upstream `LICENSE` 복사 (부재 시 warning 후 계속)
 4. `.upstream` 에 새 SHA + 날짜 기록
 
 동기화 후 `git diff knowledge/<vendor>/` 로 변경분 확인하고 commit.
