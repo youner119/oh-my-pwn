@@ -49,11 +49,37 @@ describe("createOmpStrategistAgent", () => {
     expect(p).toContain("function addresses")
   })
 
-  test("prompt references the ctf-pwn vendor catalog", () => {
+  test("prompt specifies knowledge base consumption protocol", () => {
     const agent = createOmpStrategistAgent("test-model")
     const p = agent.prompt ?? ""
+    // Step 2 — SKILL.md catalog index up-front
     expect(p).toContain("knowledge/ctf-pwn/SKILL.md")
+    expect(p).toContain("catalog index")
+    expect(p).toContain("index familiarisation")
+    // Step 4a — detail md lazy (ctf-pwn + field-notes for atypical chains)
+    expect(p).toContain("knowledge/ctf-pwn/")
+    expect(p).toContain("heap-techniques.md")
+    expect(p).toContain("field-notes.md")
+    // Step 4b — domain trigger lazy (how2heap, kernel)
+    expect(p).toContain("knowledge/how2heap/README.md")
+    // Step 4c — optional indices
+    expect(p).toContain("knowledge/notes/INDEX.md")
+    expect(p).toContain("knowledge/writeups/INDEX.md")
+    // Step 4d — writeup matching: SA-specific key + chain structure boundary
+    expect(p).toContain("vuln_pattern + chain + mitigations")
+    expect(p).toContain("writeup.md")
+    expect(p).toContain("chain structure")
+    expect(p).toContain("Default: do NOT read")
+    expect(p).toContain("exploit.py")
+    expect(p).toContain("payload internals")
+    // SA's chain focus (Step 4a/4d both touch this)
     expect(p).toContain("chain")
+    // Step 4e — cross-category boundary
+    expect(p).toContain("Cross-category boundary")
+    expect(p).toContain("ctf-reverse")
+    // Step 4f — sources/ graceful skip
+    expect(p).toContain("sources/")
+    expect(p).toContain("skip silently")
   })
 
   test("prompt spawns Exploiter via launch + wait_all (Pattern 1)", () => {
@@ -143,8 +169,8 @@ describe("createOmpStrategistAgent", () => {
   test("prompt emits recommended_mode hint with 2-way classification", () => {
     const agent = createOmpStrategistAgent("test-model")
     const p = agent.prompt ?? ""
-    // Step 4b classification rule exists
-    expect(p).toContain("Step 4b")
+    // Step 5b classification rule exists (was Step 4b before K2잔여 renumber)
+    expect(p).toContain("Step 5b")
     expect(p).toContain("recommended_mode")
     // Both modes documented
     expect(p).toMatch(/recommended_mode:\s*1/)
@@ -193,4 +219,35 @@ describe("createOmpStrategistAgent", () => {
     const p = agent.prompt ?? ""
     expect(p).toContain("Path forwarding only")
   })
+
+  test("prompt has escalation policy on retry", () => {
+    const agent = createOmpStrategistAgent("test-model")
+    const p = agent.prompt ?? ""
+    // Step 4 default = lazy
+    expect(p).toContain("Mode default: lazy")
+    expect(p).toContain("escalation mode")
+    // Round table — round 1 lazy, round 2-3 escalation ON
+    expect(p).toContain("Round 1")
+    expect(p).toContain("retries_used == 0")
+    expect(p).toContain("retries_used == 1")
+    expect(p).toContain("Escalation ON")
+    // Step 7 retry triggers revisit of Step 4 with escalation
+    expect(p).toContain("escalation on retry")
+    // User hint takes priority over the round mode
+    expect(p).toContain("User hint")
+  })
+
+  test("prompt requires measurable expected_result with examples", () => {
+    const agent = createOmpStrategistAgent("test-model")
+    const p = agent.prompt ?? ""
+    // Step 5 guideline
+    expect(p).toContain("expected_result")
+    expect(p).toContain("measurable")
+    // ❌/✅ examples present
+    expect(p).toContain("❌")
+    expect(p).toContain("✅")
+    // Step 6 prompt template carries the SPECIFIC measurable phrasing
+    expect(p).toContain("SPECIFIC measurable observation")
+  })
+
 })

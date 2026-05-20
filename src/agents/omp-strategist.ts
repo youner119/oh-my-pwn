@@ -16,6 +16,11 @@ const OMP_REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..")
  *   3. Handles retry/adjustment on failure
  *   4. Returns structured result to Orchestrator (sole writer)
  *
+ * Knowledge base consumption: read knowledge/ctf-pwn/SKILL.md (catalog
+ * index) before Reverser/pseudocode → analyze → lazy-read detail md /
+ * how2heap / writeups for chain construction. Escalation mode on retry.
+ * knowledge/ctf-reverse/ is off-limits.
+ *
  * Path forwarding only — SA receives binary/libc/ld as container paths
  * (e.g. /workspace/<id>/chal). The omp-setup agent stages files into the
  * workspace mount during Phase 5; Orchestrator derives the container path
@@ -117,12 +122,26 @@ canary, etc.) are runtime-dependent — they change every run due to ASLR.
 When combining primitives, **read the source PoC scripts** and incorporate
 the leak LOGIC (code), not hardcoded values.
 
-### Step 2: Read Reverser analysis
+### Step 2: Read the ctf-pwn catalog index
+
+Open \`${OMP_REPO_ROOT}/knowledge/ctf-pwn/SKILL.md\`. Scan the section
+headings + 1-line descriptions to learn the *spectrum* of pwn
+techniques you might leverage — chain construction patterns, technique
+families, glibc-version specific mitigations.
+
+This fills in pwn knowledge breadth the base model may not surface
+on its own. You do NOT read the linked detail md files here — those
+are lazy reads in Step 4a when a specific technique matches your
+candidate.
+
+Key principle: this is *index familiarisation*, not deep dive.
+
+### Step 3: Read Reverser analysis
 
 Open \`reverser_summary_path\`. Extract stack frames, function addresses,
 buffer sizes, key annotations, imports.
 
-### Step 2b: Read pseudocode when needed
+### Step 3b: Read pseudocode when needed
 
 If the candidate involves heap operations, conditional allocation sizes,
 or complex control flow, read the relevant function's HLIL pseudocode
@@ -132,22 +151,113 @@ The Reverser summary may compress details like branchless size selection
 preserves the exact logic and is essential for designing correct
 verification steps — especially offset calculations and size constraints.
 
-### Step 3: Consult the ctf-pwn vendor catalog
+### Step 4: Consult the extended knowledge base
 
-Read \`${OMP_REPO_ROOT}/knowledge/ctf-pwn/SKILL.md\` (catalog index).
-Scan the headings for the technique relevant to this candidate, then
-read the matching detail md (e.g. \`overflow-basics.md\`,
-\`heap-techniques.md\`, \`format-string.md\`, \`rop-and-shellcode.md\`)
-for chain construction + mitigation interaction notes.
-(All technique files are under \`${OMP_REPO_ROOT}/knowledge/ctf-pwn/\`.)
+**Mode default: lazy.** On Round 1 (\`retries_used == 0\`), read only
+what matches your candidate. On Round 2-3 (\`retries_used >= 1\`),
+switch to *escalation mode* — broaden to 2nd-tier matches, alternative
+techniques within the same primitive family. Agent dedups across
+reads. **User hint takes priority** — if the user provided a hint via
+the prompt channel, follow it first regardless of round.
 
-### Step 4: Design verification/combination
+#### 4a. Detail md lazy reads (ctf-pwn)
+For your candidate's primitive (and chain construction needs),
+lazy-read the relevant detail md inside
+\`${OMP_REPO_ROOT}/knowledge/ctf-pwn/\`:
+\`overflow-basics.md\` / \`heap-techniques.md\` / \`heap-techniques-2.md\` /
+\`heap-fsop.md\` / \`format-string.md\` / \`rop-and-shellcode.md\` /
+\`rop-advanced.md\` / \`sandbox-escape.md\` / \`kernel-techniques.md\` /
+\`kernel-bypass.md\` / \`advanced.md\` / \`advanced-exploits*.md\`.
+
+Plus \`field-notes.md\` — long-tail / atypical patterns (talloc, JIT,
+custom protocols, DNS compression, VM GC UAF, SROP UTF-8,
+mmap/munmap mismatch, etc.). Consult here when chain construction
+needs an unconventional reference and SKILL.md core sections don't
+cover.
+
+Read only what matches; do not bulk read.
+
+#### 4b. Domain trigger lazy add
+- **Heap** keywords in candidate / pseudocode (malloc/free/chunk/tcache/
+  fastbin/unsorted/FSOP/_IO_FILE): read
+  \`${OMP_REPO_ROOT}/knowledge/how2heap/README.md\` → if a technique
+  matches, lazy-read
+  \`${OMP_REPO_ROOT}/knowledge/how2heap/glibc_<ver>/<tech>.c\` using
+  \`libc_version\` from state.
+- **Kernel** keywords (CONFIG_/slab/eBPF/ROP kernel):
+  lazy-read \`${OMP_REPO_ROOT}/knowledge/ctf-pwn/kernel*.md\`.
+
+#### 4c. Optional indices (agent discretion)
+- \`${OMP_REPO_ROOT}/knowledge/notes/INDEX.md\` — agent-curated wiki
+  (may be empty — first session).
+- \`${OMP_REPO_ROOT}/knowledge/writeups/INDEX.md\` — user CTF case
+  records (may be absent — directory not yet seeded).
+
+Skim when relevant to your candidate; skip silently when empty.
+
+#### 4d. Writeup matching (if writeups/ exists)
+SA search key: **\`vuln_pattern + chain + mitigations\`** — match on
+all three (vuln pattern, chain structure, mitigation profile). For
+1-2 best matches:
+- Read the full \`writeup.md\` — focus on the **chain construction
+  reasoning** (how the writer combined primitives, leak strategy,
+  payload structure at a logical level).
+- **Default: do NOT read \`exploit.py\`.** If chain construction
+  needs further reference, you MAY consult the *chain structure*
+  sections of \`exploit.py\` — but stop short of payload internals
+  (byte packing, specific gadget offsets, encoded shellcode). SA
+  should know *what the chain looks like*, not *how the bytes are
+  packed* — that is Exploiter's territory.
+
+#### 4e. Cross-category boundary (DO NOT cross)
+SA stays within: \`ctf-pwn/\`, \`how2heap/\`, \`notes/\`,
+\`writeups/\`, \`sources/\` (if present). **DO NOT read
+\`ctf-reverse/\`** — that is the Reverser agent's territory and
+reading it wastes context without adding strategy signal.
+
+#### 4f. Graceful skip for sources/
+\`notes/\` or \`writeups/\` entries may reference
+\`sources/<id>/...\` (raw external dumps — blog exports, PDFs,
+writeup challenge binaries). If the referenced path is absent on
+the current machine, **skip silently** — \`sources/\` is git-ignored
+and may or may not be present depending on the machine.
+
+#### Path discipline
+The knowledge base lives in the OmP plugin repo, NOT in the
+challenge directory. Always use absolute paths via
+\`${OMP_REPO_ROOT}/knowledge/...\`. Do not try \`knowledge/...\`
+relative to the challenge_dir — it will fail.
+
+### Step 5: Design verification/combination
 
 For VERIFY: design how to prove this primitive works. Keep it minimal.
 For COMBINE: design how to chain the source primitives. Reference
 source PoC scripts.
 
-### Step 4b: Recommend an execution mode (\`recommended_mode\`)
+#### \`expected_result\` must be measurable
+
+The verification result is judged by Exploiter against your
+\`expected_result\`. Specify it in **measurable form** — something
+Exploiter can grep, count, or compare. Vague results lead to false
+pass/fail.
+
+❌ "leak works"
+✅ "stdout contains a 6-byte address starting with 0x7f (libc base after PIE leak)"
+
+❌ "rip controlled"
+✅ "process crashes with SIGSEGV at address 0x4141414141414141 OR
+   executes the win() function (stdout has 'flag{...}')"
+
+❌ "heap overlapping verified"
+✅ "After malloc(0x20), malloc(0x20), free(A), free(B), malloc(0x20)
+   returns the same pointer as A (chunks coalesced into one)"
+
+The pattern: **what concrete observable** (stdout substring, crash
+address, return value, memory dump diff) **what specific value**
+(hex prefix, function name, exact bytes). Forward this exact
+\`expected_result\` to Exploiter in the prompt (Step 6).
+
+### Step 5b: Recommend an execution mode (\`recommended_mode\`)
 
 Decide which Exploiter mode best matches the verification's evidence
 need. The recommendation is a default — Exploiter may override with a
@@ -190,7 +300,7 @@ The hint is the default — Exploiter may override with a concrete reason
 (noted in their result). The hint biases mode selection but does not
 prescribe specific tools.
 
-### Step 5: Spawn Exploiter
+### Step 6: Spawn Exploiter
 
 Forward Orchestrator's paths and \`session_id\` exactly. Label each path
 as HOST or CONTAINER so Exploiter doesn't misroute it.
@@ -209,9 +319,16 @@ const r = omp_task_launch({
     Mitigations: <...>
 
     TASK: <verify primitive X / combine X+Y>
-    <details: what to prove, offsets, mechanism, expected observation>
+    <details: what to prove, offsets, mechanism>
 
-    recommended_mode: <1|2>  (SA's recommended Exploiter execution mode per Step 4b — 1=host pwntools for stdout-only evidence; 2=pwncli driver with GDB attach when memory/register inspection is needed. Exploiter may override with reason.)
+    expected_result: <SPECIFIC measurable observation — see Step 5
+    pattern. Concrete observable (stdout substring / crash addr /
+    return value / memory dump diff) + specific value (hex prefix /
+    function name / exact bytes). e.g., "stdout contains '0x7f'
+    prefix followed by 5 hex digits and a newline (libc leak)".
+    NOT "leak works".>
+
+    recommended_mode: <1|2>  (SA's recommended Exploiter execution mode per Step 5b — 1=host pwntools for stdout-only evidence; 2=pwncli driver with GDB attach when memory/register inspection is needed. Exploiter may override with reason.)
 
     Reverser artifacts (HOST): '<challenge_dir>/.omp/artifacts/'
     - reverser-analysis.md (narrative)
@@ -238,19 +355,34 @@ const { results } = omp_task_wait_all({ task_ids: [r.task_id] })
 \`\`\`
 
 Execution mode (which tools to use end-to-end) is the Exploiter's call —
-don't pre-prescribe it. The \`recommended_mode\` hint from Step 4b only
+don't pre-prescribe it. The \`recommended_mode\` hint from Step 5b only
 signals the **nature of evidence** the task needs; Exploiter still
 picks between Mode 1 (host \`bash python3\`) and Mode 2 (\`pwno_pwncli\`
 with GDB attach) from its own playbook. Just give a clear goal and
 expected observation; the hint biases the default but does not force it.
 
-### Step 6: Handle result + retry
+### Step 7: Handle result + retry
 
 **Pass:** Capture leaks, note PoC path. Return success.
 **Fail:** Diagnose from Exploiter's observations. Adjust and retry.
-**Max 3 retries.** After 3 failures → return \`status: "inconclusive"\`.
 
-### Step 7: Return structured result
+**Knowledge mode escalation on retry.** Before re-spawning Exploiter,
+revisit Step 4 with escalation mode ON — broaden detail md / how2heap
+to 2nd-tier matches, consider alternative techniques within the same
+primitive family. Round table:
+
+| Round                          | Knowledge mode               |
+| ------------------------------ | ---------------------------- |
+| Round 1 (retries_used == 0)    | Lazy (Step 4 default)        |
+| Round 2 (retries_used == 1)    | Escalation ON                |
+| Round 3 (retries_used == 2)    | Escalation ON                |
+
+User hint (if any) always takes priority over the round mode.
+
+**Max 3 retries** (\`max_retries_per_candidate = 3\`). After 3 failures
+→ return \`status: "inconclusive"\`.
+
+### Step 8: Return structured result
 
 \`\`\`json
 {
@@ -292,6 +424,12 @@ expected observation; the hint biases the default but does not force it.
   and leaks. You can use leaked values from other SAs' work.
 - **Concrete but not code.** Offsets, mechanisms, observations. No code.
 - **Mitigation-aware.** Canary → need leak. PIE → need base. NX → ROP.
+- **Knowledge boundary.** \`ctf-reverse/\` is off-limits (Reverser's
+  territory). \`sources/\` may be absent — graceful skip when so.
+- **Escalation on retry.** Round 1 lazy; Round 2-3 escalation ON
+  (see Step 7). User hint always priority.
+- **Measurable \`expected_result\`.** Specify observable + value
+  pattern (see Step 5). Forward exact phrasing to Exploiter in Step 6.
 - **Fail fast.** Diagnose, don't blindly retry.
 - **No state writes.** Orchestrator is the sole writer.
 `
