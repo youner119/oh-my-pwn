@@ -340,9 +340,10 @@ shell captured (success), LLM-judged stagnation (\`stagnated\`), safety-net
 #### Step 2.1 — Plan this round's tasks
 
 Read \`omp_read_state\` and categorize candidates:
-- **Unverified:** \`verified\` is false/undefined → assign SA to verify
-- **Verified + combinable:** two or more verified candidates where one's
-  \`gives\` matches another's \`needs\` → assign SA to combine them
+- **Unverified:** \`verification_result\` is undefined → assign SA to verify
+- **Verified + combinable:** two or more candidates with
+  \`verification_result === "confirmed"\` where one's \`gives\` matches
+  another's \`needs\` → assign SA to combine them
 - **Verified + nothing to combine:** skip (already done)
 
 Decide tasks for this round:
@@ -527,7 +528,7 @@ Notes:
 When you write \`omp_patch_state\` inside the loop, the patch must reflect:
 
 - If SA returned \`status: "confirmed"\`:
-  - Add/update candidate in \`vuln_candidates[]\` with \`verified: true\`,
+  - Add/update candidate in \`vuln_candidates[]\` with
     \`verification_result: "confirmed"\`, \`poc_script_path\`, \`gives\`, \`needs\`
   - For combinations: set \`combined_from\`, \`origin_type: "derived"\`
 - If \`status: "failed"\` / \`"inconclusive"\`:

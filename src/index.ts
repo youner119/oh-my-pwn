@@ -15,10 +15,7 @@ export {
   type ChallengeState,
   type Mitigations,
   type RemoteEntrypoint,
-  type LeakEntry,
   type VulnCandidate,
-  type StageEntry,
-  type StageStatus,
   type UserCorrection,
   type InitialChallengeStateInput,
 } from "./state/challenge-state"

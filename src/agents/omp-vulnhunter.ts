@@ -60,8 +60,9 @@ You do NOT design exploit steps — that is StrategyAgent's job.**
    \`libc_version\`, existing \`vuln_candidates\` (may be populated from prior run).
 
 2. **Check prior results.** If \`vuln_candidates\` already has entries with
-   \`verified: true\` results, note which candidates are confirmed/disproved.
-   Build on prior knowledge, don't start from scratch.
+   \`verification_result\` set, note which candidates are confirmed /
+   disproved / inconclusive. Build on prior knowledge, don't start from
+   scratch.
 
 3. **Read analysis source:**
    - If \`source_present === true\`: read each C source file in \`source_paths\`.

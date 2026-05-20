@@ -31,8 +31,6 @@ describe("ChallengeStateSchema", () => {
     expect(state.source_present).toBe(false)
     expect(state.source_paths).toEqual([])
     expect(state.vuln_candidates).toEqual([])
-    expect(state.stages).toEqual([])
-    expect(state.leaks).toEqual([])
     expect(state.corrections).toEqual([])
     expect(state.created_at).toBe("2026-04-10T00:00:00.000Z")
     expect(state.updated_at).toBe("2026-04-10T00:00:00.000Z")
@@ -67,26 +65,10 @@ describe("ChallengeStateSchema", () => {
           location: "main+0x40",
           confidence: 0.8,
           rationale: "unchecked read",
-        },
-      ],
-      stages: [
-        {
-          id: "leak-libc",
-          description: "obtain libc base",
-          status: "passed",
-          attempts: ["/c/.omp/exploit/leak.py"],
-          started_at: "2026-04-10T00:00:00.000Z",
-          finished_at: "2026-04-10T00:01:00.000Z",
-        },
-      ],
-      current_stage_index: 0,
-      current_exploit_script: "/c/.omp/exploit/current.py",
-      leaks: [
-        {
-          name: "libc_base",
-          value: "0x7ffff7a00000",
-          stage: "leak-libc",
-          discovered_at: "2026-04-10T00:01:00.000Z",
+          verification_result: "confirmed",
+          poc_script_path: "/c/.omp/exploit/v1.py",
+          gives: ["rip_control"],
+          needs: [],
         },
       ],
       corrections: [
@@ -102,21 +84,15 @@ describe("ChallengeStateSchema", () => {
 
     const parsed = ChallengeStateSchema.parse(fullState)
     expect(parsed.libc_version).toBe("2.35")
-    expect(parsed.stages[0]?.status).toBe("passed")
-    expect(parsed.leaks[0]?.name).toBe("libc_base")
+    expect(parsed.vuln_candidates[0]?.verification_result).toBe("confirmed")
+    expect(parsed.vuln_candidates[0]?.poc_script_path).toBe(
+      "/c/.omp/exploit/v1.py",
+    )
     expect(parsed.corrections[0]?.user_text).toBe("libc는 2.35야")
   })
 
   test("rejects a state missing required identity fields", () => {
     const bad = { schema_version: "1" }
-    expect(() => ChallengeStateSchema.parse(bad)).toThrow()
-  })
-
-  test("rejects an invalid stage status", () => {
-    const bad = {
-      ...createInitialChallengeState(baseInput),
-      stages: [{ id: "s1", status: "bogus", attempts: [] }],
-    }
     expect(() => ChallengeStateSchema.parse(bad)).toThrow()
   })
 
@@ -195,7 +171,6 @@ describe("ChallengeStateSchema", () => {
         {
           id: "vuln_1",
           primitive: "stack_bof",
-          verified: true,
           verification_result: "confirmed",
           poc_script_path: "/c/.omp/exploit/vuln_1/verify.py",
           gives: ["rip_control"],
@@ -204,7 +179,6 @@ describe("ChallengeStateSchema", () => {
         {
           id: "vuln_2",
           primitive: "fmt_string_leak",
-          verified: true,
           verification_result: "confirmed",
           poc_script_path: "/c/.omp/exploit/vuln_2/verify.py",
           gives: ["libc_base", "canary"],
@@ -213,7 +187,6 @@ describe("ChallengeStateSchema", () => {
         {
           id: "vuln_3",
           primitive: "rop_shell",
-          verified: true,
           verification_result: "confirmed",
           poc_script_path: "/c/.omp/exploit/vuln_3/exploit.py",
           gives: ["shell"],
@@ -497,11 +470,12 @@ describe("ChallengeStateSchema", () => {
     expect(() => ChallengeStateSchema.parse(bad)).toThrow()
   })
 
-  test("legacy state with deprecated patchelf-backup fields still parses", () => {
-    // omp-setup agent retired in-place patchelf, but historical state.json
-    // files written by `omp_run_envsetup` contain `binary_patched`,
-    // `binary_original_path`, `binary_original_sha256`. Schema retains
-    // these as @deprecated so old state remains readable.
+  test("legacy state with retired patchelf-backup fields is silently stripped", () => {
+    // Historical state.json files written by the legacy `omp_run_envsetup`
+    // (pre-T19) carry `binary_patched`, `binary_original_path`,
+    // `binary_original_sha256`. Those fields were removed from the schema
+    // — Zod's default strip mode silently drops them on parse, so old
+    // state files still load (the unknown keys do not throw).
     const legacyState = {
       schema_version: "1",
       challenge_dir: "/c",
@@ -513,10 +487,13 @@ describe("ChallengeStateSchema", () => {
       created_at: "2026-04-10T00:00:00.000Z",
       updated_at: "2026-04-10T00:00:00.000Z",
     }
-    const parsed = ChallengeStateSchema.parse(legacyState)
-    expect(parsed.binary_patched).toBe(true)
-    expect(parsed.binary_original_path).toBe("/c/.omp/artifacts/prob.orig")
-    expect(parsed.binary_original_sha256).toBe("legacy-sha-256")
+    const parsed = ChallengeStateSchema.parse(legacyState) as Record<
+      string,
+      unknown
+    >
+    expect(parsed["binary_patched"]).toBeUndefined()
+    expect(parsed["binary_original_path"]).toBeUndefined()
+    expect(parsed["binary_original_sha256"]).toBeUndefined()
   })
 
   test("backward compat: pre-omp-setup state (no setup-gate / extracted_libs / binary_input) still parses", () => {

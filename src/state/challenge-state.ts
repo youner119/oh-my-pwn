@@ -67,20 +67,6 @@ export const RemoteEntrypointSchema = z.object({
 })
 export type RemoteEntrypoint = z.infer<typeof RemoteEntrypointSchema>
 
-/** A single leak captured mid-exploit (libc base, heap base, canary, ...). */
-export const LeakEntrySchema = z.object({
-  /** Short label: "libc_base", "heap_base", "stack_canary", "pie_base", etc. */
-  name: z.string().min(1),
-  /** Hex-encoded 64-bit value or raw string, depending on leak kind. */
-  value: z.string().min(1),
-  /** Stage id where the leak was obtained. */
-  stage: z.string().optional(),
-  discovered_at: IsoTimestampSchema,
-  /** Free-form notes from the Exploiter about how the leak was obtained. */
-  notes: z.string().optional(),
-})
-export type LeakEntry = z.infer<typeof LeakEntrySchema>
-
 /** How a vulnerability candidate was discovered. */
 export const CandidateOriginSchema = z.enum([
   /** Found during initial VulnHunter analysis pass. */
@@ -105,9 +91,13 @@ export const VulnCandidateSchema = z.object({
   rationale: z.string().optional(),
   /** Optional libc range this candidate requires ("2.31-2.35"). */
   libc_range: z.string().optional(),
-  /** Whether Exploiter has verified this candidate. */
-  verified: z.boolean().optional(),
-  /** Verification outcome: "confirmed", "disproved", or "inconclusive". */
+  /**
+   * Verification outcome set by the Orchestrator after StrategyAgent +
+   * Exploiter run. Presence of this field IS the verification flag —
+   * `verification_result === undefined` means the candidate has not been
+   * verified yet (the earlier `verified: boolean` field was an
+   * always-redundant flag and was removed).
+   */
   verification_result: z
     .enum(["confirmed", "disproved", "inconclusive"])
     .optional(),
@@ -125,36 +115,6 @@ export const VulnCandidateSchema = z.object({
   combined_from: z.array(z.string()).optional(),
 })
 export type VulnCandidate = z.infer<typeof VulnCandidateSchema>
-
-/** Status of a single pipeline stage. */
-export const StageStatusSchema = z.enum([
-  "pending",
-  "in_progress",
-  "passed",
-  "failed",
-  "skipped",
-])
-export type StageStatus = z.infer<typeof StageStatusSchema>
-
-/** One stage (exploit step) in the plan. StrategyAgent generates, Exploiter executes. */
-export const StageEntrySchema = z.object({
-  id: z.string().min(1),
-  description: z.string().optional(),
-  status: StageStatusSchema.default("pending"),
-  /** Exploit scripts attempted for this stage, newest last. */
-  attempts: z.array(z.string()).default([]),
-  started_at: IsoTimestampSchema.optional(),
-  finished_at: IsoTimestampSchema.optional(),
-  /** Short failure reason if `status === "failed"`. */
-  failure_reason: z.string().optional(),
-  /** What this step proves (e.g., "ret address controllable at offset 0xa8"). */
-  goal: z.string().optional(),
-  /** Expected observation on success (e.g., "rip == 0xdeadbeef"). */
-  expected_result: z.string().optional(),
-  /** Link to vuln_candidates[].id this step is derived from. */
-  candidate_id: z.string().optional(),
-})
-export type StageEntry = z.infer<typeof StageEntrySchema>
 
 /** Parallel pipeline configuration. Orchestrator reads this to decide instance counts and budget. */
 export const ParallelConfigSchema = z.object({
@@ -205,8 +165,9 @@ export type UserCorrection = z.infer<typeof UserCorrectionSchema>
 /**
  * ChallengeState — the single source of machine truth per challenge.
  *
- * Every field downstream of identity/input is optional so T03 can seed a
- * valid initial state from just `{binary_path, dockerfile_path}`.
+ * Every field downstream of identity/input is optional so the loader
+ * (`omp_load_challenge`) can seed a valid initial state from just
+ * `{binary_input_path, dockerfile_path}`.
  */
 export const ChallengeStateSchema = z.object({
   /** Schema version; bump on breaking changes. */
@@ -270,24 +231,6 @@ export const ChallengeStateSchema = z.object({
    * `binary_original_sha256`.
    */
   binary_input_sha256: z.string().optional(),
-  /**
-   * @deprecated Use `setup_complete` instead. The omp-setup agent retired
-   * in-place patchelf, so the boolean "is patched" gate is replaced by the
-   * richer setup-gate (`setup_complete` + `setup_unsupported_reason`).
-   * Schema retains the field to keep historical state.json parseable.
-   */
-  binary_patched: z.boolean().optional(),
-  /**
-   * @deprecated Use `binary_input_path` instead. Was the in-place patchelf
-   * backup under `.omp/artifacts/<basename>.orig`. With in-place patching
-   * retired, the input file at `binary_input_path` is itself canonical and
-   * no backup is needed.
-   */
-  binary_original_path: z.string().optional(),
-  /**
-   * @deprecated Use `binary_input_sha256` instead.
-   */
-  binary_original_sha256: z.string().optional(),
   /** Absolute path to the Dockerfile (or docker-compose.yml). */
   dockerfile_path: z.string().min(1),
   /** True if C source (`chal.c` etc.) is present → Reverser is skipped. */
@@ -475,17 +418,6 @@ export const ChallengeStateSchema = z.object({
   // existed in an earlier T14 sketch and were retired with the
   // parallel orchestration cutover — "PoC code is the unit of
   // knowledge", per `.omc/specs/deep-interview-parallel-orchestration.md`.)
-
-  /* ── Stage map + exploitation progress (T14 / T16) ─────────────────────── */
-
-  stages: z.array(StageEntrySchema).default([]),
-  current_stage_index: z.number().int().nonnegative().optional(),
-  /** Path to the exploit script currently being iterated on. */
-  current_exploit_script: z.string().optional(),
-
-  /* ── Leak ledger (Exploiter fills mid-run) ─────────────────────────────── */
-
-  leaks: z.array(LeakEntrySchema).default([]),
 
   /* ── Parallel pipeline state (T18 parallel orchestration) ────────────── */
 
