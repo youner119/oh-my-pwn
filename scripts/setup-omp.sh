@@ -64,6 +64,7 @@ done
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 PLUGIN_PATH="$REPO_ROOT/dist/plugin.js"
+PLUGIN_TUI_PATH="$REPO_ROOT/dist/plugin-tui.js"
 CONFIG_DIR="$HOME/.config/omp/opencode"
 CONFIG_FILE="$CONFIG_DIR/opencode.json"
 ZSHRC="$HOME/.zshrc"
@@ -78,8 +79,9 @@ run() {
   fi
 }
 
-say "repo root:   $REPO_ROOT"
-say "plugin path: $PLUGIN_PATH"
+say "repo root:       $REPO_ROOT"
+say "plugin path:     $PLUGIN_PATH"
+say "plugin-tui path: $PLUGIN_TUI_PATH"
 
 # ── 1) install + build ────────────────────────────────────────────────────────
 # `bun install`은 plugin.js의 external import (@opencode-ai/plugin/tool 등)를
@@ -110,6 +112,17 @@ fi
 if [[ ! -f "$PLUGIN_PATH" && "$DRY_RUN" == "0" ]]; then
   echo "ERROR: $PLUGIN_PATH not found after build step" >&2
   exit 1
+fi
+
+# TUI plugin 은 옵션. release branch 의 구판 dist 에 없을 수 있으므로 missing
+# fallback 으로 처리 (server plugin 만 등록). main branch 의 build 후엔 항상 존재.
+HAS_TUI=0
+if [[ -f "$PLUGIN_TUI_PATH" ]]; then
+  HAS_TUI=1
+fi
+if [[ "$HAS_TUI" == "0" && "$DRY_RUN" == "0" ]]; then
+  warn "$PLUGIN_TUI_PATH not found — TUI plugin 미등록, server plugin 만 동작"
+  warn "main branch 라면 'bun run build:plugin:tui' 직접 실행"
 fi
 
 # ── 2) BN MCP bridge discovery ───────────────────────────────────────────────
@@ -169,19 +182,28 @@ fi
 # ── 3) opencode.json ──────────────────────────────────────────────────────────
 say "writing $CONFIG_FILE"
 run "mkdir -p '$CONFIG_DIR'"
+
+# plugin 배열 = server + TUI (있으면). release branch 의 구판 dist 처럼 TUI 없으면
+# server 만 박음.
+if [[ "$HAS_TUI" == "1" ]]; then
+  PLUGIN_ARRAY="[\"file://$PLUGIN_PATH\", \"file://$PLUGIN_TUI_PATH\"]"
+else
+  PLUGIN_ARRAY="[\"file://$PLUGIN_PATH\"]"
+fi
+
 if [[ "$DRY_RUN" == "1" ]]; then
   printf '  (dry-run) would write:\n'
   cat <<EOF
 {
   "\$schema": "https://opencode.ai/config.json",
-  "plugin": ["file://$PLUGIN_PATH"]
+  "plugin": $PLUGIN_ARRAY
 }
 EOF
 else
   cat > "$CONFIG_FILE" <<EOF
 {
   "\$schema": "https://opencode.ai/config.json",
-  "plugin": ["file://$PLUGIN_PATH"]
+  "plugin": $PLUGIN_ARRAY
 }
 EOF
 fi
