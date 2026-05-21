@@ -306,14 +306,15 @@ const OmpTuiPlugin: TuiPlugin = async (api, _options, _meta) => {
 
   const [tree, setTree] = createSignal<TreeJson>(readTreeSafe(path))
 
-  // dir 단위 watch + filename filter — atomic write (rename) 의 inode 교체로
-  // 인한 fs.watch 미감지 문제 회피. dir 안 다른 file event 는 filter 로 drop.
+  // dir 단위 watch — atomic write (rename) 의 inode 교체로 인한 fs.watch 미감지
+  // 회피. filename arg 가 platform/runtime 따라 null 가능 (Bun 의 inotify
+  // wrapper) — match 되면 즉시 re-read, null/다른 file 이면 그래도 re-read
+  // (overhead 작음, dir 안 변경 자체가 드물).
   let watcher: ReturnType<typeof fsWatch> | undefined
   try {
     watcher = fsWatch(watchDir, (_event, filename) => {
-      if (filename === watchFilename) {
-        setTree(readTreeSafe(path))
-      }
+      if (filename && filename !== watchFilename) return
+      setTree(readTreeSafe(path))
     })
   } catch (err) {
     console.error(`[plugin-tui] watcher start failed: ${String(err)}`)
