@@ -102,7 +102,12 @@ const OmpPlugin: Plugin = async (input) => {
   }
 
   const manager = sessionClient
-    ? new BackgroundManager({ client: sessionClient, directory, serverUrl })
+    ? new BackgroundManager({
+        client: sessionClient,
+        directory,
+        serverUrl,
+        enableTreeDump: true,
+      })
     : undefined
 
   const ompTaskLaunchTool = manager ? createOmpTaskLaunchTool(manager) : undefined

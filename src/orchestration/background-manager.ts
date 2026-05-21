@@ -30,6 +30,7 @@ import {
   resetPaneTracking,
   findPaneBySession,
 } from "./tmux"
+import { dumpTreeJson, initTreeJson } from "./tree-dump"
 import { EventEmitter } from "node:events"
 import { appendFileSync, mkdirSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
@@ -109,6 +110,12 @@ export interface BackgroundManagerOptions {
   /** opencode server URL for tmux attach. e.g., "http://localhost:4096" */
   serverUrl?: string
   concurrency?: { defaultLimit?: number; modelLimits?: Record<string, number> }
+  /**
+   * TUI plugin 통신용 tree.json dump 활성화. Plugin runtime 만 true, test 는
+   * 기본 false (test 가 home dir 의 tree.json 덮어쓰지 않게).
+   * Default: false.
+   */
+  enableTreeDump?: boolean
 }
 
 export class BackgroundManager {
@@ -119,6 +126,7 @@ export class BackgroundManager {
   private readonly paneIds = new Map<string, string>() // taskId → tmux paneId
   private readonly sessionPaneIds = new Map<string, string>() // sessionID → tmux paneId
   private readonly concurrency: ConcurrencyManager
+  private readonly enableTreeDump: boolean
   private pollingInterval?: ReturnType<typeof setInterval>
   private pollingInFlight = false
   /**
@@ -133,6 +141,7 @@ export class BackgroundManager {
     this.directory = options.directory
     this.serverUrl = options.serverUrl
     this.concurrency = new ConcurrencyManager(options.concurrency)
+    this.enableTreeDump = options.enableTreeDump ?? false
     // wait_all/wait_any may attach many listeners concurrently (e.g., VH
     // ensemble + SA race at the same time). Default cap of 10 would warn.
     this.taskEvents.setMaxListeners(0)
@@ -146,6 +155,21 @@ export class BackgroundManager {
     } catch {
       // If directory doesn't exist yet (no challenge loaded), skip logging
     }
+
+    // Initialize tree.json (empty) at plugin load time so TUI plugin watcher
+    // sees a clean state (previous session's tree 잔여 사라짐).
+    if (this.enableTreeDump) {
+      initTreeJson()
+    }
+  }
+
+  /**
+   * tree.json snapshot dump. Best-effort — failure 는 console.error 로만 log,
+   * primary 흐름 (sub-agent spawn) 막지 않음. enableTreeDump=false 면 no-op.
+   */
+  private dumpTree(): void {
+    if (!this.enableTreeDump) return
+    dumpTreeJson(this.tasks)
   }
 
   /**
@@ -173,6 +197,7 @@ export class BackgroundManager {
       this.concurrency.release(task.concurrencyKey)
       task.status = "failed"
       task.error = String(err)
+      this.dumpTree()
       throw err
     }
 
@@ -340,6 +365,7 @@ export class BackgroundManager {
     this.concurrency.release(task.concurrencyKey)
     this.closePaneForTask(task.id)
     this.taskEvents.emit("done", task.id)
+    this.dumpTree()
     return true
   }
 
@@ -389,6 +415,7 @@ export class BackgroundManager {
       concurrencyKey,
     }
     this.tasks.set(id, task)
+    this.dumpTree()
     return task
   }
 
@@ -445,6 +472,7 @@ export class BackgroundManager {
     task.sessionID = sessionID
     task.status = "running"
     task.startedAt = new Date()
+    this.dumpTree()
 
     // Build tool restrictions
     const tools: Record<string, boolean> = {
@@ -533,6 +561,7 @@ export class BackgroundManager {
             this.closePaneForTask(task.id)
             void this.dumpTranscript(task)
             this.taskEvents.emit("done", task.id)
+            this.dumpTree()
           }
           continue
         }
@@ -548,6 +577,7 @@ export class BackgroundManager {
         this.closePaneForTask(task.id)
         void this.dumpTranscript(task)
         this.taskEvents.emit("done", task.id)
+        this.dumpTree()
       }
 
       // Stop polling if no running tasks remain
