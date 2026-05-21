@@ -42,15 +42,19 @@ export function createOmpLoadChallengeTool(
   return tool({
     description:
       "Load and validate a CTF challenge folder, bootstrapping its .omp/ state directory. " +
-      "This is the ONLY correct way to initialize a new challenge — do NOT scan the folder with " +
-      "bash/ls/find. The loader enforces the input contract (directory exists, Dockerfile present, " +
+      "Before calling, scan the folder structure yourself with bash " +
+      "(`ls -la <challenge_dir>` + `find <challenge_dir> -maxdepth 3 -type f`) to identify the " +
+      "actual binary and Dockerfile locations, then pass them as `binary` / `dockerfile` hints. " +
+      "Never pass empty strings or invented paths — either omit the hint (let auto-detection run " +
+      "when the layout is unambiguous) or pass a literal path you observed in the scan. " +
+      "The loader enforces the input contract (directory exists, Dockerfile present, " +
       "exactly one executable ELF binary), computes the binary's SHA-256, and creates " +
       "<challenge-dir>/.omp/{state.json, journal.md, artifacts/, logs/, exploit/}. " +
       "Idempotent: calling it again on an already-loaded folder reloads state and records sha drift " +
       "in the journal without mutating state.json. " +
       "Call this BEFORE the omp-setup agent runs. " +
-      "On ambiguous-binary error, the `detail.candidates` list tells you what to ask the user about — " +
-      "then re-call with a `binary` hint. Same for dockerfile disambiguation.",
+      "On ambiguous-binary error, combine `detail.candidates` with your scan to pick the right one " +
+      "and re-call with a `binary` hint. Same for dockerfile disambiguation.",
     args: {
       challenge_dir: tool.schema
         .string()

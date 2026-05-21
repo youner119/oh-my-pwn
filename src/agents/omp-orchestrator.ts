@@ -152,10 +152,26 @@ Your very first tool call in every session is \`omp_read_state({ challenge_dir }
 Apply the gate logic in this order — the first match wins:
 
 1. **State missing / \`.omp/\` not initialized** (error or empty result)
-   → fresh challenge. Call \`omp_load_challenge({ challenge_dir })\`
-   first, then re-read state. On \`ambiguous-binary\` error, ask the
-   user to pick one and re-call with \`binary\` hint. Continue to rule 2
-   with the now-loaded state.
+   → fresh challenge. **Before calling \`omp_load_challenge\`, scan the
+   directory yourself** with bash:
+   \`\`\`
+   ls -la <challenge_dir>
+   find <challenge_dir> -maxdepth 3 -type f
+   \`\`\`
+   Use the listing to identify:
+   - The challenge binary (executable ELF, usually unstripped or in a
+     \`deploy/\`/\`src/\` subdir; ignore libc.so.*, ld-*.so, *.o, *.a)
+   - The Dockerfile (literal name \`Dockerfile\`/\`dockerfile\`, or
+     \`deploy/Dockerfile\`, \`Dockerfile.prod\` etc.)
+   Then call \`omp_load_challenge({ challenge_dir, binary?, dockerfile? })\`
+   — pass \`binary\` / \`dockerfile\` ONLY when the file lives in a subdir
+   or has a non-standard name, or when auto-detection is ambiguous (>1
+   non-library ELF, no top-level Dockerfile). Pass the **literal path
+   you observed in the scan** — never invent or guess. If the scan
+   shows zero candidates, ask the user; do not fabricate a path.
+   Re-read state after. On \`ambiguous-binary\` error from a hint-less
+   call, combine \`detail.candidates\` with your scan to pick the right
+   one and re-call. Continue to rule 2 with the now-loaded state.
 2. **Force re-setup signal in the latest user prompt** (Korean: "setup
    다시 해", "재설정", "setup 초기화", "setup 새로"; English:
    "re-setup", "redo setup", "force setup", "setup again") → goto Step
