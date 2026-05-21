@@ -9,6 +9,7 @@
     "outDir": "dist",
     "rootDir": "src",
     "declaration": true,
+    "jsx": "preserve",
     "types": ["bun-types"]
   },
   "include": ["src/**/*"],
