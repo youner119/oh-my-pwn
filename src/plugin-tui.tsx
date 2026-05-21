@@ -50,6 +50,24 @@ function readTreeSafe(path: string): TreeJson {
   }
 }
 
+// Sidebar view — opencode 내장 plugin (context.tsx / todo.tsx) 패턴 follow.
+// callback factory 가 아닌 component 분리. opentui 의 reactive scope 정상.
+function OmpSidebarView(props: { tree: () => TreeJson }) {
+  const active = createMemo(() =>
+    props.tree().nodes.filter((n) => !TERMINAL_STATUSES.includes(n.status)),
+  )
+  const history = createMemo(() =>
+    props.tree().nodes.filter((n) => TERMINAL_STATUSES.includes(n.status)),
+  )
+  return (
+    <box>
+      <text>
+        OmP — {active().length} active, {history().length} history
+      </text>
+    </box>
+  )
+}
+
 const OmpTuiPlugin: TuiPlugin = async (api, _options, _meta) => {
   const path = treeJsonPath()
   const watchDir = dirname(path)
@@ -76,24 +94,11 @@ const OmpTuiPlugin: TuiPlugin = async (api, _options, _meta) => {
 
   // T8-minimal: sidebar_content slot. 실제 tree render 는 T8 본격에서.
   // order 50 = 내장 sidebar plugin (mcp=200, todo=400) 보다 위로 강제 박기.
-  // OmP tree 는 사용자가 가장 자주 보는 view 라 sidebar 최상단.
   api.slots.register({
     order: 50,
     slots: {
       sidebar_content(_ctx) {
-        const active = createMemo(() =>
-          tree().nodes.filter((n) => !TERMINAL_STATUSES.includes(n.status)),
-        )
-        const history = createMemo(() =>
-          tree().nodes.filter((n) => TERMINAL_STATUSES.includes(n.status)),
-        )
-        return (
-          <box>
-            <text>
-              OmP — {active().length} active, {history().length} history
-            </text>
-          </box>
-        )
+        return <OmpSidebarView tree={tree} />
       },
     },
   })

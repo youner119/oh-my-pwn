@@ -64,7 +64,14 @@ done
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 PLUGIN_PATH="$REPO_ROOT/dist/plugin.js"
-PLUGIN_TUI_PATH="$REPO_ROOT/dist/plugin-tui.js"
+# TUI plugin 은 raw .tsx 직접 등록. opencode 가 ensureRuntimePluginSupport
+# 통해 load 시점 transform — @opentui/solid / solid-js import 를 internal
+# instance 로 redirect. 우리 dist 빌드 후 등록 시 *external opentui instance
+# resolve* → dual Solid runtime → reactive tracker 동작 안 함.
+# 출처: references/opencode/.opencode/plugins/tui-smoke.tsx (raw .tsx 패턴) +
+# references/opencode/packages/opencode/src/cli/cmd/tui/plugin/runtime.ts:46
+# (ensureRuntimePluginSupport 호출).
+PLUGIN_TUI_PATH="$REPO_ROOT/src/plugin-tui.tsx"
 CONFIG_DIR="$HOME/.config/omp/opencode"
 CONFIG_FILE="$CONFIG_DIR/opencode.json"
 TUI_CONFIG_FILE="$CONFIG_DIR/tui.json"
