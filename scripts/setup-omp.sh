@@ -67,6 +67,7 @@ PLUGIN_PATH="$REPO_ROOT/dist/plugin.js"
 PLUGIN_TUI_PATH="$REPO_ROOT/dist/plugin-tui.js"
 CONFIG_DIR="$HOME/.config/omp/opencode"
 CONFIG_FILE="$CONFIG_DIR/opencode.json"
+TUI_CONFIG_FILE="$CONFIG_DIR/tui.json"
 ZSHRC="$HOME/.zshrc"
 
 say() { printf '\033[1;34m[setup-omp]\033[0m %s\n' "$*"; }
@@ -180,32 +181,57 @@ else
 fi
 
 # ── 3) opencode.json ──────────────────────────────────────────────────────────
-say "writing $CONFIG_FILE"
+say "writing $CONFIG_FILE (server plugin) + $TUI_CONFIG_FILE (TUI plugin)"
 run "mkdir -p '$CONFIG_DIR'"
 
-# plugin 배열 = server + TUI (있으면). release branch 의 구판 dist 처럼 TUI 없으면
-# server 만 박음.
-if [[ "$HAS_TUI" == "1" ]]; then
-  PLUGIN_ARRAY="[\"file://$PLUGIN_PATH\", \"file://$PLUGIN_TUI_PATH\"]"
-else
-  PLUGIN_ARRAY="[\"file://$PLUGIN_PATH\"]"
-fi
+# opencode.json: server plugin only. opencode loader 는 plugin 배열의 모든
+# entry 를 server plugin 으로 시도 — TUI plugin 박으면 load 실패 ("must default
+# export an object with server()"). TUI 는 별개 tui.json 박는 게 정답.
+# 출처: opencode/specs/tui-plugins.md.
 
 if [[ "$DRY_RUN" == "1" ]]; then
-  printf '  (dry-run) would write:\n'
+  printf '  (dry-run) would write %s:\n' "$CONFIG_FILE"
   cat <<EOF
 {
   "\$schema": "https://opencode.ai/config.json",
-  "plugin": $PLUGIN_ARRAY
+  "plugin": ["file://$PLUGIN_PATH"]
 }
 EOF
 else
   cat > "$CONFIG_FILE" <<EOF
 {
   "\$schema": "https://opencode.ai/config.json",
-  "plugin": $PLUGIN_ARRAY
+  "plugin": ["file://$PLUGIN_PATH"]
 }
 EOF
+fi
+
+# tui.json: TUI plugin only. dist/plugin-tui.js 가 있으면 등록, 없으면 skip
+# (release branch 구판 dist 호환).
+if [[ "$HAS_TUI" == "1" ]]; then
+  if [[ "$DRY_RUN" == "1" ]]; then
+    printf '  (dry-run) would write %s:\n' "$TUI_CONFIG_FILE"
+    cat <<EOF
+{
+  "\$schema": "https://opencode.ai/tui.json",
+  "plugin": ["file://$PLUGIN_TUI_PATH"]
+}
+EOF
+  else
+    cat > "$TUI_CONFIG_FILE" <<EOF
+{
+  "\$schema": "https://opencode.ai/tui.json",
+  "plugin": ["file://$PLUGIN_TUI_PATH"]
+}
+EOF
+  fi
+else
+  say "skipping $TUI_CONFIG_FILE (no dist/plugin-tui.js)"
+  # 기존 tui.json 가 있으면 stale 제거 — server-only mode 로 fallback.
+  if [[ "$DRY_RUN" == "0" && -f "$TUI_CONFIG_FILE" ]]; then
+    warn "removing stale $TUI_CONFIG_FILE (HAS_TUI=0)"
+    rm -f "$TUI_CONFIG_FILE"
+  fi
 fi
 
 # ── 4) zshrc alias ────────────────────────────────────────────────────────────
