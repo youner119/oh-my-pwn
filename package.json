@@ -11,7 +11,9 @@
   "scripts": {
     "typecheck": "tsc --noEmit",
     "test": "bun test",
-    "build:plugin": "bun build src/plugin.ts --outdir dist --target bun --format esm --minify --external @opencode-ai/plugin --external @opencode-ai/sdk --external @modelcontextprotocol/sdk --external @anthropic-ai/sdk --external zod",
+    "build:plugin:server": "bun build src/plugin.ts --outdir dist --target bun --format esm --minify --external @opencode-ai/plugin --external @opencode-ai/sdk --external @modelcontextprotocol/sdk --external @anthropic-ai/sdk --external zod",
+    "build:plugin:tui": "bun build src/plugin-tui.ts --outdir dist --target bun --format esm --minify --external @opencode-ai/plugin --external @opencode-ai/sdk --external @opentui/core --external @opentui/solid --external solid-js",
+    "build:plugin": "bun run build:plugin:server && bun run build:plugin:tui",
     "build": "bun run build:plugin && bun build src/cli/index.ts --outdir dist --target bun --format esm"
   },
   "dependencies": {
@@ -19,6 +21,9 @@
     "@modelcontextprotocol/sdk": "^1.12.1",
     "@opencode-ai/plugin": "^1.4.0",
     "@opencode-ai/sdk": "^1.4.0",
+    "@opentui/core": "^0.2.15",
+    "@opentui/solid": "^0.2.15",
+    "solid-js": "1.9.12",
     "zod": "^3.24.4"
   },
   "devDependencies": {
