@@ -27,13 +27,35 @@ export interface TreeNode {
   task_id: string
   session_id?: string
   role: string
-  /** Parent task id. null = parent 가 BackgroundManager 가 추적 안 하는 top-level session (예: Orchestrator). */
+  /** Parent task id. null = root (Orchestrator session). */
   parent_task_id: string | null
   status: TaskStatus
   /** ISO 8601. startedAt 없으면 createdAt fallback. */
   started_at: string
   /** ISO 8601. status 가 terminal (completed/failed/cancelled) 일 때만 set. */
   ended_at?: string
+  /** Challenge name (orchestrator root 만 박힘). Multi-challenge 시 root 별 구별. */
+  challenge_name?: string
+}
+
+/**
+ * Orchestrator (top-level) session info — `omp_load_challenge` 호출 시 record.
+ * BackgroundManager 의 tasks Map 에 없는 별개 root entry.
+ */
+export interface OrchestratorInfo {
+  /** opencode session id. */
+  sessionID: string
+  /** agent name (보통 "omp-orchestrator"). ToolContext.agent 값. */
+  agent: string
+  /** challenge name (challenge_dir 의 basename 또는 사용자 명시). */
+  challengeName: string
+  /** ISO 8601 — load_challenge 호출 시점. */
+  startedAt: Date
+}
+
+/** Sentinel task_id for orchestrator root — sub-agent parent resolution 용. */
+export function orchestratorTaskId(sessionID: string): string {
+  return `__orch_${sessionID}`
 }
 
 export interface TreeJson {
@@ -65,25 +87,54 @@ export function treeJsonPath(): string {
 }
 
 /**
- * Snapshot the current task map to a TreeJson payload.
+ * Snapshot the current task map + orchestrator roots to a TreeJson payload.
+ *
+ * Orchestrator roots (from BackgroundManager.orchestrators) are added as
+ * TreeNode entries with `task_id = orchestratorTaskId(sessionID)`,
+ * `parent_task_id = null`, `status = "running"`. Sub-agent tasks whose
+ * `parentSessionID` matches an orchestrator's `sessionID` get that root's
+ * task_id as their `parent_task_id`.
  *
  * Maps BackgroundTask fields to schema:
  * - `id` → `task_id`
  * - `sessionID` → `session_id`
  * - `agent` → `role`
- * - `parentSessionID` → `parent_task_id` (sessionID 로 lookup; 못 찾으면 null)
+ * - `parentSessionID` → `parent_task_id` (orchestrators 의 sessionID 먼저 lookup,
+ *   그 다음 다른 task 들의 sessionID lookup; 못 찾으면 null)
  * - `status` → `status`
  * - `startedAt ?? createdAt` → `started_at`
  * - `completedAt` → `ended_at` (있을 때만)
  */
-export function snapshotTasks(tasks: Map<string, BackgroundTask>): TreeJson {
+export function snapshotTasks(
+  tasks: Map<string, BackgroundTask>,
+  orchestrators: Map<string, OrchestratorInfo> = new Map(),
+): TreeJson {
   // sessionID → taskID lookup for parent resolution.
+  // orchestrator session 이 우선 — sub-agent 의 parentSessionID 가 orchestrator
+  // 의 sessionID 면 그 sentinel id 를 parent 로.
   const sessionToTask = new Map<string, string>()
+  for (const orch of orchestrators.values()) {
+    sessionToTask.set(orch.sessionID, orchestratorTaskId(orch.sessionID))
+  }
   for (const task of tasks.values()) {
     if (task.sessionID) sessionToTask.set(task.sessionID, task.id)
   }
 
   const nodes: TreeNode[] = []
+
+  // Orchestrator roots first (deterministic ordering by sessionID).
+  for (const orch of orchestrators.values()) {
+    nodes.push({
+      task_id: orchestratorTaskId(orch.sessionID),
+      session_id: orch.sessionID,
+      role: orch.agent,
+      parent_task_id: null,
+      status: "running",
+      started_at: orch.startedAt.toISOString(),
+      challenge_name: orch.challengeName,
+    })
+  }
+
   for (const task of tasks.values()) {
     const startedAt = task.startedAt ?? task.createdAt
     const node: TreeNode = {
@@ -139,10 +190,13 @@ export function initTreeJson(): void {
  * BackgroundManager 의 state transition 마다 호출. 실패는 console.error 만
  * (primary 흐름 막지 않음).
  */
-export function dumpTreeJson(tasks: Map<string, BackgroundTask>): void {
+export function dumpTreeJson(
+  tasks: Map<string, BackgroundTask>,
+  orchestrators: Map<string, OrchestratorInfo> = new Map(),
+): void {
   try {
     ensureDir(treeJsonDir())
-    const payload = snapshotTasks(tasks)
+    const payload = snapshotTasks(tasks, orchestrators)
     atomicWrite(treeJsonPath(), `${JSON.stringify(payload, null, 2)}\n`)
   } catch (err) {
     console.error(`[tree-dump] write failed: ${String(err)}`)

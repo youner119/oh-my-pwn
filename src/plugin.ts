@@ -120,6 +120,11 @@ const OmpPlugin: Plugin = async (input) => {
   // deterministic per-challenge workspace path derivation.
   const ompLoadChallengeTool = createOmpLoadChallengeTool({
     workspacePath: OMP_WORKSPACE_PATH,
+    onLoaded: manager
+      ? ({ sessionID, agent, challengeName }) => {
+          manager.registerOrchestrator(sessionID, agent, challengeName)
+        }
+      : undefined,
   })
 
   // pwno-mcp HTTP MCP URL — wired below as an MCP remote for sub-agent

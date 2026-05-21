@@ -30,7 +30,7 @@ import {
   resetPaneTracking,
   findPaneBySession,
 } from "./tmux"
-import { dumpTreeJson, initTreeJson } from "./tree-dump"
+import { dumpTreeJson, initTreeJson, type OrchestratorInfo } from "./tree-dump"
 import { EventEmitter } from "node:events"
 import { appendFileSync, mkdirSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
@@ -123,6 +123,7 @@ export class BackgroundManager {
   private readonly directory: string
   private readonly serverUrl?: string
   private readonly tasks = new Map<string, BackgroundTask>()
+  private readonly orchestrators = new Map<string, OrchestratorInfo>()
   private readonly paneIds = new Map<string, string>() // taskId → tmux paneId
   private readonly sessionPaneIds = new Map<string, string>() // sessionID → tmux paneId
   private readonly concurrency: ConcurrencyManager
@@ -169,7 +170,32 @@ export class BackgroundManager {
    */
   private dumpTree(): void {
     if (!this.enableTreeDump) return
-    dumpTreeJson(this.tasks)
+    dumpTreeJson(this.tasks, this.orchestrators)
+  }
+
+  /**
+   * Orchestrator (top-level) session 을 root TreeNode 로 record. `omp_load_challenge`
+   * 첫 호출 시점에서 ToolContext.sessionID / agent + challenge name 박음. 같은
+   * sessionID 재호출 시 idempotent (started_at 유지).
+   *
+   * Multi-challenge — orchestrator 마다 별개 sessionID. 각 root 가 tree.json
+   * 에 별개 entry. sub-agent 의 parent_task_id resolution 시 orchestrator
+   * 의 sessionID 가 우선 lookup.
+   */
+  registerOrchestrator(
+    sessionID: string,
+    agent: string,
+    challengeName: string,
+  ): void {
+    if (!this.orchestrators.has(sessionID)) {
+      this.orchestrators.set(sessionID, {
+        sessionID,
+        agent,
+        challengeName,
+        startedAt: new Date(),
+      })
+      this.dumpTree()
+    }
   }
 
   /**

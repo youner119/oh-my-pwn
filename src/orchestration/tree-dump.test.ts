@@ -17,9 +17,11 @@ import {
   TREE_JSON_VERSION,
   dumpTreeJson,
   initTreeJson,
+  orchestratorTaskId,
   snapshotTasks,
   treeJsonDir,
   treeJsonPath,
+  type OrchestratorInfo,
 } from "./tree-dump"
 import type { BackgroundTask } from "./types"
 
@@ -187,6 +189,70 @@ describe("snapshotTasks", () => {
     }))
     const result = snapshotTasks(tasks)
     expect(result.nodes[0].started_at).toBe("2026-01-01T00:00:00.000Z")
+  })
+
+  test("orchestrator root 박힘 — task_id sentinel + challenge_name + parent_task_id null", () => {
+    const tasks = new Map<string, BackgroundTask>()
+    const orchestrators = new Map<string, OrchestratorInfo>()
+    orchestrators.set("s_orch", {
+      sessionID: "s_orch",
+      agent: "omp-orchestrator",
+      challengeName: "afterimage",
+      startedAt: new Date("2026-01-01T00:00:00Z"),
+    })
+    const result = snapshotTasks(tasks, orchestrators)
+    expect(result.nodes).toHaveLength(1)
+    const root = result.nodes[0]
+    expect(root.task_id).toBe(orchestratorTaskId("s_orch"))
+    expect(root.session_id).toBe("s_orch")
+    expect(root.role).toBe("omp-orchestrator")
+    expect(root.parent_task_id).toBeNull()
+    expect(root.status).toBe("running")
+    expect(root.challenge_name).toBe("afterimage")
+    expect(root.started_at).toBe("2026-01-01T00:00:00.000Z")
+  })
+
+  test("sub-agent 의 parentSessionID 가 orchestrator session 매치 — parent_task_id = sentinel", () => {
+    const tasks = new Map<string, BackgroundTask>()
+    tasks.set("vh1", mkTask({
+      id: "vh1",
+      sessionID: "s_vh1",
+      parentSessionID: "s_orch", // orchestrator session
+      agent: "omp-vulnhunter",
+      status: "running",
+    }))
+    const orchestrators = new Map<string, OrchestratorInfo>()
+    orchestrators.set("s_orch", {
+      sessionID: "s_orch",
+      agent: "omp-orchestrator",
+      challengeName: "afterimage",
+      startedAt: new Date("2026-01-01T00:00:00Z"),
+    })
+    const result = snapshotTasks(tasks, orchestrators)
+    expect(result.nodes).toHaveLength(2)
+    const vh1 = result.nodes.find((n) => n.task_id === "vh1")
+    expect(vh1?.parent_task_id).toBe(orchestratorTaskId("s_orch"))
+  })
+
+  test("multi-challenge — orchestrator 여러 개 각자 별개 root", () => {
+    const tasks = new Map<string, BackgroundTask>()
+    const orchestrators = new Map<string, OrchestratorInfo>()
+    orchestrators.set("s_orch_a", {
+      sessionID: "s_orch_a",
+      agent: "omp-orchestrator",
+      challengeName: "afterimage",
+      startedAt: new Date("2026-01-01T00:00:00Z"),
+    })
+    orchestrators.set("s_orch_b", {
+      sessionID: "s_orch_b",
+      agent: "omp-orchestrator",
+      challengeName: "sleepy_booth",
+      startedAt: new Date("2026-01-01T00:30:00Z"),
+    })
+    const result = snapshotTasks(tasks, orchestrators)
+    expect(result.nodes).toHaveLength(2)
+    const names = result.nodes.map((n) => n.challenge_name).sort()
+    expect(names).toEqual(["afterimage", "sleepy_booth"])
   })
 })
 

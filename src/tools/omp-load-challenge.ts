@@ -20,6 +20,7 @@
  */
 
 import { tool, type ToolDefinition } from "@opencode-ai/plugin/tool"
+import { basename } from "node:path"
 import { loadChallengeFolder } from "../loader/load-challenge-folder"
 import { ChallengeLoadError } from "../loader/challenge-load-error"
 
@@ -34,6 +35,16 @@ export interface OmpLoadChallengeToolOptions {
    * undefined.
    */
   workspacePath?: string
+  /**
+   * Optional callback invoked on successful load — used by plugin.ts to
+   * register the orchestrator session (TUI plugin 의 root TreeNode).
+   * test 환경에서는 미지정.
+   */
+  onLoaded?: (input: {
+    sessionID: string
+    agent: string
+    challengeName: string
+  }) => void
 }
 
 export function createOmpLoadChallengeTool(
@@ -80,7 +91,7 @@ export function createOmpLoadChallengeTool(
             "for 'Dockerfile' or 'dockerfile' in the immediate children of challenge_dir.",
         ),
     },
-    execute: async ({ challenge_dir, binary, dockerfile }) => {
+    execute: async ({ challenge_dir, binary, dockerfile }, context) => {
       try {
         const opts: {
           binary?: string
@@ -93,6 +104,15 @@ export function createOmpLoadChallengeTool(
           opts.workspaceRoot = options.workspacePath
         }
         const result = loadChallengeFolder(challenge_dir, opts)
+        // Record orchestrator root for TUI sidebar (BackgroundManager.orchestrators).
+        // challenge_name = basename of challenge_dir.
+        if (options.onLoaded && context?.sessionID && context?.agent) {
+          options.onLoaded({
+            sessionID: context.sessionID,
+            agent: context.agent,
+            challengeName: basename(challenge_dir),
+          })
+        }
         return JSON.stringify({
           ok: true,
           state: result.state,
