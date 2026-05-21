@@ -99,4 +99,7 @@ const OmpTuiPlugin: TuiPlugin = async (api, _options, _meta) => {
   })
 }
 
-export default { tui: OmpTuiPlugin }
+// id 필수 — file plugin 의 경우 opencode loader 가 module.id 로 plugin
+// id 결정. npm plugin 은 package name 으로 fallback 가능. file 은 explicit.
+// 출처: opencode/specs/tui-plugins.md.
+export default { id: "omp", tui: OmpTuiPlugin }
