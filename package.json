@@ -11,7 +11,7 @@
   "scripts": {
     "typecheck": "tsc --noEmit",
     "test": "bun test",
-    "build:plugin": "bun build src/plugin.ts --outdir dist --target bun --format esm --external @opencode-ai/plugin --external @opencode-ai/sdk --external @modelcontextprotocol/sdk --external @anthropic-ai/sdk --external zod",
+    "build:plugin": "bun build src/plugin.ts --outdir dist --target bun --format esm --minify --external @opencode-ai/plugin --external @opencode-ai/sdk --external @modelcontextprotocol/sdk --external @anthropic-ai/sdk --external zod",
     "build": "bun run build:plugin && bun build src/cli/index.ts --outdir dist --target bun --format esm"
   },
   "dependencies": {
