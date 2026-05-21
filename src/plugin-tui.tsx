@@ -15,8 +15,7 @@
 
 import type { TuiPlugin } from "@opencode-ai/plugin/tui"
 import { createMemo, createSignal, For, Show } from "solid-js"
-import { existsSync, readFileSync, watch as fsWatch } from "node:fs"
-import { dirname } from "node:path"
+import { existsSync, readFileSync, unwatchFile, watchFile } from "node:fs"
 
 import {
   TREE_JSON_VERSION,
@@ -301,27 +300,21 @@ function OmpSidebarView(props: {
 
 const OmpTuiPlugin: TuiPlugin = async (api, _options, _meta) => {
   const path = treeJsonPath()
-  const watchDir = dirname(path)
-  const watchFilename = "tree.json"
 
   const [tree, setTree] = createSignal<TreeJson>(readTreeSafe(path))
 
-  // dir 단위 watch — atomic write (rename) 의 inode 교체로 인한 fs.watch 미감지
-  // 회피. filename arg 가 platform/runtime 따라 null 가능 (Bun 의 inotify
-  // wrapper) — match 되면 즉시 re-read, null/다른 file 이면 그래도 re-read
-  // (overhead 작음, dir 안 변경 자체가 드물).
-  let watcher: ReturnType<typeof fsWatch> | undefined
-  try {
-    watcher = fsWatch(watchDir, (_event, filename) => {
-      if (filename && filename !== watchFilename) return
-      setTree(readTreeSafe(path))
-    })
-  } catch (err) {
-    console.error(`[plugin-tui] watcher start failed: ${String(err)}`)
+  // fs.watchFile (stat polling) — inotify / atomic write / inode rename 일체
+  // 무관. Node 표준 + Bun 공식 호환. 500ms interval = sub-agent transition 의
+  // 사용자 인식 한계 안.
+  const POLL_INTERVAL_MS = 500
+  const listener = (curr: { mtimeMs: number }, prev: { mtimeMs: number }) => {
+    if (curr.mtimeMs === prev.mtimeMs) return
+    setTree(readTreeSafe(path))
   }
+  watchFile(path, { interval: POLL_INTERVAL_MS, persistent: false }, listener)
 
   api.lifecycle.onDispose(() => {
-    watcher?.close()
+    unwatchFile(path, listener)
   })
 
   function navigate(sessionID: string | undefined): void {
