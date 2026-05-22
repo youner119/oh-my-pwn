@@ -51,6 +51,46 @@ omp
 
 ---
 
+## TUI 사용
+
+OmP sidebar 의 sub-agent tree 는 *mouse 클릭* + *키보드 navigation* 둘 다
+지원. tmux 영역은 T15-T18 (Rev 6 의 events.log channel + Rev 5 의 TUI
+sidebar 도입 후) 으로 폐기 — opencode native TUI 만으로 sub-agent 가시화.
+
+### Mouse capture (권장)
+
+opencode 의 `tui.mouse: true` 박은 후 sidebar 의 click 영역 분리 동작:
+- chevron `▼/▶` 클릭 → collapse/expand toggle
+- row 영역 (role + status) 클릭 → 해당 sub-agent session 으로 navigate
+
+설정 위치 = `~/.config/omp/opencode/opencode.json`. 예:
+
+```json
+{
+  "$schema": "https://opencode.ai/config.json",
+  "tui": {
+    "mouse": true
+  },
+  "plugin": ["file:///abs/path/to/oh-my-pwn/dist/plugin.js"]
+}
+```
+
+`setup-omp.sh` 가 `plugin` 영역 자동 박음. `tui.mouse` 영역은 사용자 명시.
+
+### 키보드 fallback
+
+`tui.mouse: false` 또는 미설정 환경 — mouse click 자연 no-op. opencode 의
+*기본 keybind* 가 등가 동작:
+- `↑↓` — 노드 선택
+- `Enter` — navigate (route to session view)
+- `←→` — collapse / expand
+- `Esc` — focus 이동 (active ↔ history section)
+
+별개 plugin keybind 구현 영역 없음. opencode 의 기본만으로 mouse 등가
+영역.
+
+---
+
 ## 빌드
 
 ### 플러그인 빌드 (가장 자주 쓰는 명령)
