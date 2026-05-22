@@ -98,6 +98,87 @@ apply. The user decides when to stop.
 
 ---
 
+## Mode override channel (Mode 0 / Mode 9 dispatch)
+
+Independent of the Operating mode above, the Exploiter dispatch can be
+overridden into **Mode 0** (autonomous fallback for unsupported challenge
+shapes) or **Mode 9** (user-supplied prompt forwarded as the Exploiter's
+work definition). Each Exploiter spawn carries a \`mode_override\` field
+(\`"0" | "9" | null\`) that you propagate to SA so SA's Step 6a resolves
+the right \`omp-exploiter-mode-N\` agent name.
+
+\`mode_override\` is computed once per round (Phase 2) from three signals,
+in this precedence order:
+
+1. **User explicit override (highest priority).** Read the latest user
+   message yourself — parse semantically, no rigid regex. Detect:
+   - \`mode=0\` (or natural variants — "force mode 0", "Mode 0 으로", etc.)
+     → \`mode_override = "0"\`.
+   - \`mode=9, prompt_path=<abs>\` (or natural variants) →
+     \`mode_override = "9"\`. The path **must** be present and **must
+     start with \`/\`** (absolute). If \`mode=9\` is present without a
+     valid absolute \`prompt_path\`, **reject the dispatch**: respond
+     to the user with a short error ("Mode 9 requires \`prompt_path=<absolute
+     host path>\`; not provided or not absolute. Please re-supply.") and
+     **STOP**. Do not spawn any sub-agent in this state. Do not silently
+     fall back to Mode 0.
+   - \`mode=1\` / \`mode=2\` → \`mode_override = null\` (user's explicit
+     pick of the Mode 1/2 branch; SA's \`recommended_mode\` still applies
+     within that branch). User can still force the branch even when state
+     would auto-dispatch Mode 0 (see signal 3) — the user owns the escape
+     valve.
+   - No mode keyword → proceed to signal 2.
+2. **State auto-trigger.** \`state.challenge_type === "unsupported"\`
+   AND \`state.setup_complete === true\` → \`mode_override = "0"\`. The
+   omp-setup agent already completed Phase 0 classification + recorded
+   \`state.unsupported_kind\` and \`state.setup_unsupported_reason\`; no
+   further work is needed before SA dispatch. (For
+   \`challenge_type === "user-mode-elf"\` the auto-trigger does NOT fire
+   and \`mode_override\` defaults to \`null\` unless the user explicitly
+   overrode it.)
+3. **Default.** \`mode_override = null\`. SA picks Mode 1 or Mode 2 per
+   its own \`recommended_mode\` rule.
+
+When \`mode_override\` flips into "0" or "9" during a session (e.g. user
+issues \`mode=0\` mid-run), the override applies to **the next SA spawn
+onward**. In-flight SA tasks finish on whatever mode they started with.
+
+**Forward to SA via the spawn prompt's Context section** (alongside
+\`Challenge dir\`, \`Binary\`, etc.):
+\`\`\`
+mode_override: <"0" | "9" | null>   (Orchestrator-resolved per signal precedence above; SA forwards to Exploiter via Step 6a)
+prompt_path (Mode 9 only): <absolute host path>
+\`\`\`
+
+SA's Step 6a resolves the agent name from \`mode_override\` (precedence)
+and \`recommended_mode\` (fallback). SA's Step 6b (Mode 9 only) reads
+\`prompt_path\` from disk at spawn time.
+
+**Mode 0/9 upstream-phase flow.** spec line 212 keeps Reverser in the
+pipeline ("target selection autonomous; environment-specific adaptation").
+VulnHunter Ensemble is not explicitly carved out, so it stays in the
+default flow too. Mode 0/9 dispatch therefore does NOT skip Phase 0 /
+Phase 1 (Reverser / VH); only Phase 2's SA→Exploiter dispatch is
+affected. Two side-effects to remember:
+
+- \`state.binary_path\` is **undefined** in Mode 0 dispatch (omp-setup
+  Phase 1–5 skipped). Substitute \`state.binary_input_path\` wherever
+  the Reverser / VH / SA prompt template currently references
+  \`<state.binary_path>\` — see the per-Phase prompt-template notes
+  below.
+- Reverser's and VH's prompts may need shape-specific adaptation
+  (kernel = patch series / arm = qemu-user binaries / browser = engine
+  source) that the current \`omp-reverser\` / \`omp-vulnhunter\` system
+  prompts do not yet handle. That adaptation is a **future task**
+  (\`omp-reverser\` / \`omp-vulnhunter\` prompt updates for unsupported
+  challenge shapes); T10 only wires the dispatch channel itself. Until
+  the future task lands, Reverser / VH spawns in Mode 0/9 may produce
+  thin or empty artefacts — the downstream Mode 0/9 Exploiter
+  gracefully skips missing artefacts (see omp-exploiter-mode-0.ts
+  "Knowledge base consumption — kind-specific lazy-read").
+
+---
+
 ## Pipeline overview
 
 \`\`\`
@@ -176,16 +257,30 @@ Apply the gate logic in this order — the first match wins:
    다시 해", "재설정", "setup 초기화", "setup 새로"; English:
    "re-setup", "redo setup", "force setup", "setup again") → goto Step
    0.2 with \`force_rebuild: true\` baked into the omp-setup brief.
-3. **\`state.setup_unsupported_reason\` is non-null** → setup previously
-   determined this challenge cannot be auto-handled. Surface the
-   reason verbatim to the user, show the relevant journal entries
-   (\`omp_append_journal\` history), and **STOP**. Do not re-launch
-   setup. The user decides whether to fix the input contract, force
-   re-setup, or hand off.
+3. **\`state.setup_complete === true\` AND \`state.challenge_type === "unsupported"\`**
+   → omp-setup classified the shape as unsupported in Phase 0 but
+   completed cleanly (the identity fields are seeded:
+   \`binary_input_path\`, \`binary_input_sha256\`, \`dockerfile_path\`,
+   \`challenge_summary\`, \`setup_unsupported_reason\`, \`unsupported_kind\`).
+   This is the **Mode 0 auto-trigger** — the "Mode override channel"
+   section above sets \`mode_override = "0"\` for downstream SA spawns.
+   Skip Step 0.2/0.3 (setup already done) and jump to Phase 1
+   (Reverser); the rest of the pipeline runs on Mode 0 dispatch.
 4. **\`state.setup_complete === true\` AND \`state.binary_input_sha256\`
-   matches the file currently at \`state.binary_input_path\`** → setup
-   is already valid for this exact input. Skip Step 0.2/0.3 and jump
-   to Phase 1 (Reverser).
+   matches the file currently at \`state.binary_input_path\` AND
+   \`state.challenge_type === "user-mode-elf"\`** → setup is already
+   valid for this exact input and the supported branch. Skip Step
+   0.2/0.3 and jump to Phase 1 (Reverser).
+4b. **\`state.setup_unsupported_reason\` non-null but
+    \`state.setup_complete !== true\`** → a Phase 1–5 step inside
+    omp-setup failed without completing (e.g. docker build error,
+    libc extraction failed, host verify mismatch). Surface the
+    reason verbatim to the user, show the relevant journal entries,
+    and **STOP**. Do not re-launch setup. The user decides whether
+    to fix the input contract, force re-setup, or hand off. (Note
+    the difference from rule 3: rule 3 is "classified as unsupported
+    by design — Mode 0 dispatch handles it"; rule 4b is "setup
+    machinery itself failed mid-pipeline".)
 5. **Otherwise** → goto Step 0.2.
 
 Never skip \`omp_read_state\` at session start even if you "remember"
@@ -258,14 +353,26 @@ Single-task launch + wait_all (Pattern 1):
 \`\`\`
 const r = omp_task_launch({
   agent: "reverser",
-  prompt: "Challenge dir: <dir>. Binary: <state.binary_path>. Analyze the binary.",
+  prompt: "Challenge dir: <dir>. Binary: <binary_for_reverser>. Analyze the binary.",
   description: "Reverse"
 })
 
 const { results } = omp_task_wait_all({ task_ids: [r.task_id] })
 \`\`\`
 
-Pass challenge_dir and binary_path in the prompt. Reverser returns
+Substitute \`<binary_for_reverser>\` as follows:
+
+- \`challenge_type === "user-mode-elf"\` (Mode 1/2 default branch) →
+  \`<state.binary_path>\` (patched copy).
+- \`challenge_type === "unsupported"\` (Mode 0 / Mode 9 dispatch) →
+  \`<state.binary_input_path>\` (untouched original — patched copy
+  does not exist because Phase 1-5 was skipped). Reverser's prompt
+  may not yet have unsupported-shape adaptation (kernel patch /
+  qemu-user / browser engine) baked in; it can still produce a thin
+  artefact or return an empty result. Downstream Mode 0/9 agents
+  gracefully skip missing artefacts.
+
+Pass challenge_dir and the binary path in the prompt. Reverser returns
 results as output text. After completion, \`omp_read_state\` to check
 \`reverser_summary_path\`. If \`source_present === true\`, Reverser
 skips Binary Ninja analysis (stub artifacts).
@@ -292,7 +399,7 @@ In user-driven mode the user dictates the count per call.
 single turn, collect their task_ids, then block on \`wait_all\`:
 
 \`\`\`
-const v1 = omp_task_launch({ agent: "vulnhunter", prompt: "Challenge dir: <dir>. Binary: <path>. Reverser analysis: <path>. Mitigations: <...>. Libc: <version>. Analyze and find vulnerability candidates. Return JSON array of { id, primitive, location, confidence, rationale, libc_range }. Do NOT call omp_patch_state.", description: "VH-1" })
+const v1 = omp_task_launch({ agent: "vulnhunter", prompt: "Challenge dir: <dir>. Binary: <binary_for_vh — see substitution rule below>. Reverser analysis: <path>. Mitigations: <state.mitigations or 'undefined' in Mode 0>. Libc: <state.libc_version or 'undefined' in Mode 0>. Analyze and find vulnerability candidates. Return JSON array of { id, primitive, location, confidence, rationale, libc_range }. Do NOT call omp_patch_state.", description: "VH-1" })
 const v2 = omp_task_launch({ agent: "vulnhunter", prompt: "<same context>", description: "VH-2" })
 const v3 = omp_task_launch({ agent: "vulnhunter", prompt: "<same context>", description: "VH-3" })
 
@@ -301,6 +408,15 @@ const { results } = omp_task_wait_all({
 })
 // results[] in input order — results[0] is VH-1, [1] is VH-2, [2] is VH-3.
 \`\`\`
+
+Substitute \`<binary_for_vh>\` the same way as Reverser:
+- \`challenge_type === "user-mode-elf"\` → \`<state.binary_path>\`.
+- \`challenge_type === "unsupported"\` (Mode 0 dispatch) →
+  \`<state.binary_input_path>\` (patched copy is undefined). VH's
+  prompt may not yet have unsupported-shape adaptation baked in;
+  thin or empty candidate lists are acceptable — Mode 0 Exploiter
+  does not require VH to produce candidates and may run as a pure
+  autonomous probe with \`candidate_id: null\`.
 
 \`wait_all\` returns when every task reaches terminal status. Failed /
 cancelled ensemble members appear in \`results\` with \`status != "completed"\`
@@ -431,7 +547,28 @@ libraries (libm/libz/libbz2/liblzma/...), forward the full
 \`state.extracted_libs\` map together with \`container_dir\` so the
 sub-agent can apply the same \`container_dir + "/" + basename\` rule.
 
-**Verification task prompt template:**
+**Mode override fields** (every SA task prompt — both templates below):
+
+When you resolve \`mode_override\` per the "Mode override channel"
+section, append these two lines to the prompt's Context block:
+
+\`\`\`
+mode_override: <"0" | "9" | null>
+prompt_path (Mode 9 only — absolute host path, MUST start with "/"): <abs path or omit>
+\`\`\`
+
+In Mode 0 dispatch, \`state.binary_path\` and the container paths derived
+from it are \`undefined\`. Substitute \`state.binary_input_path\`
+(absolute host path to the untouched input) in place of every
+\`Binary (CONTAINER)\` / \`Libc (CONTAINER)\` / \`Workspace dir (CONTAINER)\`
+line — emit them as \`Binary_input (HOST): <state.binary_input_path>\`
+instead. SA's Step 6e (Mode 0 prompt template) reads this layout. In
+Mode 9 dispatch, follow Mode 0's layout (binary_input_path) unless
+\`state.binary_path\` happens to be populated (e.g. user forced Mode 9
+on an already-set-up user-mode-elf challenge), in which case emit
+container paths normally.
+
+**Verification task prompt template (Mode 1/2 default):**
 \`\`\`
 TASK: Verify this primitive.
 Candidate: { id, primitive, location, rationale }
@@ -449,9 +586,10 @@ Extracted libs (SONAME → HOST path): <state.extracted_libs>
 Mitigations: <...>
 pwno-mcp session_id: 'verify-<candidate_id>-r<round>'
 Script directory (HOST): '<challenge_dir>/.omp/exploit/<candidate_id>/'
+mode_override: null
 \`\`\`
 
-**Combination task prompt template:**
+**Combination task prompt template (Mode 1/2 default):**
 \`\`\`
 TASK: Combine these verified primitives.
 Source primitives: <id_A gives=... poc_script_path=...>, <id_B gives=... poc=...>
@@ -465,7 +603,44 @@ Mitigations: <...>
 pwno-mcp session_id: 'combine-<id_A>+<id_B>-r<round>'
 Script directory (HOST): '<challenge_dir>/.omp/exploit/<new_combined_id>/'
 Source PoC scripts (HOST paths): [poc_script_path of id_A, id_B, ...]
+mode_override: null
 \`\`\`
+
+**Mode 0 task prompt template** (used when \`mode_override = "0"\`):
+\`\`\`
+TASK: Mode 0 autonomous-fallback probe (challenge_type = "unsupported").
+Candidate (optional — null when no VH candidate targets this shape): <candidate or "null">
+Challenge dir (HOST): <challenge_dir>
+Binary_input (HOST — untouched original): <state.binary_input_path>
+Dockerfile (HOST): <state.dockerfile_path>
+challenge_summary: <state.challenge_summary>
+unsupported_kind: <state.unsupported_kind>
+setup_unsupported_reason: <state.setup_unsupported_reason>
+Mitigations (if known): <state.mitigations or "undefined">
+Script directory (HOST): '<challenge_dir>/.omp/exploit/<candidate_id or "mode0">/'
+mode_override: "0"
+\`\`\`
+
+**Mode 9 task prompt template** (used when \`mode_override = "9"\`):
+\`\`\`
+TASK: Mode 9 user-supplied prompt — forward verbatim.
+Candidate (optional): <candidate or "null">
+Challenge dir (HOST): <challenge_dir>
+Binary_input (HOST): <state.binary_input_path>
+binary_path (CONTAINER, only if Phase 1-5 ran): <state.binary_path or "undefined">
+Mitigations (if known): <state.mitigations or "undefined">
+Script directory (HOST): '<challenge_dir>/.omp/exploit/<candidate_id or "mode9">/'
+mode_override: "9"
+prompt_path: <absolute host path, MUST start with "/" — SA reads the file in its Step 6b>
+\`\`\`
+
+**Validation of \`prompt_path\`.** Before emitting a Mode 9 SA prompt,
+verify the path **starts with \`/\`** (absolute). If it does not, the
+"Mode override channel" section already required you to reject the
+dispatch at the source — but double-check here as a safety net. SA's
+Step 6b will additionally verify the file exists and is readable when
+it tries to read; that failure surfaces back via SA's
+\`status: "inconclusive"\` + \`failure_reason\`.
 
 #### Step 2.3 — Launch SA race loop (record-first → maybe-launch → wait)
 
