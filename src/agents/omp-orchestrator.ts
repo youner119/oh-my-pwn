@@ -8,8 +8,8 @@ import type { AgentConfig } from "./types"
  * Sole id-allocator for pwno-mcp session_ids (sub-agents forward, never invent).
  *
  * Phase 0 ground-work (challenge classification, docker build, libc + ld
- * extraction, patchelf, host verify, workspace staging, pwno-mcp sanity)
- * is delegated to the omp-setup agent (spec
+ * extraction, patchelf, host verify, workspace staging) is delegated to
+ * the omp-setup agent (spec
  * `.omc/specs/deep-interview-envsetup-agent.md`). The orchestrator's Phase 0
  * is a single gate: read state → launch omp-setup if needed → check the
  * post-setup state → proceed to Phase 1 (Reverser).
@@ -221,8 +221,8 @@ specifying a challenge_dir:
 ## Phase 0 — Setup gate + Reverse (sequential)
 
 The setup work — challenge classification, docker build, libc + ld
-extraction, patchelf, host verify, workspace staging, pwno-mcp sanity —
-is delegated to the **omp-setup agent** (T09). Phase 0 here is just a
+extraction, patchelf, host verify, workspace staging — is delegated
+to the **omp-setup agent** (T09). Phase 0 here is just a
 gate: read state, decide whether setup is needed, launch the agent if
 so, check the result, then continue to Reverser.
 
@@ -388,7 +388,7 @@ Set \`pipeline_phase: "vh_ensemble"\` via \`omp_patch_state\`.
 the binary. Merge their results into a consolidated candidate list.
 
 **Instance count:** In autonomous mode, **always** launch
-\`state.parallel_config.vh_instance_count\` instances (default 3 — that is
+\`state.parallel_config.vh_instance_count\` instances (default 10 — that is
 the configured max, not a starting point). Same rule applies to any VH
 relaunch later in the pipeline. If the user wants a different count,
 they set \`vh_instance_count\` via \`omp_patch_state\` before the round.
@@ -485,12 +485,14 @@ into bigger ones. Each round, SAs execute in parallel. state.json is the
 **shared blackboard** — all verified primitives with PoC scripts accumulate
 there, visible to all SAs in subsequent rounds.
 
-**Pwno-mcp container is user-managed and was sanity-checked by the
-omp-setup agent at Phase 0** (Phase 5 of its internal flow). No re-ensure
-here. If you ever suspect mid-pipeline that pwno-mcp became unreachable
-(e.g. SA reports \`pwno_*\` tool not found), surface the symptom to the
-user and STOP — do NOT try to recover by restarting the container
-yourself; that is the user's job.
+**Pwno-mcp container is opencode-managed** — opencode spawns the stdio
+container automatically from \`opencode.json\`'s \`mcp.pwno-mcp\` entry
+(image \`pwno-mcp:latest\`, fork local build from \`~/Tools/pwno-mcp\`).
+Lifecycle is tied to the opencode runtime; no setup-agent sanity-check
+needed. If you ever suspect mid-pipeline that pwno-mcp became unreachable
+(e.g. SA reports \`pwno-mcp_*\` tool not found), surface the symptom to the
+user and STOP — do NOT try to recover yourself; opencode restart is the
+user's call.
 
 ### The Round Loop
 
@@ -525,10 +527,10 @@ this scheme:
 - COMBINE: \`combine-<id_A>+<id_B>-r<round>\`
 
 \`<round>\` is the current \`pipeline_cycle\`. Re-using the same id on retry
-within the same round is fine (\`pwno_create_debug_session\` is idempotent);
+within the same round is fine (\`pwno-mcp_create_debug_session\` is idempotent);
 moving to the next round bumps \`<round>\` and creates a clean session.
 
-**Derive container paths from state** (no stored \`pwno_paths\` field —
+**Derive container paths from state** (no stored \`pwno-mcp_paths\` field —
 omp-setup retired it). Compute once per session and forward to every
 sub-agent:
 
@@ -974,7 +976,7 @@ State layout:
                  # Container paths are derived from
                  # workspace_root + "omp-" + basename(challenge_dir) +
                  # "-" + binary_input_sha256.slice(0,8) — no stored
-                 # pwno_paths field anymore.
+                 # pwno-mcp_paths field anymore.
   journal.md     # Append-only log
   artifacts/     # patched binary, extracted libs (per extracted_libs map),
                  # reverser-analysis, strategist-plan, ...

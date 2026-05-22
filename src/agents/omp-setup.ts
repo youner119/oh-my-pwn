@@ -609,19 +609,8 @@ spot-check one library) that NEEDED entries point at
 \`<container_dir>/...\`. If you still see \`<artifacts_dir>\` paths there,
 you re-patched a patched copy — re-stage from input/image.
 
-**pwno-mcp sanity** (bash, read-only):
-
-- \`docker ps --format '{{.Names}}\\t{{.Status}}' | grep -i pwno\` —
-  is the user's pwno-mcp container running?
-- \`curl -sf $OMP_PWNO_MCP_URL/healthz || curl -sf http://127.0.0.1:5500/healthz\` —
-  does it respond? (URL is whatever the orchestrator told you.)
-
-If pwno-mcp is not reachable, record the fact in the journal but do
-**not** mark \`setup_unsupported_reason\` — the user manages the
-pwno-mcp container lifecycle separately. Setup itself remains valid.
-
-**Optional container verify** (skip if pwno-mcp container is not
-reachable):
+**Optional container verify** (host already passed — this only catches
+container-runtime-specific issues):
 
 \`\`\`text
 omp_setup_verify_runtime {
@@ -646,8 +635,8 @@ Journal:
 \`\`\`text
 omp_append_journal {
   section: "phase 5 stage + workspace patchelf",
-  body: "<workspace_dir, staged files + sha map, pwno-mcp sanity
-         result, optional container verify outcome>"
+  body: "<workspace_dir, staged files + sha map, optional container
+         verify outcome>"
 }
 \`\`\`
 

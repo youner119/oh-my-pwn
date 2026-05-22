@@ -143,9 +143,9 @@ export type VulnCandidate = z.infer<typeof VulnCandidateSchema>
 /** Parallel pipeline configuration. Orchestrator reads this to decide instance counts and budget. */
 export const ParallelConfigSchema = z.object({
   /** Number of VulnHunter ensemble instances to spawn. */
-  vh_instance_count: z.number().int().min(1).default(3),
+  vh_instance_count: z.number().int().min(1).default(10),
   /** Number of StrategyAgent+Exploiter pairs to run in parallel (one per candidate). */
-  sa_instance_count: z.number().int().min(1).default(3),
+  sa_instance_count: z.number().int().min(1).default(10),
   /**
    * Safety-net cycle cap for autonomous mode. Orchestrator's normal
    * termination is LLM-judged stagnation (no progress) or success

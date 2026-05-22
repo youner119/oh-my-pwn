@@ -227,7 +227,7 @@ describe("ChallengeStateSchema", () => {
               cause:
                 "BN VA 0x4553ab includes imagebase 0x400000; PIE breakpoints did not fire",
               suggested_fix:
-                "translate via PIE_BASE + (BN_ADDR - 0x400000) before pwno_set_breakpoint",
+                "translate via PIE_BASE + (BN_ADDR - 0x400000) before pwno-mcp_set_breakpoint",
               retry_recommended: true,
             },
           ],
@@ -265,8 +265,8 @@ describe("ChallengeStateSchema", () => {
       parallel_config: {},
     }
     const parsed = ChallengeStateSchema.parse(state)
-    expect(parsed.parallel_config?.vh_instance_count).toBe(3)
-    expect(parsed.parallel_config?.sa_instance_count).toBe(3)
+    expect(parsed.parallel_config?.vh_instance_count).toBe(10)
+    expect(parsed.parallel_config?.sa_instance_count).toBe(10)
     expect(parsed.parallel_config?.max_cycles).toBe(20)
     expect(parsed.parallel_config?.max_retries_per_candidate).toBe(3)
   })

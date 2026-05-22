@@ -140,5 +140,5 @@ export interface ConcurrencyConfig {
 }
 
 export const DEFAULT_CONCURRENCY_CONFIG: ConcurrencyConfig = {
-  defaultLimit: 10,
+  defaultLimit: 20,
 }

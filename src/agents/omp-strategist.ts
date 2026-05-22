@@ -6,7 +6,7 @@ import type { AgentConfig } from "./types"
 const OMP_REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..")
 
 /**
- * oh-my-pwn StrategyAgent — pwno 호환성 수정 (user-managed pwno-mcp + fixed workspace mount).
+ * oh-my-pwn StrategyAgent — pwno-mcp는 opencode-managed (stdio, opencode.json mcp.pwno-mcp entry + fixed workspace mount).
  *
  * The StrategyAgent receives a SINGLE vulnerability candidate from
  * Orchestrator and:
@@ -324,8 +324,8 @@ Concrete classifier:
 - **\`recommended_mode: 2\`** — needs memory/register inspection.
   pwncli's debug driver spawns the binary under GDB; the same Python
   script that calls \`io.sendline()\` / \`io.recv()\` for input also
-  exposes the process to \`pwno_get_context\` / \`pwno_get_memory\` /
-  \`pwno_execute\` for inspection. Use this whether or not the task
+  exposes the process to \`pwno-mcp_get_context\` / \`pwno-mcp_get_memory\` /
+  \`pwno-mcp_execute\` for inspection. Use this whether or not the task
   needs runtime input — Mode 2 cleanly covers both cases via the same
   pwntools driver.
   - Write-side primitives: \`fmt_string_write\`, \`tcache_poison\`,

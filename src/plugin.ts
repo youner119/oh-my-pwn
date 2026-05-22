@@ -8,12 +8,10 @@
  *   - binja: Binary Ninja MCP bridge (Node stdio) — reverser agent가 사용.
  *     OMP_BN_BRIDGE_PATH 환경변수로 bridge dist 경로 지정.
  *
- *   - pwno: pwno-mcp Docker (HTTP remote) — exploiter agent가 사용.
- *     http://127.0.0.1:5500/mcp 기본, OMP_PWNO_MCP_URL로 override.
- *     **컨테이너는 사용자가 omp 실행 전에 직접 띄움.** OmP는 lifecycle 관리하지
- *     않음. 컨테이너 가용성 sanity-check + 챌린지 파일 staging 은 모두
- *     omp-setup agent (Phase 5) 가 단일 transaction 으로 처리.
- *     컨테이너 mount source 는 repo root 의 workspace/ (고정).
+ *   - pwno-mcp: opencode-managed stdio docker (image `pwno-mcp:latest`, fork
+ *     local build from ~/Tools/pwno-mcp). opencode.json 의 mcp 정적 entry 로
+ *     자동 spawn — setup-omp.sh 가 그 entry 를 박는다. Plugin code 가 MCP
+ *     주입하지 않음.
  */
 
 import { existsSync } from "node:fs"
@@ -99,12 +97,6 @@ const OmpPlugin: Plugin = async (input) => {
       : undefined,
   })
 
-  // pwno-mcp HTTP MCP URL — wired below as an MCP remote for sub-agent
-  // sessions so Exploiter can call `pwno_*` tools. The legacy
-  // omp_pwno_status health-check tool was retired by T14; sanity-check
-  // moved into the omp-setup agent (Phase 5 bash: docker ps + curl).
-  const pwnoUrl = process.env["OMP_PWNO_MCP_URL"] || "http://127.0.0.1:5500/mcp"
-
   // omp-setup agent atomic tool surface (Phase B fully implemented in
   // T04/T06/T07/T08). Spec: `.omc/specs/deep-interview-envsetup-agent.md`.
   // inspect_folder / probe_image were considered then deferred — Phase 0 is
@@ -162,27 +154,9 @@ const OmpPlugin: Plugin = async (input) => {
         )
       }
 
-      // pwno-mcp: HTTP remote MCP — exploiter agent의 gdb/pwndbg 관찰용.
-      // 컨테이너는 사용자가 직접 띄움 — repo root의 workspace/를 mount하면 된다:
-      //   docker run --rm -d --name omp-pwno -p 5500:5500 \
-      //     --cap-add=SYS_PTRACE --cap-add=SYS_ADMIN \
-      //     --security-opt seccomp=unconfined \
-      //     -v "${OMP_WORKSPACE_PATH}:/workspace" \
-      //     pwno-mcp:latest
-      const pwnoEnabled = process.env["OMP_PWNO_MCP_DISABLED"] !== "1"
-      if (pwnoEnabled) {
-        cfg.mcp ??= {}
-        ;(cfg.mcp as Record<string, unknown>)["pwno"] = {
-          type: "remote",
-          url: pwnoUrl,
-          enabled: true,
-        }
-      } else {
-        process.stderr.write(
-          `[omp] pwno MCP not registered — OMP_PWNO_MCP_DISABLED=1. ` +
-            `Exploiter will not have gdb/memory inspection capabilities.\n`,
-        )
-      }
+      // pwno-mcp: registered statically in opencode.json (mcp.pwno-mcp,
+      // stdio). setup-omp.sh writes that entry from a fixed template — see
+      // scripts/setup-omp.sh. Plugin code does not inject the pwno MCP.
     },
 
     // ── tools ─────────────────────────────────────────────────────────────

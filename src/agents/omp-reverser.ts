@@ -599,7 +599,7 @@ _Generated: <ISO timestamp> | Binary sha: <sha256> | BFS depth: <depth used> | R
 - BN imagebase: \`0x400000\`  ← from \`get_binary_status.image_base\` (fallback: \`0x400000\` for x86-64 ELF default)
 - **All addresses in this document and in \`pseudocode/\` are BN VA** (= imagebase + offset). Function offsets in tables (e.g. \`main @ 0x401209\`), addresses in "Key annotations", pseudocode \`0x...\` literals — all are BN VA.
 - RVA = \`BN_VA - imagebase\`. For the example above: \`0x401209 - 0x400000 = 0x1209\`.
-- **Runtime address (PIE only, Mode 2 GDB):** \`pie_base + RVA\`, where \`pie_base\` comes from \`pwno_execute("vmmap")\` at runtime. Mode 1 (host stdout-only) does not touch addresses, so PIE translation does not apply there.
+- **Runtime address (PIE only, Mode 2 GDB):** \`pie_base + RVA\`, where \`pie_base\` comes from \`pwno-mcp_execute("vmmap")\` at runtime. Mode 1 (host stdout-only) does not touch addresses, so PIE translation does not apply there.
 - For non-PIE binaries BN_VA == runtime VA; no translation needed.
 
 _(Downstream agents — StrategyAgent, Exploiter — read this section first to interpret every address below. Do not invent your own convention.)_

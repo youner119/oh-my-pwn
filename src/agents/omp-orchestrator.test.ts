@@ -87,14 +87,14 @@ describe("createOmpOrchestratorAgent", () => {
     expect(p).toContain("Binary (CONTAINER)")
     expect(p).toContain("Libc (CONTAINER)")
     expect(p).toContain("Ld (CONTAINER)")
-    // Derived placeholders instead of stale state.pwno_paths.* references
+    // Derived placeholders instead of stale state.pwno-mcp_paths.* references
     expect(p).toContain("<binary_in_ctr>")
     expect(p).toContain("<libc_in_ctr>")
     expect(p).toContain("<ld_in_ctr>")
     // Derive rule explicit + extracted_libs forwarding for multi-NEEDED
     expect(p).toContain('"omp-" + basename(state.challenge_dir) + "-" + state.binary_input_sha256.slice(0, 8)')
     expect(p).toContain("state.extracted_libs")
-    expect(p).not.toContain("state.pwno_paths")
+    expect(p).not.toContain("state.pwno-mcp_paths")
   })
 
   test("Phase 4 termination does NOT call any container stop tool", () => {
@@ -112,10 +112,12 @@ describe("createOmpOrchestratorAgent", () => {
     expect(p).not.toContain("Ghidra-MCP")
   })
 
-  test("Phase 2 entry attributes pwno-mcp sanity to omp-setup at Phase 0 (T11)", () => {
+  test("Phase 2 entry attributes pwno-mcp lifecycle to opencode (stdio cutover)", () => {
     const agent = createOmpOrchestratorAgent("test-model")
     const p = agent.prompt ?? ""
-    expect(p).toContain("user-managed and was sanity-checked by the\nomp-setup agent at Phase 0")
+    expect(p).toContain("opencode-managed")
+    expect(p).toContain("opencode.json")
+    expect(p).not.toContain("user-managed and was sanity-checked")
     expect(p).not.toContain("already warm")
     expect(p).not.toContain("sanity-checked at Step 0.3")
   })

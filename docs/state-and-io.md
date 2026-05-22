@@ -84,7 +84,7 @@
 
 ### Workspace path derive (envsetup 재설계)
 
-별도 `pwno_paths` field 는 더 이상 박지 않는다 (T11/T12 폐지). 대신
+별도 `pwno-mcp_paths` field 는 더 이상 박지 않는다 (T11/T12 폐지). 대신
 **derive 룰** — Orchestrator + SA + Exploiter 모두 동일하게 계산:
 
 ```

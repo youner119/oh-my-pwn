@@ -11,7 +11,9 @@
 #      - 또는 ~/Tools/binary_ninja_mcp/bridge/dist/index.js 자동 탐지
 #      - 둘 다 실패 시 사용자에게 interactive prompt (tty만)
 #      - --skip-bn 으로 opt-out 가능 (나중에 수동 설정)
-#   3) ~/.config/omp/opencode/opencode.json 생성 (plugin file:// 경로 등록)
+#   3) ~/.config/omp/opencode/opencode.json 생성 (plugin file:// 경로 등록 +
+#      pwno-mcp stdio MCP entry. Image `pwno-mcp:latest` 는 ~/Tools/pwno-mcp
+#      에서 로컬 빌드한 fork 가정 — opencode 가 자동 spawn.)
 #   4) ~/.zshrc 에 omp alias 추가:
 #        alias omp='OMP_INSTANCE_ID="$(date +%s)-$$" OMP_BN_BRIDGE_PATH=... XDG_CONFIG_HOME=$HOME/.config/omp opencode'
 #      이미 있으면 교체 (bridge 경로가 바뀔 수 있으므로 갱신).
@@ -196,21 +198,38 @@ run "mkdir -p '$CONFIG_DIR'"
 # export an object with server()"). TUI 는 별개 tui.json 박는 게 정답.
 # 출처: opencode/specs/tui-plugins.md.
 
+# pwno-mcp: opencode-managed stdio docker. Image `pwno-mcp:latest` is the
+# fork local build from ~/Tools/pwno-mcp — see CLAUDE.md "pwno-mcp custom
+# fork" section. Workspace mount is the repo root's workspace/ (matches
+# omp-setup agent's path convention).
+read -r -d '' OPENCODE_CONFIG_JSON <<EOF || true
+{
+  "\$schema": "https://opencode.ai/config.json",
+  "plugin": ["file://$PLUGIN_PATH"],
+  "mcp": {
+    "pwno-mcp": {
+      "type": "local",
+      "command": [
+        "docker", "run", "--rm", "-i",
+        "--cap-add=SYS_PTRACE", "--cap-add=SYS_ADMIN",
+        "--security-opt", "seccomp=unconfined",
+        "--security-opt", "apparmor=unconfined",
+        "-v", "$REPO_ROOT/workspace:/workspace",
+        "-v", "omp-debuginfod-cache:/home/pwno/.cache/debuginfod_client",
+        "pwno-mcp:latest",
+        "--stdio"
+      ],
+      "enabled": true
+    }
+  }
+}
+EOF
+
 if [[ "$DRY_RUN" == "1" ]]; then
   printf '  (dry-run) would write %s:\n' "$CONFIG_FILE"
-  cat <<EOF
-{
-  "\$schema": "https://opencode.ai/config.json",
-  "plugin": ["file://$PLUGIN_PATH"]
-}
-EOF
+  printf '%s\n' "$OPENCODE_CONFIG_JSON"
 else
-  cat > "$CONFIG_FILE" <<EOF
-{
-  "\$schema": "https://opencode.ai/config.json",
-  "plugin": ["file://$PLUGIN_PATH"]
-}
-EOF
+  printf '%s\n' "$OPENCODE_CONFIG_JSON" > "$CONFIG_FILE"
 fi
 
 # tui.json: TUI plugin only. plugin_enabled 에 내장 sidebar_content slot
@@ -318,20 +337,3 @@ fi
 say "done."
 say "new shell session:"
 printf '  source ~/.zshrc && omp\n'
-
-# ── 6) pwno-mcp container (manual — pwno 호환성 수정: user-managed) ────────────
-# OmP는 pwno-mcp 컨테이너 lifecycle을 관리하지 않는다 (pwno 호환성 수정 design). 사용자가
-# omp 실행 전에 직접 docker run 해야 한다. 아래 명령을 그대로 복사해 쓰면 된다.
-# (workspace mount 는 이 repo 의 workspace/ 폴더로 고정 — omp-setup
-# agent 가 Phase 5 에서 challenge 파일을 거기로 복사한다.)
-printf '\n'
-say "pwno-mcp container is user-managed. Start it before running omp:"
-printf '  docker run -d --name omp-pwno \\\n'
-printf '    -p 5500:5500 \\\n'
-printf '    --cap-add=SYS_PTRACE --cap-add=SYS_ADMIN \\\n'
-printf '    --security-opt seccomp=unconfined \\\n'
-printf '    -v "%s:/workspace" \\\n' "$REPO_ROOT/workspace"
-printf '    pwno-mcp:latest\n'
-printf '\n'
-printf '  # health check:\n'
-printf '  curl -s http://127.0.0.1:5500/mcp -o /dev/null -w "HTTP %%{http_code}\\n"  # 406 = up\n'
