@@ -68,6 +68,7 @@ export interface OmpSessionClient {
 export type TaskStatus =
   | "queued"
   | "running"
+  | "idle"
   | "completed"
   | "failed"
   | "cancelled"

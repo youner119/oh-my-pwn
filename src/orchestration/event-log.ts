@@ -61,6 +61,20 @@ export interface OrchestratorRegisteredEvent extends EventCommon {
   challenge_name: string
 }
 
+/**
+ * Orchestrator 의 status 변동 (Rev 7) — BG manager polling 안
+ * `client.status()` 결과의 변동 시만 박힘. 사용자 prompt 대기 시
+ * `"idle"`, 모델 응답 중 / active 영역 시 `"running"`. opencode 의 raw
+ * `"busy"` / `"retry"` 는 `"running"` 으로 매핑 (기존 `isIdleStatus`
+ * 패턴 일치). Initial status — `orchestrator_registered` 박힌 시점 =
+ * `"running"` (fold 의 default).
+ */
+export interface OrchestratorStatusEvent extends EventCommon {
+  type: "orchestrator_status"
+  session_id: string
+  status: "running" | "idle"
+}
+
 /** `createTask()` — task queued. */
 export interface TaskCreatedEvent extends EventCommon {
   type: "task_created"
@@ -107,6 +121,7 @@ export interface TaskCompletedEvent extends EventCommon {
  */
 export type Event =
   | OrchestratorRegisteredEvent
+  | OrchestratorStatusEvent
   | TaskCreatedEvent
   | TaskStartedEvent
   | TaskFailedEvent
@@ -239,6 +254,12 @@ export function foldEvents(events: Event[]): TreeJson {
 
   const tasks = new Map<string, FoldTask>()
   const orchestrators = new Map<string, OrchestratorInfo>()
+  /**
+   * Orchestrator 별 마지막 status (Rev 7). `orchestrator_registered` 시
+   * default `"running"` 박힘, `orchestrator_status` event 박힐 때마다
+   * 갱신. fold output 의 orchestrator node status 가 이 Map 의 값 사용.
+   */
+  const orchestratorStatuses = new Map<string, "running" | "idle">()
 
   for (const e of events) {
     switch (e.type) {
@@ -249,6 +270,11 @@ export function foldEvents(events: Event[]): TreeJson {
           challengeName: e.challenge_name,
           startedAt: new Date(e.ts),
         })
+        // Initial status — orchestrator_status event 가 박힐 때까지 default
+        orchestratorStatuses.set(e.session_id, "running")
+        break
+      case "orchestrator_status":
+        orchestratorStatuses.set(e.session_id, e.status)
         break
       case "task_created":
         tasks.set(e.task_id, {
@@ -316,7 +342,7 @@ export function foldEvents(events: Event[]): TreeJson {
       session_id: orch.sessionID,
       role: orch.agent,
       parent_task_id: null,
-      status: "running",
+      status: orchestratorStatuses.get(orch.sessionID) ?? "running",
       started_at: orch.startedAt.toISOString(),
       challenge_name: orch.challengeName,
     })

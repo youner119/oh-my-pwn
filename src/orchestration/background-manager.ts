@@ -132,6 +132,13 @@ export class BackgroundManager {
   private readonly serverUrl?: string
   private readonly tasks = new Map<string, BackgroundTask>()
   private readonly orchestrators = new Map<string, OrchestratorInfo>()
+  /**
+   * Per-orchestrator last seen status (Rev 7). polling 이 `client.status()`
+   * 결과와 비교 — 변동 시만 `appendEvent("orchestrator_status", ...)` 박음
+   * (event log noise 최소화). `registerOrchestrator` 시 initial `"running"`
+   * 박음.
+   */
+  private readonly orchestratorStatuses = new Map<string, "running" | "idle">()
   private readonly paneIds = new Map<string, string>() // taskId → tmux paneId
   private readonly sessionPaneIds = new Map<string, string>() // sessionID → tmux paneId
   private readonly concurrency: ConcurrencyManager
@@ -228,11 +235,16 @@ export class BackgroundManager {
         challengeName,
         startedAt: new Date(),
       })
+      this.orchestratorStatuses.set(sessionID, "running")
       this.appendEvent("orchestrator_registered", {
         session_id: sessionID,
         agent,
         challenge_name: challengeName,
       })
+      // Rev 7 — orchestrator 만 있을 때도 polling 유지 (status 변동 감지).
+      // sub-agent 가 launch 되기 전 / 모두 종료된 후의 orchestrator-only
+      // 상태에서도 idle/running transition 박을 수 있도록.
+      this.ensurePolling()
     }
   }
 
@@ -661,7 +673,25 @@ export class BackgroundManager {
         })
       }
 
-      // Stop polling if no running tasks remain
+      // Orchestrator status 추적 (Rev 7) — 변동 시만 event 박음.
+      for (const orch of this.orchestrators.values()) {
+        const sdkStatus = statuses[orch.sessionID]
+        if (!sdkStatus) continue // session disappeared — ignore (status 유지)
+        const newStatus = isIdleStatus(sdkStatus.type) ? "idle" : "running"
+        const oldStatus =
+          this.orchestratorStatuses.get(orch.sessionID) ?? "running"
+        if (newStatus !== oldStatus) {
+          this.orchestratorStatuses.set(orch.sessionID, newStatus)
+          this.appendEvent("orchestrator_status", {
+            session_id: orch.sessionID,
+            status: newStatus,
+          })
+        }
+      }
+
+      // Stop polling if no running tasks AND no orchestrators remain.
+      // Rev 7 — orchestrator 가 있는 동안 polling 유지 (idle 대기 중에도
+      // 다음 busy transition 감지).
       let hasRunning = false
       for (const task of this.tasks.values()) {
         if (task.status === "running") {
@@ -669,7 +699,7 @@ export class BackgroundManager {
           break
         }
       }
-      if (!hasRunning) this.stopPolling()
+      if (!hasRunning && this.orchestrators.size === 0) this.stopPolling()
     } catch {
       // Polling failure is non-fatal; retry next interval
     } finally {
