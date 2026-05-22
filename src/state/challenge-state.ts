@@ -311,6 +311,29 @@ export const ChallengeStateSchema = z.object({
    */
   setup_unsupported_reason: z.string().nullable().optional(),
   /**
+   * Fine-grained classification of an unsupported challenge, set by the
+   * omp-setup agent in Phase 0 alongside `challenge_type === "unsupported"`
+   * and `setup_unsupported_reason`. Picks the bucket whose ctf-pwn knowledge
+   * file the Mode 0 Exploiter lazy-reads; `"other"` covers shapes that do
+   * not map to a dedicated knowledge bucket.
+   *
+   * Only meaningful when `challenge_type === "unsupported"`. For
+   * `"user-mode-elf"` (the supported branch) this field is omitted.
+   *
+   * Added by spec `deep-interview-mode-0-9-setup.md` (T1 / ACS-2).
+   */
+  unsupported_kind: z
+    .enum([
+      "kernel-pwn",
+      "arm-userland",
+      "multi-binary",
+      "browser",
+      "library-only",
+      "source-only",
+      "other",
+    ])
+    .optional(),
+  /**
    * 1–3 sentence free-form summary of the challenge environment, written
    * by the omp-setup agent during Phase 0 (Inspect & Understand). Captures
    * facts only — file kinds, mitigations raw flags, libc version, remote
