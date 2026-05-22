@@ -205,33 +205,59 @@ challenge layout differs):
   user-mode-elf): \`docker run --rm <image> sh -c '<cmd>'\` for image
   inspection.
 
-**Classification rules** (apply in order — first match wins):
+**Classification rules** (apply in order — first match wins). For every
+\`unsupported\` rule, also set \`unsupported_kind\` to the bucket named in
+the rule heading — this is the field downstream Mode 0 Exploiter uses
+to lazy-read \`knowledge/ctf-pwn/<unsupported_kind>.md\`. The only
+\`user-mode-elf\` rule (rule 7) leaves \`unsupported_kind\` undefined.
 
-1. **Kernel:** vmlinux / bzImage / vmlinuz at the top level OR
-   \`qemu-system-*\` in run.sh OR Linux kernel image magic in any
-   blob OR \`.cpio.gz\` initramfs at top level →
-   \`challenge_type: "unsupported"\` with reason that names the
-   indicator.
-2. **Browser / interpreter:** node / v8 / d8 / chromium / firefox /
-   python / php binaries as the main target →
-   \`challenge_type: "unsupported"\`.
-3. **Library-only / multi-binary:** zero ELF executables and one or
-   more \`.so\` files OR multiple distinct ELF executables that are
-   each the "challenge binary" depending on context →
-   \`challenge_type: "unsupported"\`.
-4. **Source-only:** no binary at all, only \`.c\` / \`Makefile\` /
-   build script → \`challenge_type: "unsupported"\` (we do not build
-   from source; the challenge owner is expected to ship the
-   binary).
-5. **Otherwise** (single dynamically-linked OR statically-linked
-   user-mode ELF that matches \`state.binary_input_path\`):
-   \`challenge_type: "user-mode-elf"\`.
+1. **Kernel** → \`unsupported_kind: "kernel-pwn"\`. Indicators:
+   vmlinux / bzImage / vmlinuz at the top level OR \`qemu-system-*\` in
+   run.sh / start.sh / Dockerfile CMD OR Linux kernel image magic in
+   any blob OR \`.cpio.gz\` / \`.cpio.xz\` initramfs at top level.
+2. **Browser / interpreter** → \`unsupported_kind: "browser"\`.
+   Indicators: node / v8 / d8 / chromium / firefox / webkit / python /
+   php / ruby / lua binaries as the main target (i.e. the binary the
+   challenge owner ships is the engine, not a thin wrapper).
+3. **ARM user-mode** → \`unsupported_kind: "arm-userland"\`.
+   Indicators: the candidate ELF binary's \`readelf -h\` reports
+   \`Machine: ARM\` (EM_ARM, 32-bit) or \`Machine: AArch64\` (EM_AARCH64,
+   64-bit). Patchelf and the Phase 1–5 pipeline are x86-only, so ARM
+   targets go to Mode 0. **Other non-x86 architectures** (RISC-V /
+   MIPS / PowerPC / SPARC / …) fall through to rule 6 below
+   (\`"other"\`); only ARM/AArch64 has a dedicated knowledge bucket.
+4. **Library-only** → \`unsupported_kind: "library-only"\`. Indicators:
+   zero ELF executables AND one or more \`.so\` shared objects as the
+   challenge target (e.g. a vulnerable library loaded by a host
+   harness via \`dlopen\` / \`LD_PRELOAD\`).
+5. **Multi-binary** → \`unsupported_kind: "multi-binary"\`. Indicators:
+   two or more distinct ELF executables where each is meaningfully a
+   "challenge binary" depending on context (client + server, parent +
+   child, supervisor + worker) — there is no single
+   \`binary_input_path\` that captures the whole attack surface.
+6. **Source-only** → \`unsupported_kind: "source-only"\`. Indicators:
+   no binary at all, only \`.c\` / \`Makefile\` / build script (we do
+   not build from source; the challenge owner is expected to ship
+   the binary). Also use this bucket if there is a \`Makefile\` /
+   build script but no ELF artefact has been produced yet.
+7. **Other unsupported** → \`unsupported_kind: "other"\`. Catch-all
+   for non-x86 ELF that is not ARM/AArch64 (RISC-V / MIPS / PowerPC
+   / SPARC / …), or for any unsupported shape that does not match
+   rules 1–6 (e.g. raw firmware blob, .o object file as the target,
+   exotic format). \`setup_unsupported_reason\` must name the concrete
+   shape so the user understands why we fell through.
+8. **Otherwise** (single dynamically-linked OR statically-linked
+   user-mode ELF with \`Machine: Advanced Micro Devices X86-64\` /
+   \`Intel 80386\` that matches \`state.binary_input_path\`):
+   \`challenge_type: "user-mode-elf"\`. Leave \`unsupported_kind\`
+   undefined.
 
 After you decide:
 
 \`\`\`text
 omp_patch_state {
   challenge_type: <decision>,
+  unsupported_kind: <bucket>,               // ONLY when challenge_type === "unsupported"; omit for "user-mode-elf"
   challenge_summary: "<1-3 factual sentences>",
   binary_input_path: "<abs path>",          // only if not already in state
   binary_input_sha256: "<sha>",             // only if not already in state
