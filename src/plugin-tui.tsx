@@ -117,18 +117,29 @@ function ActiveTreeNode(props: {
   collapsed: () => Set<string>
   toggle: (taskId: string) => void
   navigate: (sessionID: string | undefined) => void
-  depth: number
+  /** Parent ancestry 의 vertical lines + spaces. root 는 빈 문자열. */
+  prefix: string
+  /** 같은 depth 내 마지막 sibling 인지. branch char 결정용 (└─ vs ├─). */
+  isLast: boolean
+  /** Root (orchestrator) 노드 — branch char 없이 박힘. */
+  isRoot: boolean
 }) {
   const children = createMemo(() =>
     props.allActive().filter((n) => n.parent_task_id === props.node.task_id),
   )
   const hasChildren = createMemo(() => children().length > 0)
   const isCollapsed = createMemo(() => props.collapsed().has(props.node.task_id))
-  const indent = "  ".repeat(props.depth)
   const elapsedStr = createMemo(() => {
     now() // dep marker — tick signal 의존 등록, 매 초 re-compute
     return formatElapsed(elapsedSince(props.node.started_at))
   })
+
+  // Branch char: root 는 없음, 그 외는 마지막 sibling 여부 따라 └─ / ├─.
+  const branchChar = props.isRoot ? "" : props.isLast ? "└─ " : "├─ "
+  // Children's prefix: parent's prefix + (parent 가 isLast 면 3 spaces,
+  // 아니면 "│  "). Root 는 contribute 안 함 — children 이 level 0 시작.
+  const childPrefix =
+    props.prefix + (props.isRoot ? "" : props.isLast ? "   " : "│  ")
 
   return (
     <box>
@@ -141,7 +152,8 @@ function ActiveTreeNode(props: {
             }}
           >
             <text>
-              {indent}
+              {props.prefix}
+              {branchChar}
               {isCollapsed() ? "▶" : "▼"}
             </text>
           </box>
@@ -155,7 +167,8 @@ function ActiveTreeNode(props: {
         >
           <text>
             <Show when={!hasChildren()}>
-              {indent}
+              {props.prefix}
+              {branchChar}
               {"  "}
             </Show>
             {shortRole(props.node.role)}
@@ -172,14 +185,16 @@ function ActiveTreeNode(props: {
       </box>
       <Show when={hasChildren() && !isCollapsed()}>
         <For each={children()}>
-          {(child) => (
+          {(child, idx) => (
             <ActiveTreeNode
               node={child}
               allActive={props.allActive}
               collapsed={props.collapsed}
               toggle={props.toggle}
               navigate={props.navigate}
-              depth={props.depth + 1}
+              prefix={childPrefix}
+              isLast={idx() === children().length - 1}
+              isRoot={false}
             />
           )}
         </For>
@@ -203,14 +218,16 @@ function ActiveTree(props: {
   return (
     <box>
       <For each={roots()}>
-        {(root) => (
+        {(root, idx) => (
           <ActiveTreeNode
             node={root}
             allActive={allActive}
             collapsed={props.collapsed}
             toggle={props.toggle}
             navigate={props.navigate}
-            depth={0}
+            prefix=""
+            isLast={idx() === roots().length - 1}
+            isRoot={true}
           />
         )}
       </For>
