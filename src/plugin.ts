@@ -71,41 +71,13 @@ const OmpPlugin: Plugin = async (input) => {
     | undefined
   const directory = pluginInput.directory ?? process.cwd()
 
-  // Resolve the real server URL for tmux attach.
-  // opencode starts with --port 0 (default), so the OS assigns an ephemeral port.
-  // PluginInput.serverUrl may carry port 0 (pre-bind) — unusable for external attach.
-  // Fallback: OPENCODE_PORT env var, or default 4096 (same pattern as OmO).
-  const rawServerUrl = pluginInput.serverUrl?.toString()
-  let serverUrl: string | undefined
-  if (rawServerUrl) {
-    try {
-      const parsed = new URL(rawServerUrl)
-      const port = parsed.port || (parsed.protocol === "https:" ? "443" : "80")
-      if (port === "0") {
-        const fallbackPort = process.env.OPENCODE_PORT ?? "4096"
-        serverUrl = `http://localhost:${fallbackPort}`
-      } else {
-        serverUrl = rawServerUrl.replace(/\/+$/u, "")
-      }
-    } catch {
-      serverUrl = rawServerUrl.replace(/\/+$/u, "")
-    }
-  }
-
   // Initialize BackgroundManager (parallel task lifecycle).
   // If no client available (e.g., test/debug), orchestration tools are still
   // registered but will fail with a clear error on invocation.
-  if (serverUrl) {
-    process.stderr.write(`[omp] serverUrl: ${serverUrl}\n`)
-  } else {
-    process.stderr.write(`[omp] WARNING: serverUrl not available — tmux panes will not work\n`)
-  }
-
   const manager = sessionClient
     ? new BackgroundManager({
         client: sessionClient,
         directory,
-        serverUrl,
         enableEventLog: true,
       })
     : undefined

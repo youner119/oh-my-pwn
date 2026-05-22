@@ -2,11 +2,13 @@
  * BackgroundManager — manages parallel sub-agent sessions.
  *
  * Simplified port of OmO's background-agent/manager.ts:
- * - tmux pane spawning for sub-agent visibility
  * - No skill injection, no session cursor dedup
  * - No category resolver (direct agent name only)
  * - Supports both sync (blocking) and background (fire-and-forget) modes
  * - DI-friendly via OmpSessionClient interface
+ *
+ * Sub-agent 가시화는 Rev 5 의 TUI sidebar + Rev 6 의 events.log channel
+ * 영역. tmux pane 영역은 T15-T18 (2026-05-23) 에서 폐기.
  */
 
 import type {
@@ -23,13 +25,6 @@ import type {
 import { ConcurrencyManager } from "./concurrency"
 import { resolveAgent } from "./agent-resolver"
 import { getAgentToolRestrictions } from "./agent-tool-restrictions"
-import {
-  isInsideTmux,
-  spawnSubagentPane,
-  closeTmuxPane,
-  resetPaneTracking,
-  findPaneBySession,
-} from "./tmux"
 import {
   EVENT_SCHEMA_VERSION,
   appendEventLine,
@@ -115,8 +110,6 @@ function unwrapData<T>(result: unknown): T {
 export interface BackgroundManagerOptions {
   client: OmpSessionClient
   directory: string
-  /** opencode server URL for tmux attach. e.g., "http://localhost:4096" */
-  serverUrl?: string
   concurrency?: { defaultLimit?: number; modelLimits?: Record<string, number> }
   /**
    * TUI plugin 통신용 tree.json dump 활성화. Plugin runtime 만 true, test 는
@@ -129,7 +122,6 @@ export interface BackgroundManagerOptions {
 export class BackgroundManager {
   private readonly client: OmpSessionClient
   private readonly directory: string
-  private readonly serverUrl?: string
   private readonly tasks = new Map<string, BackgroundTask>()
   private readonly orchestrators = new Map<string, OrchestratorInfo>()
   /**
@@ -139,8 +131,6 @@ export class BackgroundManager {
    * 박음.
    */
   private readonly orchestratorStatuses = new Map<string, "running" | "idle">()
-  private readonly paneIds = new Map<string, string>() // taskId → tmux paneId
-  private readonly sessionPaneIds = new Map<string, string>() // sessionID → tmux paneId
   private readonly concurrency: ConcurrencyManager
   private readonly enableEventLog: boolean
   /**
@@ -161,7 +151,6 @@ export class BackgroundManager {
   constructor(options: BackgroundManagerOptions) {
     this.client = options.client
     this.directory = options.directory
-    this.serverUrl = options.serverUrl
     this.concurrency = new ConcurrencyManager(options.concurrency)
     this.enableEventLog = options.enableEventLog ?? false
     this.instanceId = nextInstanceId()
@@ -422,7 +411,7 @@ export class BackgroundManager {
    * Steps:
    *   1. Best-effort POST /session/{id}/abort (errors swallowed — session
    *      may have finished between status check and abort).
-   *   2. Mark task `cancelled`, release concurrency slot, close tmux pane.
+   *   2. Mark task `cancelled`, release concurrency slot.
    *   3. Emit "done" so any pending waitAll/waitAny treats it as a first-
    *      complete candidate.
    */
@@ -442,38 +431,15 @@ export class BackgroundManager {
     task.status = "cancelled"
     task.completedAt = new Date()
     this.concurrency.release(task.concurrencyKey)
-    this.closePaneForTask(task.id)
     this.taskEvents.emit("done", task.id)
     this.appendEvent("task_cancelled", { task_id: taskId })
     return true
   }
 
-  /** Shut down: cancel all waiters, stop polling, close panes. */
+  /** Shut down: cancel all waiters, stop polling. */
   shutdown(): void {
     this.stopPolling()
     this.concurrency.clear()
-    // Close all tmux panes and reset tracking
-    for (const [, paneId] of this.paneIds) {
-      void closeTmuxPane(paneId)
-    }
-    this.paneIds.clear()
-    this.sessionPaneIds.clear()
-    resetPaneTracking()
-  }
-
-  /** Close the tmux pane for a completed task. */
-  private closePaneForTask(taskId: string): void {
-    const paneId = this.paneIds.get(taskId)
-    if (paneId) {
-      ompLog(`Task ${taskId}: closing tmux pane ${paneId}`)
-      void closeTmuxPane(paneId)
-      this.paneIds.delete(taskId)
-      // Reset pane tracking when all panes are closed so the next round
-      // starts fresh instead of trying to split a dead pane.
-      if (this.paneIds.size === 0) {
-        resetPaneTracking()
-      }
-    }
   }
 
   /* ── Internal ───────────────────────────────────────────────────────── */
@@ -567,7 +533,7 @@ export class BackgroundManager {
       ...(input.tools ?? {}),
     }
 
-    // Fire prompt (must happen BEFORE tmux attach — pane needs session activity)
+    // Fire prompt.
     const parts: TextPart[] = [{ type: "text", text: input.prompt }]
     await this.client.promptAsync({
       path: { id: sessionID },
@@ -579,34 +545,7 @@ export class BackgroundManager {
       },
     })
 
-    ompLog(`Task ${task.id}: session ${sessionID} created for @${input.agent} (serverUrl: ${this.serverUrl ?? "none"})`)
-
-    // Spawn tmux pane so the user can watch the sub-agent work.
-    // If the parent session has a pane (e.g., SA), split it to place
-    // this agent (e.g., Exploiter) to its right.
-    if (this.serverUrl && isInsideTmux()) {
-      // Fast path — parent pane was spawned by *this* manager instance
-      // (e.g. Orchestrator launching VH / SA). Cross-instance lookups
-      // (an SA in its own plugin instance launching an Exploiter) miss
-      // here because each plugin invocation gets its own
-      // `sessionPaneIds` Map; fall back to querying tmux itself, which
-      // is the only store shared across plugin instances.
-      let parentPaneId = this.sessionPaneIds.get(input.parentSessionID)
-      if (!parentPaneId) {
-        parentPaneId = await findPaneBySession(input.parentSessionID)
-      }
-      const paneId = await spawnSubagentPane({
-        serverUrl: this.serverUrl,
-        sessionId: sessionID,
-        title: input.description,
-        parentPaneId,
-      })
-      if (paneId) {
-        this.paneIds.set(task.id, paneId)
-        this.sessionPaneIds.set(sessionID, paneId)
-        ompLog(`Task ${task.id}: tmux pane ${paneId} opened${parentPaneId ? ` (child of ${parentPaneId})` : ""}`)
-      }
-    }
+    ompLog(`Task ${task.id}: session ${sessionID} created for @${input.agent}`)
   }
 
   private ensurePolling(): void {
@@ -645,7 +584,6 @@ export class BackgroundManager {
             task.status = "completed"
             task.completedAt = new Date()
             this.concurrency.release(task.concurrencyKey)
-            this.closePaneForTask(task.id)
             void this.dumpTranscript(task)
             this.taskEvents.emit("done", task.id)
             this.appendEvent("task_completed", {
@@ -664,7 +602,6 @@ export class BackgroundManager {
         task.status = "completed"
         task.completedAt = new Date()
         this.concurrency.release(task.concurrencyKey)
-        this.closePaneForTask(task.id)
         void this.dumpTranscript(task)
         this.taskEvents.emit("done", task.id)
         this.appendEvent("task_completed", {

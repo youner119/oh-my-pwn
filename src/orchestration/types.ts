@@ -2,7 +2,7 @@
  * Parallel orchestration types.
  *
  * Ported from OmO's delegate-task infrastructure, simplified for OmP:
- * - No category resolver, tmux, skill injection, session cursor
+ * - No category resolver, skill injection, session cursor
  * - DI-friendly: OmpSessionClient interface for testability
  */
 
