@@ -324,7 +324,7 @@ printf '    -p 5500:5500 \\\n'
 printf '    --cap-add=SYS_PTRACE --cap-add=SYS_ADMIN \\\n'
 printf '    --security-opt seccomp=unconfined \\\n'
 printf '    -v "%s:/workspace" \\\n' "$REPO_ROOT/workspace"
-printf '    ghcr.io/pwno-io/pwno-mcp:latest\n'
+printf '    pwno-mcp:latest\n'
 printf '\n'
 printf '  # health check:\n'
 printf '  curl -s http://127.0.0.1:5500/mcp -o /dev/null -w "HTTP %%{http_code}\\n"  # 406 = up\n'

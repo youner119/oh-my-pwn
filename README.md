@@ -49,7 +49,8 @@ exec zsh
 curl -sf http://localhost:9009/status
 
 # 4. (선택) pwno-mcp container — Exploiter Mode 2 (GDB inspection) 가 필요할 때
-docker run -d --name pwno-mcp ghcr.io/pwno-io/pwno-mcp:latest
+#    fork build 가 prerequisite: cd ~/Tools/pwno-mcp && ./docker-build.local.sh
+docker run -d --name pwno-mcp pwno-mcp:latest
 
 # 5. challenge 폴더 안에서 OmP 전용 opencode TUI 실행
 cd /path/to/challenge   # 안에 binary + Dockerfile 이 있어야 함

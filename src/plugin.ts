@@ -168,7 +168,7 @@ const OmpPlugin: Plugin = async (input) => {
       //     --cap-add=SYS_PTRACE --cap-add=SYS_ADMIN \
       //     --security-opt seccomp=unconfined \
       //     -v "${OMP_WORKSPACE_PATH}:/workspace" \
-      //     ghcr.io/pwno-io/pwno-mcp:latest
+      //     pwno-mcp:latest
       const pwnoEnabled = process.env["OMP_PWNO_MCP_DISABLED"] !== "1"
       if (pwnoEnabled) {
         cfg.mcp ??= {}

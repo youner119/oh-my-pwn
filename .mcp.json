@@ -1,0 +1,24 @@
+{
+  "mcpServers": {
+    "pwno-mcp": {
+      "type": "stdio",
+      "command": "docker",
+      "args": [
+        "run",
+        "--rm",
+        "-i",
+        "--cap-add=SYS_PTRACE",
+        "--cap-add=SYS_ADMIN",
+        "--security-opt",
+        "seccomp=unconfined",
+        "--security-opt",
+        "apparmor=unconfined",
+        "-v",
+        "/mnt/D/Hack/oh-my-pwn/workspace:/workspace",
+        "pwno-mcp:latest",
+        "--stdio"
+      ],
+      "env": {}
+    }
+  }
+}
