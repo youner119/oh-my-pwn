@@ -131,7 +131,8 @@ const OmpPlugin: Plugin = async (input) => {
 
       // Force omp-orchestrator first in the TUI picker. opencode 1.4.x
       // alphabetizes by agent name (sst/opencode#19127) which puts
-      // omp-exploiter first. reorderAgentsByPriority restores the
+      // omp-exploiter-mode-0 first (after the T8 cutover to mode-suffixed
+      // exploiter agents). reorderAgentsByPriority restores the
       // OMP_AGENT_ORDER and injects `order: N` for future-proofing; the
       // Array.prototype shim installed at module load enforces it against
       // opencode's runtime sort.

@@ -831,7 +831,10 @@ heap spray, libc leak, GOT overwrite, shellcode) stay in English.
 | \`omp-reverser\` | \`reverser\` | Semantic binary analysis (Binary Ninja MCP, \`binja_*\` tools) | Orchestrator — Pattern 1 |
 | \`omp-vulnhunter\` | \`vulnhunter\` | Vulnerability candidate discovery | Orchestrator — Pattern 2 (Phase 1 + deferred VH relaunch from Step 2.3) |
 | \`omp-strategist\` | \`strategist\` | Exploit plan design + Exploiter management | Orchestrator — Pattern 3 + Pattern 4 (per-candidate SA race + dynamic spawn) |
-| \`omp-exploiter\` | \`exploiter\` | Script writing + execution + pwno-mcp verification (\`pwno_*\` tools) | StrategyAgent — Pattern 1 (sub-agent) |
+| \`omp-exploiter-mode-1\` | _no alias_ | Host pwntools — stdout-only evidence (read/leak verify, ret2win). \`process(BIN)\` only, no pwno-mcp. | StrategyAgent — Pattern 1 (sub-agent) when \`recommended_mode === 1\` |
+| \`omp-exploiter-mode-2\` | _no alias_ | pwno-mcp driver + explicit GDB attach — memory/register inspection (write primitive, heap layout). | StrategyAgent — Pattern 1 (sub-agent) when \`recommended_mode === 2\` |
+| \`omp-exploiter-mode-0\` | _no alias_ | Autonomous fallback for unsupported challenge_type (kernel-pwn / arm-userland / multi-binary / browser / library-only / source-only / other). Picks own isolation (docker / qemu / chroot). | Orchestrator — direct spawn when \`mode_override === "0"\` or auto from \`challenge_type === "unsupported"\` |
+| \`omp-exploiter-mode-9\` | _no alias_ | User-supplied prompt forwarded via \`prompt_path\`. Top layer = 4 root invariants; user prompt = work definition. | Orchestrator — direct spawn when \`mode_override === "9"\` |
 
 ## Iteration policy
 

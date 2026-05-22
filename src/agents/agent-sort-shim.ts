@@ -36,10 +36,14 @@ import type { AgentConfig } from "./types"
  */
 export const OMP_AGENT_ORDER = [
   "omp-orchestrator",
+  "omp-setup",
   "omp-reverser",
   "omp-vulnhunter",
   "omp-strategist",
-  "omp-exploiter",
+  "omp-exploiter-mode-1",
+  "omp-exploiter-mode-2",
+  "omp-exploiter-mode-0",
+  "omp-exploiter-mode-9",
 ] as const
 
 const OMP_AGENT_RANK: ReadonlyMap<string, number> = new Map(

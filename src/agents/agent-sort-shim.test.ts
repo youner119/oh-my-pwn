@@ -17,7 +17,7 @@ beforeAll(() => {
 describe("reorderAgentsByPriority", () => {
   test("places OMP_AGENT_ORDER entries first, in canonical order", () => {
     const input: Record<string, AgentConfig> = {
-      "omp-exploiter": stubConfig("exploiter"),
+      "omp-exploiter-mode-1": stubConfig("exploiter"),
       "omp-strategist": stubConfig("strategist"),
       "omp-vulnhunter": stubConfig("vh"),
       "omp-reverser": stubConfig("reverser"),
@@ -31,7 +31,7 @@ describe("reorderAgentsByPriority", () => {
       "omp-reverser",
       "omp-vulnhunter",
       "omp-strategist",
-      "omp-exploiter",
+      "omp-exploiter-mode-1",
     ])
   })
 
@@ -47,7 +47,7 @@ describe("reorderAgentsByPriority", () => {
     >
 
     expect(result["omp-orchestrator"]?.order).toBe(1)
-    expect(result["omp-reverser"]?.order).toBe(2)
+    expect(result["omp-reverser"]?.order).toBe(3)
   })
 
   test("preserves description on each config (only adds `order`)", () => {
@@ -78,18 +78,18 @@ describe("reorderAgentsByPriority", () => {
 
   test("handles partial subsets (missing OMP agents)", () => {
     const input: Record<string, AgentConfig> = {
-      "omp-exploiter": stubConfig("exploiter"),
+      "omp-exploiter-mode-1": stubConfig("exploiter"),
       "omp-orchestrator": stubConfig("orch"),
     }
     expect(Object.keys(reorderAgentsByPriority(input))).toEqual([
       "omp-orchestrator",
-      "omp-exploiter",
+      "omp-exploiter-mode-1",
     ])
   })
 
   test("does not mutate the input map", () => {
     const input: Record<string, AgentConfig> = {
-      "omp-exploiter": stubConfig("exploiter"),
+      "omp-exploiter-mode-1": stubConfig("exploiter"),
       "omp-orchestrator": stubConfig("orch"),
     }
     const originalKeys = Object.keys(input)
@@ -105,7 +105,7 @@ describe("reorderAgentsByPriority", () => {
 describe("installAgentSortShim — agent arrays are reordered", () => {
   test("Array.sort on agent objects respects OMP_AGENT_ORDER", () => {
     const arr = [
-      { name: "omp-exploiter" },
+      { name: "omp-exploiter-mode-1" },
       { name: "omp-orchestrator" },
       { name: "omp-vulnhunter" },
       { name: "omp-reverser" },
@@ -119,7 +119,7 @@ describe("installAgentSortShim — agent arrays are reordered", () => {
       "omp-reverser",
       "omp-vulnhunter",
       "omp-strategist",
-      "omp-exploiter",
+      "omp-exploiter-mode-1",
     ])
   })
 
@@ -127,13 +127,13 @@ describe("installAgentSortShim — agent arrays are reordered", () => {
     const arr = [
       { name: "omp-strategist" },
       { name: "omp-orchestrator" },
-      { name: "omp-exploiter" },
+      { name: "omp-exploiter-mode-1" },
     ]
     const sorted = arr.toSorted((a, b) => a.name.localeCompare(b.name))
     expect(sorted.map((a) => a.name)).toEqual([
       "omp-orchestrator",
       "omp-strategist",
-      "omp-exploiter",
+      "omp-exploiter-mode-1",
     ])
   })
 
@@ -198,7 +198,7 @@ describe("installAgentSortShim — non-agent arrays use native sort", () => {
   })
 
   test("mixed array with null short-circuits to native", () => {
-    const arr = [{ name: "omp-orchestrator" }, null, { name: "omp-exploiter" }]
+    const arr = [{ name: "omp-orchestrator" }, null, { name: "omp-exploiter-mode-1" }]
     // Native sort with default comparator: null is coerced to string; result
     // varies, but must not throw. Just assert no exception + length preserved.
     expect(() =>
@@ -218,11 +218,11 @@ describe("installAgentSortShim — idempotency", () => {
     installAgentSortShim()
     installAgentSortShim()
 
-    const arr = [{ name: "omp-exploiter" }, { name: "omp-orchestrator" }]
+    const arr = [{ name: "omp-exploiter-mode-1" }, { name: "omp-orchestrator" }]
     arr.sort((a, b) => a.name.localeCompare(b.name))
     expect(arr.map((a) => a.name)).toEqual([
       "omp-orchestrator",
-      "omp-exploiter",
+      "omp-exploiter-mode-1",
     ])
   })
 })
@@ -232,8 +232,8 @@ describe("OMP_AGENT_ORDER", () => {
     expect(OMP_AGENT_ORDER[0]).toBe("omp-orchestrator")
   })
 
-  test("contains all 5 OmP agents with no duplicates", () => {
-    expect(OMP_AGENT_ORDER.length).toBe(5)
-    expect(new Set(OMP_AGENT_ORDER).size).toBe(5)
+  test("contains all 9 OmP agents with no duplicates (5 core + setup + 4 mode-suffixed exploiters)", () => {
+    expect(OMP_AGENT_ORDER.length).toBe(9)
+    expect(new Set(OMP_AGENT_ORDER).size).toBe(9)
   })
 })

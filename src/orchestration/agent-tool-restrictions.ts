@@ -39,7 +39,29 @@ const AGENT_RESTRICTIONS: Record<string, Record<string, boolean>> = {
     omp_task_wait_any: true,
     omp_task_cancel: true,
   },
-  "omp-exploiter": {
+  // Exploiter — 4 mode agents (post `mode-0-9-setup` T8 cutover). All
+  // four are leaf agents with the same restriction shape (cannot spawn
+  // sub-agents). Listed individually so unknown-agent fallback (`{}` =
+  // full access) does not accidentally relax any of them.
+  "omp-exploiter-mode-1": {
+    omp_task_launch: false,
+    omp_task_wait_all: false,
+    omp_task_wait_any: false,
+    omp_task_cancel: false,
+  },
+  "omp-exploiter-mode-2": {
+    omp_task_launch: false,
+    omp_task_wait_all: false,
+    omp_task_wait_any: false,
+    omp_task_cancel: false,
+  },
+  "omp-exploiter-mode-0": {
+    omp_task_launch: false,
+    omp_task_wait_all: false,
+    omp_task_wait_any: false,
+    omp_task_cancel: false,
+  },
+  "omp-exploiter-mode-9": {
     omp_task_launch: false,
     omp_task_wait_all: false,
     omp_task_wait_any: false,

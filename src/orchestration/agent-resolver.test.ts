@@ -18,8 +18,10 @@ describe("resolveAgent — category aliases", () => {
     expect(resolveAgent("strategist")).toBe("omp-strategist")
   })
 
-  test("'exploiter' → omp-exploiter", () => {
-    expect(resolveAgent("exploiter")).toBe("omp-exploiter")
+  test("'exploiter' short alias removed — must use mode-suffixed name", () => {
+    expect(() => resolveAgent("exploiter")).toThrow(
+      /unknown agent or category/,
+    )
   })
 })
 
@@ -40,8 +42,26 @@ describe("resolveAgent — direct agent name passthrough", () => {
     expect(resolveAgent("omp-strategist")).toBe("omp-strategist")
   })
 
-  test("omp-exploiter passes through", () => {
-    expect(resolveAgent("omp-exploiter")).toBe("omp-exploiter")
+  test("omp-exploiter-mode-1 passes through", () => {
+    expect(resolveAgent("omp-exploiter-mode-1")).toBe("omp-exploiter-mode-1")
+  })
+
+  test("omp-exploiter-mode-2 passes through", () => {
+    expect(resolveAgent("omp-exploiter-mode-2")).toBe("omp-exploiter-mode-2")
+  })
+
+  test("omp-exploiter-mode-0 passes through", () => {
+    expect(resolveAgent("omp-exploiter-mode-0")).toBe("omp-exploiter-mode-0")
+  })
+
+  test("omp-exploiter-mode-9 passes through", () => {
+    expect(resolveAgent("omp-exploiter-mode-9")).toBe("omp-exploiter-mode-9")
+  })
+
+  test("bare omp-exploiter (no mode suffix) throws", () => {
+    expect(() => resolveAgent("omp-exploiter")).toThrow(
+      /unknown agent or category/,
+    )
   })
 })
 
@@ -79,9 +99,8 @@ describe("resolveAgent — error cases", () => {
 })
 
 describe("CATEGORY_MAP — shape", () => {
-  test("exposes 5 categories: setup, reverser, vulnhunter, strategist, exploiter", () => {
+  test("exposes 4 categories: setup, reverser, vulnhunter, strategist (exploiter removed in T8 cutover)", () => {
     expect(Object.keys(CATEGORY_MAP).sort()).toEqual([
-      "exploiter",
       "reverser",
       "setup",
       "strategist",

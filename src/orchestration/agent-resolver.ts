@@ -4,6 +4,12 @@
  * Lets the orchestrator prompt reference agents by short category
  * (e.g., "reverser") instead of full agent name. Direct agent names
  * (e.g., "omp-reverser") pass through unchanged. Unknown names throw.
+ *
+ * Exploiter has **no short category alias** (post `mode-0-9-setup` T8
+ * cutover). The Orchestrator must pass an explicit mode-suffixed name
+ * — `omp-exploiter-mode-1` / `-mode-2` / `-mode-0` / `-mode-9` —
+ * because the dispatch choice is part of the spawn semantics, not a
+ * resolver convenience.
  */
 
 export const CATEGORY_MAP = {
@@ -11,10 +17,15 @@ export const CATEGORY_MAP = {
   reverser: "omp-reverser",
   vulnhunter: "omp-vulnhunter",
   strategist: "omp-strategist",
-  exploiter: "omp-exploiter",
 } as const
 
-const KNOWN_AGENTS: ReadonlySet<string> = new Set(Object.values(CATEGORY_MAP))
+const KNOWN_AGENTS: ReadonlySet<string> = new Set([
+  ...Object.values(CATEGORY_MAP),
+  "omp-exploiter-mode-1",
+  "omp-exploiter-mode-2",
+  "omp-exploiter-mode-0",
+  "omp-exploiter-mode-9",
+])
 
 /**
  * Resolve a category alias or direct agent name to a concrete agent name.

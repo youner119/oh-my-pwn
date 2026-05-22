@@ -407,8 +407,8 @@ export const ChallengeStateSchema = z.object({
    *
    * Post-omp-setup-agent: this is an **alias** for
    * `extracted_libs["libc.so.6"]` kept for backward compatibility — existing
-   * prompts (`omp-strategist`, `omp-exploiter`) and the envsetup library
-   * read this field directly. Setup agent populates both.
+   * prompts (`omp-strategist`, `omp-exploiter-mode-*`) and the envsetup
+   * library read this field directly. Setup agent populates both.
    */
   libc_path: z.string().optional(),
   /**

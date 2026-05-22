@@ -138,12 +138,12 @@ describe("BackgroundManager", () => {
 
     const result = await manager.launchAsync({
       parentSessionID: "p",
-      agent: "omp-exploiter",
+      agent: "omp-exploiter-mode-1",
       description: "Direct name",
       prompt: "x",
     })
 
-    expect(client.sessions.get(result.session_id)!.agent).toBe("omp-exploiter")
+    expect(client.sessions.get(result.session_id)!.agent).toBe("omp-exploiter-mode-1")
     manager.shutdown()
   })
 
@@ -525,7 +525,7 @@ describe("BackgroundManager", () => {
     // args from here, but we verify the session was created without error.
     await manager.launchAsync({
       parentSessionID: "p",
-      agent: "omp-exploiter",
+      agent: "omp-exploiter-mode-1",
       description: "Exploit",
       prompt: "Run",
     })
