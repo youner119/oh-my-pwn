@@ -33,7 +33,6 @@ import {
 import {
   EVENT_SCHEMA_VERSION,
   appendEventLine,
-  dumpTreeJson,
   initEventsLog,
   nextInstanceId,
   type Event,

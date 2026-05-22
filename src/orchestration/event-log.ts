@@ -21,14 +21,13 @@ import {
   mkdirSync,
   readFileSync,
   readdirSync,
-  renameSync,
   unlinkSync,
   writeFileSync,
 } from "node:fs"
 import { homedir } from "node:os"
 import { join } from "node:path"
 
-import type { BackgroundTask, TaskStatus } from "./types"
+import type { TaskStatus } from "./types"
 
 // ─────────────────────────────────────────────────────────────────────
 // Event schema (Rev 6, T24)
@@ -221,7 +220,24 @@ export function readEventsLog(path: string): Event[] {
  * / status / startedAt / createdAt / completedAt.
  */
 export function foldEvents(events: Event[]): TreeJson {
-  const tasks = new Map<string, BackgroundTask>()
+  /**
+   * Internal task accumulator. Subset of legacy BackgroundTask — only the
+   * fields needed to produce a TreeNode. Standalone (no dependency on
+   * BackgroundTask from "./types") since fold reconstructs state purely
+   * from events.
+   */
+  type FoldTask = {
+    id: string
+    sessionID?: string
+    agent: string
+    parentSessionID: string
+    status: TaskStatus
+    /** task_started 이전엔 task_created.ts, 이후엔 task_started.ts. */
+    startedAt: Date
+    completedAt?: Date
+  }
+
+  const tasks = new Map<string, FoldTask>()
   const orchestrators = new Map<string, OrchestratorInfo>()
 
   for (const e of events) {
@@ -239,11 +255,8 @@ export function foldEvents(events: Event[]): TreeJson {
           id: e.task_id,
           parentSessionID: e.parent_session_id,
           agent: e.agent,
-          description: e.description,
-          prompt: "",
           status: "queued",
-          createdAt: new Date(e.ts),
-          concurrencyKey: e.agent,
+          startedAt: new Date(e.ts),
         })
         break
       case "task_started": {
@@ -259,7 +272,6 @@ export function foldEvents(events: Event[]): TreeJson {
         const task = tasks.get(e.task_id)
         if (task) {
           task.status = "failed"
-          task.error = e.error
           task.completedAt = new Date(e.ts)
         }
         break
@@ -283,7 +295,53 @@ export function foldEvents(events: Event[]): TreeJson {
     }
   }
 
-  return snapshotTasks(tasks, orchestrators)
+  // sessionID → taskID lookup for parent_task_id resolution.
+  // Orchestrator sessions get sentinel IDs (`__orch_<sessionID>`) so
+  // sub-agents whose parent_session_id == orchestrator's session_id
+  // resolve to the orchestrator root node.
+  const sessionToTask = new Map<string, string>()
+  for (const orch of orchestrators.values()) {
+    sessionToTask.set(orch.sessionID, orchestratorTaskId(orch.sessionID))
+  }
+  for (const task of tasks.values()) {
+    if (task.sessionID) sessionToTask.set(task.sessionID, task.id)
+  }
+
+  const nodes: TreeNode[] = []
+
+  // Orchestrator roots first (deterministic ordering by Map insertion).
+  for (const orch of orchestrators.values()) {
+    nodes.push({
+      task_id: orchestratorTaskId(orch.sessionID),
+      session_id: orch.sessionID,
+      role: orch.agent,
+      parent_task_id: null,
+      status: "running",
+      started_at: orch.startedAt.toISOString(),
+      challenge_name: orch.challengeName,
+    })
+  }
+
+  for (const task of tasks.values()) {
+    const node: TreeNode = {
+      task_id: task.id,
+      session_id: task.sessionID,
+      role: task.agent,
+      parent_task_id: sessionToTask.get(task.parentSessionID) ?? null,
+      status: task.status,
+      started_at: task.startedAt.toISOString(),
+    }
+    if (task.completedAt) {
+      node.ended_at = task.completedAt.toISOString()
+    }
+    nodes.push(node)
+  }
+
+  return {
+    version: TREE_JSON_VERSION,
+    updated_at: new Date().toISOString(),
+    nodes,
+  }
 }
 
 /**
@@ -342,10 +400,13 @@ export function initEventsLog(): void {
 }
 
 // ─────────────────────────────────────────────────────────────────────
-// Legacy: tree.json snapshot (Rev 3-5, T4-T6). T29 에서 삭제 예정.
+// TreeJson schema (TUI signal type, fold output)
 // ─────────────────────────────────────────────────────────────────────
 
-/** Schema version. Bump when breaking. */
+/**
+ * TreeJson schema version. Stable across Rev 5 (snapshot) → Rev 6 (fold
+ * output) — TUI render 코드는 schema 변화 없음.
+ */
 export const TREE_JSON_VERSION = 1
 
 export interface TreeNode {
@@ -355,7 +416,7 @@ export interface TreeNode {
   /** Parent task id. null = root (Orchestrator session). */
   parent_task_id: string | null
   status: TaskStatus
-  /** ISO 8601. startedAt 없으면 createdAt fallback. */
+  /** ISO 8601. */
   started_at: string
   /** ISO 8601. status 가 terminal (completed/failed/cancelled) 일 때만 set. */
   ended_at?: string
@@ -364,21 +425,21 @@ export interface TreeNode {
 }
 
 /**
- * Orchestrator (top-level) session info — `omp_load_challenge` 호출 시 record.
- * BackgroundManager 의 tasks Map 에 없는 별개 root entry.
+ * Orchestrator (top-level) session info — `orchestrator_registered` event
+ * 의 payload 와 1:1. fold 가 events 로부터 재구성.
  */
 export interface OrchestratorInfo {
-  /** opencode session id. */
   sessionID: string
-  /** agent name (보통 "omp-orchestrator"). ToolContext.agent 값. */
   agent: string
-  /** challenge name (challenge_dir 의 basename 또는 사용자 명시). */
   challengeName: string
-  /** ISO 8601 — load_challenge 호출 시점. */
   startedAt: Date
 }
 
-/** Sentinel task_id for orchestrator root — sub-agent parent resolution 용. */
+/**
+ * Sentinel task_id for orchestrator root — sub-agent parent resolution
+ * 용. sub-agent 의 `parent_session_id` 가 orchestrator 의 sessionID 와
+ * 일치 시 이 sentinel id 를 parent_task_id 로 mapping.
+ */
 export function orchestratorTaskId(sessionID: string): string {
   return `__orch_${sessionID}`
 }
@@ -390,13 +451,20 @@ export interface TreeJson {
   nodes: TreeNode[]
 }
 
+// ─────────────────────────────────────────────────────────────────────
+// Filesystem helpers
+// ─────────────────────────────────────────────────────────────────────
+
 /**
- * tree.json 디렉토리 resolve.
+ * OmP state directory resolve.
  *
  * 우선순위:
  *   1. `OMP_STATE_DIR` env var (사용자 override)
  *   2. `$XDG_STATE_HOME/omp`
  *   3. `~/.local/state/omp` (XDG 표준 fallback)
+ *
+ * Used by `eventsLogPath`, `initMarkerPath`, `cleanupStalePidMarkers`,
+ * `initEventsLog`, `appendEventLine`.
  */
 export function treeJsonDir(): string {
   const override = process.env.OMP_STATE_DIR
@@ -406,124 +474,6 @@ export function treeJsonDir(): string {
   return join(homedir(), ".local", "state", "omp")
 }
 
-/** tree.json 의 절대 경로. */
-export function treeJsonPath(): string {
-  return join(treeJsonDir(), "tree.json")
-}
-
-/**
- * Snapshot the current task map + orchestrator roots to a TreeJson payload.
- *
- * Orchestrator roots (from BackgroundManager.orchestrators) are added as
- * TreeNode entries with `task_id = orchestratorTaskId(sessionID)`,
- * `parent_task_id = null`, `status = "running"`. Sub-agent tasks whose
- * `parentSessionID` matches an orchestrator's `sessionID` get that root's
- * task_id as their `parent_task_id`.
- *
- * Maps BackgroundTask fields to schema:
- * - `id` → `task_id`
- * - `sessionID` → `session_id`
- * - `agent` → `role`
- * - `parentSessionID` → `parent_task_id` (orchestrators 의 sessionID 먼저 lookup,
- *   그 다음 다른 task 들의 sessionID lookup; 못 찾으면 null)
- * - `status` → `status`
- * - `startedAt ?? createdAt` → `started_at`
- * - `completedAt` → `ended_at` (있을 때만)
- */
-export function snapshotTasks(
-  tasks: Map<string, BackgroundTask>,
-  orchestrators: Map<string, OrchestratorInfo> = new Map(),
-): TreeJson {
-  // sessionID → taskID lookup for parent resolution.
-  // orchestrator session 이 우선 — sub-agent 의 parentSessionID 가 orchestrator
-  // 의 sessionID 면 그 sentinel id 를 parent 로.
-  const sessionToTask = new Map<string, string>()
-  for (const orch of orchestrators.values()) {
-    sessionToTask.set(orch.sessionID, orchestratorTaskId(orch.sessionID))
-  }
-  for (const task of tasks.values()) {
-    if (task.sessionID) sessionToTask.set(task.sessionID, task.id)
-  }
-
-  const nodes: TreeNode[] = []
-
-  // Orchestrator roots first (deterministic ordering by sessionID).
-  for (const orch of orchestrators.values()) {
-    nodes.push({
-      task_id: orchestratorTaskId(orch.sessionID),
-      session_id: orch.sessionID,
-      role: orch.agent,
-      parent_task_id: null,
-      status: "running",
-      started_at: orch.startedAt.toISOString(),
-      challenge_name: orch.challengeName,
-    })
-  }
-
-  for (const task of tasks.values()) {
-    const startedAt = task.startedAt ?? task.createdAt
-    const node: TreeNode = {
-      task_id: task.id,
-      session_id: task.sessionID,
-      role: task.agent,
-      parent_task_id: sessionToTask.get(task.parentSessionID) ?? null,
-      status: task.status,
-      started_at: startedAt.toISOString(),
-    }
-    if (task.completedAt) {
-      node.ended_at = task.completedAt.toISOString()
-    }
-    nodes.push(node)
-  }
-
-  return {
-    version: TREE_JSON_VERSION,
-    updated_at: new Date().toISOString(),
-    nodes,
-  }
-}
-
 function ensureDir(dir: string): void {
   if (!existsSync(dir)) mkdirSync(dir, { recursive: true })
-}
-
-function atomicWrite(path: string, content: string): void {
-  const tmpPath = `${path}.tmp`
-  writeFileSync(tmpPath, content, "utf-8")
-  renameSync(tmpPath, path)
-}
-
-/**
- * tree.json 을 빈 (nodes: []) 상태로 초기화.
- *
- * Plugin load 시점에 호출. 이전 세션의 잔여 tree 가 sidebar 에 보이지 않게.
- * 디렉토리 부재 시 mkdir.
- */
-export function initTreeJson(): void {
-  ensureDir(treeJsonDir())
-  const empty: TreeJson = {
-    version: TREE_JSON_VERSION,
-    updated_at: new Date().toISOString(),
-    nodes: [],
-  }
-  atomicWrite(treeJsonPath(), `${JSON.stringify(empty, null, 2)}\n`)
-}
-
-/**
- * tree.json 에 snapshot 박음. atomic.
- *
- * BackgroundManager 의 state transition 마다 호출. 실패는 console.error 만
- * (primary 흐름 막지 않음).
- */
-export function dumpTreeJson(
-  tasks: Map<string, BackgroundTask>,
-  orchestrators: Map<string, OrchestratorInfo> = new Map(),
-): void {
-  try {
-    ensureDir(treeJsonDir())
-    const payload = snapshotTasks(tasks, orchestrators)
-    atomicWrite(treeJsonPath(), `${JSON.stringify(payload, null, 2)}\n`)
-  } catch (err) {
-    console.error(`[event-log] write failed: ${String(err)}`)
-  }
 }
