@@ -218,11 +218,20 @@ export const ChallengeStateSchema = z.object({
    * Static-linked post-setup: equal to `binary_input_path` because no
    * patchelf is applied — but the omp-setup agent still explicitly mirrors
    * the field so the post-setup invariant "`binary_path` populated iff
-   * `setup_complete === true`" holds uniformly.
+   * `setup_complete === true` AND `challenge_type === 'user-mode-elf'`"
+   * holds uniformly within the supported branch.
+   *
+   * **Mode 0/9 (unsupported) branch:** Phase 1–5 are skipped, so this
+   * field stays `undefined` even when `setup_complete === true`. Mode 0
+   * Exploiter reads `binary_input_path` instead (the untouched input
+   * identity), since there is no patched copy to analyse. See
+   * `.omc/specs/deep-interview-mode-0-9-setup.md` (ACS-4).
    *
    * Downstream agents read this field through the `setup_complete === true`
    * gate enforced by the Orchestrator's Phase 0 wait_all, so they never
-   * see the pre-setup `undefined` state.
+   * see the pre-setup `undefined` state. Mode 0 dispatch additionally
+   * gates on `challenge_type === "unsupported"` and reads
+   * `binary_input_path` directly.
    */
   binary_path: z.string().min(1).optional(),
   /**
@@ -280,34 +289,62 @@ export const ChallengeStateSchema = z.object({
   workspace_root: z.string().optional(),
   /**
    * Challenge classification decided by the omp-setup agent in Phase 0
-   * (inspect & classify). Currently only "user-mode-elf" is supported;
-   * everything else lands in "unsupported" and the orchestrator hands off
-   * to the user with `setup_unsupported_reason`. Future challenge types
-   * (kernel, library-only, multi-binary, source-only, browser, …) will be
-   * added as separate enum values when their sub-flows are specified.
+   * (inspect & classify). Two values:
    *
-   * Added by spec `deep-interview-envsetup-agent.md` (T01).
+   * - `"user-mode-elf"` — single x86_64/i386 user-mode ELF target;
+   *   Phase 1–5 (docker build, dependency discovery, patchelf, runtime
+   *   verify) all run. Downstream agents read the **patched** binary at
+   *   `binary_path`.
+   * - `"unsupported"` — any other shape (kernel / browser / arm-userland
+   *   / library-only / multi-binary / source-only / other) as classified
+   *   by Phase 0. `unsupported_kind` names the bucket, Phase 1–5 are
+   *   skipped, and the Orchestrator dispatches Mode 0 (autonomous
+   *   fallback against `binary_input_path`); the user may override with
+   *   Mode 9. See `.omc/specs/deep-interview-mode-0-9-setup.md`.
+   *
+   * Added by spec `deep-interview-envsetup-agent.md` (T01); Mode 0/9
+   * semantics added by `deep-interview-mode-0-9-setup.md`.
    */
   challenge_type: z.enum(["user-mode-elf", "unsupported"]).optional(),
   /**
-   * Setup-gate boolean. `true` means the omp-setup agent finished
-   * successfully and downstream agents (Reverser/VH/SA/Exploiter) may
-   * proceed. `false` or `undefined` means setup is needed.
+   * Setup-gate boolean. `true` means the omp-setup agent finished its
+   * relevant phases and the Orchestrator may dispatch downstream work:
+   *
+   * - `challenge_type === "user-mode-elf"`: Phase 1–5 completed.
+   *   Downstream agents (Reverser/VH/SA/Exploiter) proceed against the
+   *   patched binary at `binary_path`.
+   * - `challenge_type === "unsupported"`: Phase 0 classification
+   *   completed and the required identity fields are seeded
+   *   (`binary_input_path` / `binary_input_sha256` / `dockerfile_path` /
+   *   `challenge_summary` / `setup_unsupported_reason` /
+   *   `unsupported_kind`). Phase 1–5 are skipped, so `binary_path` /
+   *   `binary_sha256` / `libc_path` / `ld_path` / `extracted_libs` /
+   *   `libc_version` / `docker_image` / `mitigations` / `remote` stay
+   *   `undefined`. The Orchestrator dispatches Mode 0 / 9.
+   *
+   * `false` or `undefined` means setup is needed.
    *
    * The orchestrator skips the setup agent only when this is `true` AND
    * `binary_input_sha256` matches the file currently at `binary_input_path`.
    *
-   * Added by spec `deep-interview-envsetup-agent.md` (T01).
+   * Added by spec `deep-interview-envsetup-agent.md` (T01); Mode 0/9
+   * branch added by `deep-interview-mode-0-9-setup.md` (ACS-4).
    */
   setup_complete: z.boolean().optional(),
   /**
-   * Free-form reason set by the omp-setup agent when it cannot proceed
-   * (e.g. `"kernel challenge detected: vmlinux + qemu-system in run.sh"`,
+   * Free-form reason set by the omp-setup agent when Phase 1–5 are
+   * skipped — either Phase 0 classified as `unsupported` (e.g.
+   * `"kernel challenge detected: vmlinux + qemu-system in run.sh"`) or
+   * a later phase hit a diagnose-only failure (e.g.
    * `"host verify failed: missing libz.so.1"`). `null` (or `undefined`)
-   * means setup succeeded. Any non-null value tells the orchestrator to
-   * stop with a user handoff — diagnostic detail goes in the journal.
+   * means Phase 1–5 ran cleanly.
    *
-   * Added by spec `deep-interview-envsetup-agent.md` (T01).
+   * Any non-null value indicates Phase 1–5 were skipped. The Orchestrator
+   * dispatches Mode 0 against the input identity in that case; the user
+   * may override with Mode 9. Diagnostic detail goes in the journal.
+   *
+   * Added by spec `deep-interview-envsetup-agent.md` (T01); Mode 0/9
+   * dispatch semantics added by `deep-interview-mode-0-9-setup.md`.
    */
   setup_unsupported_reason: z.string().nullable().optional(),
   /**

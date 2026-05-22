@@ -275,12 +275,21 @@ omp_append_journal {
 
 **Branching:**
 
-- \`unsupported\` → also patch
-  \`{ setup_unsupported_reason: "<rule number + concrete indicator>" }\`
-  in the same call. Append a final journal section
-  (\`"setup stopped — unsupported"\`) and **return**. Do not run any
-  later phase. Do not set \`setup_complete\`.
-- \`user-mode-elf\` → continue to Phase 1.
+- \`unsupported\` → in the same \`omp_patch_state\` call, ALSO set
+  \`setup_unsupported_reason: "<rule number + concrete indicator>"\` AND
+  \`setup_complete: true\`. Phase 1–5 are skipped; downstream Mode 0 (or
+  Mode 9 if the user supplied an explicit prompt) runs against
+  \`binary_input_path\` directly — there is no patched binary. The
+  required fields for Mode 0/9 dispatch
+  (\`binary_input_path\` / \`binary_input_sha256\` / \`dockerfile_path\` /
+  \`challenge_summary\` / \`setup_unsupported_reason\` /
+  \`unsupported_kind\`) are exactly what Phase 0 already seeds, so a
+  single \`omp_patch_state\` call closes the agent. Append a final
+  journal section titled \`"phase 0 classification — unsupported"\` and
+  **return**. Do not run any later phase. Spec:
+  \`.omc/specs/deep-interview-mode-0-9-setup.md\` (ACS-4).
+- \`user-mode-elf\` → continue to Phase 1. \`setup_complete: true\` is
+  set at the end of Phase 5, NOT here.
 
 ## Phase 1 — Docker build
 
