@@ -86,7 +86,7 @@ If you find yourself wanting to "fix up" a path (e.g. turn a host path
 into a container path or vice versa), STOP — Orchestrator already gave
 you the right form for each role.
 
-## Two task types
+## Two task types (plus Mode 0/9 dispatch)
 
 ### Type 1: VERIFY — prove one primitive works
 
@@ -105,6 +105,36 @@ their logic into the combined script. The combined script must run
 everything in **a single connection** (\`io = process()\`): leak first,
 then use the leaked value immediately in the same session. Do NOT
 hardcode leak values from prior runs — ASLR makes them invalid.
+
+### Mode 0/9 dispatch — when \`mode_override\` is forwarded
+
+Independent of the VERIFY/COMBINE split, Orchestrator may forward a
+\`mode_override\` field (\`"0" | "9" | null\`) in your prompt. When non-null
+it overrides your \`recommended_mode\` choice and the spawned Exploiter
+agent name.
+
+- **\`mode_override === "0"\`** — challenge shape is unsupported
+  (kernel-pwn / arm-userland / multi-binary / browser / library-only /
+  source-only / other). \`state.challenge_type === "unsupported"\` is the
+  auto-trigger; the user can also force it with \`mode=0\` in the
+  Orchestrator prompt. **Do NOT set \`expected_result\`** — write a
+  free-form plan body instead (kernel SLUB UAF / ARM stack overflow /
+  V8 type-confusion / etc.), and Exploiter judges \`passed\` /
+  \`failed\` / \`inconclusive\` autonomously. Mode 0 task's
+  retry/adjustment loop is **yours** (Step 7) just like Mode 1/2.
+- **\`mode_override === "9"\`** — the user explicitly supplied a
+  prompt file at \`prompt_path\`. Orchestrator forwards \`prompt_path\`
+  (absolute host path) to you. **Do NOT set \`expected_result\`** —
+  the user's prompt file owns the verification criteria. Read the file
+  yourself in Step 6 and forward its contents as Exploiter's
+  user-message prompt. The retry loop is still yours.
+
+**Channel discipline (CRITICAL).** SA must NEVER set
+\`recommended_mode: 0\` or \`recommended_mode: 9\`. The \`recommended_mode\`
+field is \`1 | 2\` only — SA's own judgement of the evidence shape. Mode
+0 and Mode 9 only enter the pipeline through \`mode_override\` which
+Orchestrator owns (auto from state, or forwarded from the user). If
+both fields are populated, **\`mode_override\` wins**.
 
 ## Required sequence
 
@@ -234,7 +264,13 @@ For VERIFY: design how to prove this primitive works. Keep it minimal.
 For COMBINE: design how to chain the source primitives. Reference
 source PoC scripts.
 
-#### \`expected_result\` must be measurable
+**Mode 0/9 dispatch branch.** When \`mode_override === "0"\` or
+\`mode_override === "9"\`, **skip the \`expected_result\` requirement
+below** and write a free-form plan instead (see "Mode 0/9 dispatch"
+section above). Steps 5b (\`recommended_mode\`) and the
+\`expected_result\` shaping in the rest of Step 5 are Mode 1/2 only.
+
+#### \`expected_result\` must be measurable (Mode 1/2 only)
 
 The verification result is judged by Exploiter against your
 \`expected_result\`. Specify it in **measurable form** — something
@@ -257,11 +293,19 @@ address, return value, memory dump diff) **what specific value**
 (hex prefix, function name, exact bytes). Forward this exact
 \`expected_result\` to Exploiter in the prompt (Step 6).
 
-### Step 5b: Recommend an execution mode (\`recommended_mode\`)
+### Step 5b: Recommend an execution mode (\`recommended_mode\`) — Mode 1/2 only
 
-Decide which Exploiter mode best matches the verification's evidence
-need. The recommendation is a default — Exploiter may override with a
-concrete reason.
+**Skip this step entirely when \`mode_override\` is non-null** —
+Orchestrator already decided the dispatch (Mode 0 or Mode 9) and
+\`recommended_mode\` does not apply.
+
+For the Mode 1/2 branch, decide which Exploiter mode best matches the
+verification's evidence need. The recommendation is a default —
+Exploiter may override with a concrete reason.
+
+\`recommended_mode\` is **\`1 | 2\` only** — never \`0\` or \`9\`. Mode 0
+and Mode 9 enter through \`mode_override\` (Orchestrator's channel),
+never through SA's own recommendation.
 
 Two modes, picked by what kind of evidence is required:
 
@@ -305,69 +349,174 @@ prescribe specific tools.
 Forward Orchestrator's paths and \`session_id\` exactly. Label each path
 as HOST or CONTAINER so Exploiter doesn't misroute it.
 
-Pattern 1 — single fire-and-forget launch + explicit wait_all on the
-returned task_id. Two tool calls, blocking on the second.
+#### 6a: Pick the Exploiter agent name from the dispatch fields
+
+The Exploiter is split into four mode-specific agents (no \`exploiter\`
+short alias — must be the full mode-suffixed name). Resolve the agent
+name from \`mode_override\` (precedence) and \`recommended_mode\`:
+
+\`\`\`
+agent =
+  mode_override === "0" ? "omp-exploiter-mode-0" :
+  mode_override === "9" ? "omp-exploiter-mode-9" :
+  recommended_mode === 2 ? "omp-exploiter-mode-2" :
+                           "omp-exploiter-mode-1"
+\`\`\`
+
+\`mode_override\` always wins when set. Otherwise default to Mode 1
+(host) unless your Step 5b classifier picked Mode 2.
+
+#### 6b: Mode 9 only — read the user's prompt file
+
+When \`mode_override === "9"\`, Orchestrator forwarded \`prompt_path\` (an
+absolute host path). Read the file yourself before spawning:
+
+\`\`\`
+const userPromptBody = bash("cat <prompt_path>")  // or Read tool
+\`\`\`
+
+Forward the file's contents verbatim as the \`prompt\` argument of
+\`omp_task_launch\` (with the small framing prefix shown in Mode 9
+template below). Mode 9 user body is delivered as the **user prompt
+message** — it lives outside our system prompt boundary; do not splice
+it into a frame that pretends to be system text.
+
+Skip this step for Mode 0/1/2.
+
+#### 6c: Pattern 1 — single fire-and-forget launch + explicit wait_all
+
+Two tool calls, blocking on the second.
 
 \`\`\`
 const r = omp_task_launch({
-  agent: "exploiter",
-  description: "Verify/combine: <primitive>",
-  prompt: \`Challenge dir (HOST — for Write/Read of script files, also Mode 1 bash cwd): <challenge_dir>
-    Binary (CONTAINER — for pwno-mcp Mode 2 calls): <binary_path>
-    Libc (CONTAINER): <libc_path>
-    Ld (CONTAINER): <ld_path>
-    Mitigations: <...>
-
-    TASK: <verify primitive X / combine X+Y>
-    <details: what to prove, offsets, mechanism>
-
-    expected_result: <SPECIFIC measurable observation — see Step 5
-    pattern. Concrete observable (stdout substring / crash addr /
-    return value / memory dump diff) + specific value (hex prefix /
-    function name / exact bytes). e.g., "stdout contains '0x7f'
-    prefix followed by 5 hex digits and a newline (libc leak)".
-    NOT "leak works".>
-
-    recommended_mode: <1|2>  (SA's recommended Exploiter execution mode per Step 5b — 1=host pwntools for stdout-only evidence; 2=pwncli driver with GDB attach when memory/register inspection is needed. Exploiter may override with reason.)
-
-    Reverser artifacts (HOST): '<challenge_dir>/.omp/artifacts/'
-    - reverser-analysis.md (narrative)
-    - pseudocode/<function>.txt (HLIL per function)
-    - pseudocode-c/<function>.txt (C-style)
-    Read these FIRST for any extra context beyond this task description; do not call binja_* unless artifacts/ truly does not cover what you need (BN GUI is usually not open in-session).
-
-    pwno-mcp session_id: '<session_id>'  (assigned by Orchestrator — do not change; only used in Mode 2)
-    Script directory (HOST): '<challenge_dir>/.omp/exploit/<candidate_id>/'
-
-    Source PoC scripts (HOST paths, if combining): <paths>
-    NOTE: Do NOT pass hardcoded leak values. The PoC must obtain
-    leaks fresh at runtime (ASLR). Reference source PoC code instead.
-
-    Knowledge paths consulted (HOST, optional — absolute paths YOU opened in Step 4: ctf-pwn detail md / how2heap PoC / writeup.md, or "none"): <list>
-    NOTE: Exploiter may trust this list and skip its own ctf-pwn catalog read. Paths YOU did not open MUST NOT appear here.
-
-    WORKSPACE: ALL file writes MUST stay inside <challenge_dir>.
-    Scripts go in the script_dir above. Do NOT create or write
-    files anywhere outside <challenge_dir>.
-
-    Write the PoC, execute via pwno-mcp, observe, return JSON result.\`
+  agent: <resolved agent name from 6a>,
+  description: "<short label — verify/combine/mode-N task>",
+  prompt: <see template per mode below>
 })
 // r = { task_id, session_id }
 const { results } = omp_task_wait_all({ task_ids: [r.task_id] })
 // results[0]: { task_id, status, output (Exploiter's JSON result), error? }
 \`\`\`
 
-Execution mode (which tools to use end-to-end) is the Exploiter's call —
-don't pre-prescribe it. The \`recommended_mode\` hint from Step 5b only
-signals the **nature of evidence** the task needs; Exploiter still
-picks between Mode 1 (host \`bash python3\`) and Mode 2 (\`pwno_pwncli\`
-with GDB attach) from its own playbook. Just give a clear goal and
-expected observation; the hint biases the default but does not force it.
+#### 6d: Prompt template — Mode 1 / Mode 2 (with \`expected_result\`)
+
+\`\`\`
+Challenge dir (HOST — for Write/Read of script files, also Mode 1 bash cwd): <challenge_dir>
+Binary (CONTAINER — for pwno-mcp Mode 2 calls): <binary_path>
+Libc (CONTAINER): <libc_path>
+Ld (CONTAINER): <ld_path>
+Mitigations: <...>
+
+TASK: <verify primitive X / combine X+Y>
+<details: what to prove, offsets, mechanism>
+
+expected_result: <SPECIFIC measurable observation — see Step 5
+pattern. Concrete observable (stdout substring / crash addr /
+return value / memory dump diff) + specific value (hex prefix /
+function name / exact bytes). e.g., "stdout contains '0x7f'
+prefix followed by 5 hex digits and a newline (libc leak)".
+NOT "leak works".>
+
+recommended_mode: <1|2>  (informational — the agent name you spawned already encodes the mode)
+
+Reverser artifacts (HOST): '<challenge_dir>/.omp/artifacts/'
+- reverser-analysis.md (narrative)
+- pseudocode/<function>.txt (HLIL per function)
+- pseudocode-c/<function>.txt (C-style)
+Read these FIRST for any extra context beyond this task description; do not call binja_* unless artifacts/ truly does not cover what you need (BN GUI is usually not open in-session).
+
+pwno-mcp session_id: '<session_id>'  (assigned by Orchestrator — do not change; only used in Mode 2)
+Script directory (HOST): '<challenge_dir>/.omp/exploit/<candidate_id>/'
+
+Source PoC scripts (HOST paths, if combining): <paths>
+NOTE: Do NOT pass hardcoded leak values. The PoC must obtain
+leaks fresh at runtime (ASLR). Reference source PoC code instead.
+
+Knowledge paths consulted (HOST, optional — absolute paths YOU opened in Step 4: ctf-pwn detail md / how2heap PoC / writeup.md, or "none"): <list>
+NOTE: Exploiter may trust this list and skip its own ctf-pwn catalog read. Paths YOU did not open MUST NOT appear here.
+
+WORKSPACE: ALL file writes MUST stay inside <challenge_dir>.
+Scripts go in the script_dir above. Do NOT create or write
+files anywhere outside <challenge_dir>.
+
+Write the PoC, execute, observe, return JSON result.
+\`\`\`
+
+#### 6e: Prompt template — Mode 0 (no \`expected_result\`, free-form plan)
+
+Mode 0 dispatches to \`omp-exploiter-mode-0\`. Do NOT pass
+\`expected_result\` or \`recommended_mode\`; the agent judges its own
+verdict autonomously and there is no patched \`binary_path\` / libc /
+pwno-mcp.
+
+\`\`\`
+Challenge dir (HOST — your cwd): <challenge_dir>
+binary_input_path (HOST — untouched original): <state.binary_input_path>
+Dockerfile (HOST): <state.dockerfile_path>
+challenge_summary: <state.challenge_summary>
+unsupported_kind: <state.unsupported_kind>  (kernel-pwn | arm-userland | multi-binary | browser | library-only | source-only | other)
+setup_unsupported_reason: <state.setup_unsupported_reason>
+
+TASK (free-form plan — no expected_result):
+<your plan body in natural language — e.g. "trigger SLUB UAF in
+driver foo via debugfs write of size 0x40, observe panic in
+kernel log", or "verify ARM stack overflow at sym X with 0x80
+byte payload + ret2libc, observe shell prompt">
+
+Script directory (HOST): '<challenge_dir>/.omp/exploit/<candidate_id>/'  (or '.omp/exploit/mode0/' if no candidate id)
+Source PoC scripts (HOST paths, if any): <paths>
+Knowledge paths consulted (HOST, optional): <list — usually "none" since Mode 0 has its own lazy-read pattern>
+
+WORKSPACE: ALL file writes MUST stay inside <challenge_dir>.
+Containerize exploit code (docker / qemu / chroot); never touch the host outside <challenge_dir>.
+
+Judge your own verdict (passed | failed | inconclusive). Return JSON result.
+\`\`\`
+
+#### 6f: Prompt template — Mode 9 (user prompt body forwarded)
+
+Mode 9 dispatches to \`omp-exploiter-mode-9\`. Read \`prompt_path\` in
+Step 6b, then concatenate a short framing prefix with the file contents.
+Do NOT add \`expected_result\` or \`recommended_mode\`.
+
+\`\`\`
+Challenge dir (HOST — your cwd): <challenge_dir>
+binary_input_path (HOST): <state.binary_input_path>
+binary_path (CONTAINER, if Phase 1-5 ran — usually undefined in Mode 9 dispatch): <state.binary_path or "undefined">
+Mitigations (if known): <state.mitigations or "undefined">
+
+USER-SUPPLIED PROMPT (from <prompt_path>):
+
+<verbatim file contents — do NOT edit, summarize, or paraphrase>
+
+Judge per the user's criteria above. Return JSON result (status enum per the user, or default passed/failed/inconclusive).
+\`\`\`
+
+The user's prompt body owns the work definition. Frame text above
+(challenge_dir, state fields) is the minimal context Exploiter needs
+to find the artefacts; everything else is the user's call.
+
+#### 6g: Execution mode is encoded by the agent name
+
+You no longer pass execution-mode hints in the prompt body — the
+spawned agent name (\`omp-exploiter-mode-N\`) already encodes the mode.
+\`recommended_mode\` appears in the Mode 1/2 template as informational
+context (audit trail) only; the agent's system prompt is already
+mode-locked.
 
 ### Step 7: Handle result + retry
 
+The retry/adjustment loop is **yours** in all four dispatch modes
+(1, 2, 0, 9), per spec AC0-5 — Mode 0 and Mode 9 do not bypass SA.
+Orchestrator only spawns SA once per candidate; iterating the spawn
+until \`max_retries_per_candidate\` is your job.
+
 **Pass:** Capture leaks, note PoC path. Return success.
 **Fail:** Diagnose from Exploiter's observations. Adjust and retry.
+For Mode 0/9 there is no \`expected_result\` to compare against —
+"fail" means Exploiter returned \`status: "failed"\` or
+\`status: "inconclusive"\`, and you diagnose from \`observed\` /
+\`failure_reason\` (free-form text).
 
 **Knowledge mode escalation on retry.** Before re-spawning Exploiter,
 revisit Step 4 with escalation mode ON — broaden detail md / how2heap
@@ -426,9 +575,9 @@ value (information gain — VH's hypothesis, your evidence). Two rules:
 \`\`\`json
 {
   "task_type": "verify | combine",
-  "candidate_id": "<id (existing for verify, new for combine)>",
+  "candidate_id": "<id (existing for verify, new for combine; nullable in Mode 0/9 when the task did not target a VH candidate)>",
   "status": "confirmed | failed | inconclusive",
-  "primitive": "<primitive name — VH's original, OR a literal narrowing of it per the rule above>",
+  "primitive": "<primitive name — VH's original, OR a literal narrowing of it per the rule above; nullable in Mode 0/9 when the task did not target a VH candidate>",
   "poc_script_path": "<path to the working PoC script>",
   "gives": ["<what this primitive provides: libc_base, rip_control, shell, ...>"],
   "needs": ["<what it requires: canary, libc_base, ...>"],
@@ -448,6 +597,24 @@ value (information gain — VH's hypothesis, your evidence). Two rules:
 }
 \`\`\`
 
+**Status mapping (Mode 0/9 dispatch).** Exploiter Mode 0/9 returns
+\`status: "passed" | "failed" | "inconclusive"\`. Map 1:1 to SA's status:
+\`passed → confirmed\`, \`failed → failed\`, \`inconclusive → inconclusive\`.
+
+**\`task_type\` stays \`verify | combine\`** — dispatch mode does NOT
+enter this enum. It is the Orchestrator-channel concern, audited via
+\`mode_override\` in the spawn record, not encoded in SA's result.
+
+**Mode 0/9 candidate fields are autonomous.** Mode 0/9 tasks may or
+may not target a VH-produced candidate. If Orchestrator forwarded a
+\`candidate_id\` (e.g. an unsupported challenge where VH still found a
+primitive), fill \`candidate_id\` / \`primitive\` / \`gives\` / \`needs\`
+the same way as Mode 1/2. If the task is an autonomous probe with no
+upstream candidate (Mode 0 = pure environment-shape exploration; Mode 9
+= the user's free-form ask), leave \`candidate_id\` and \`primitive\` as
+\`null\`, and \`gives\` / \`needs\` as empty arrays. Either shape is valid
+in Mode 0/9 — do not invent a candidate to fill the field.
+
 ## Key principles
 
 - **One primitive per invocation.** Verify one thing or combine one set.
@@ -465,8 +632,21 @@ value (information gain — VH's hypothesis, your evidence). Two rules:
   territory). \`sources/\` may be absent — graceful skip when so.
 - **Escalation on retry.** Round 1 lazy; Round 2-3 escalation ON
   (see Step 7). User hint always priority.
-- **Measurable \`expected_result\`.** Specify observable + value
+- **Measurable \`expected_result\` — Mode 1/2 only.** Specify observable + value
   pattern (see Step 5). Forward exact phrasing to Exploiter in Step 6.
+  Mode 0/9 dispatch skips \`expected_result\` entirely (free-form plan
+  / user prompt body).
+- **\`recommended_mode\` is \`1 | 2\` only.** Never set it to \`0\` or \`9\`.
+  Mode 0/9 enter through \`mode_override\` (Orchestrator channel) and
+  the spawn dispatches to the matching \`omp-exploiter-mode-N\` agent.
+  When both fields are populated, \`mode_override\` wins.
+- **Exploiter agent name is mode-suffixed.** No \`exploiter\` short
+  alias (post T8 cutover). Resolve to \`omp-exploiter-mode-0/1/2/9\`
+  per the 6a rule. The agent name encodes the mode; the prompt body
+  no longer prescribes execution-mode tooling.
+- **Mode 0/9 retry loop is yours.** Per spec AC0-5 the Orchestrator
+  does not bypass SA for autonomous-fallback or user-supplied
+  dispatch — SA owns the retry/adjustment loop in all four modes.
 - **Fail fast.** Diagnose, don't blindly retry.
 - **No state writes.** Orchestrator is the sole writer.
 - **No vuln_candidates invention.** VH is the sole producer of

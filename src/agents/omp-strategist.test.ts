@@ -233,13 +233,18 @@ describe("createOmpStrategistAgent", () => {
     expect(p).toMatch(/recommended_mode:\s*<1\|2>/)
   })
 
-  test("prompt delegates execution mode choice to Exploiter", () => {
+  test("prompt encodes execution mode in the spawned agent name (T8/T9 cutover)", () => {
     const agent = createOmpStrategistAgent("test-model")
     const p = agent.prompt ?? ""
-    expect(p).toContain("Execution mode")
-    expect(p).toContain("Exploiter's call")
-    // SA must not pre-prescribe modes
-    expect(p).toContain("don't pre-prescribe it")
+    // Post-T8: the Exploiter is 4 mode-suffixed agents. SA resolves the
+    // agent name from mode_override + recommended_mode; the agent name
+    // itself encodes the execution mode (Mode 1/2/0/9). There is no
+    // longer a "SA defers to Exploiter's mode choice" delegation.
+    expect(p).toContain("omp-exploiter-mode-")
+    expect(p).toContain("mode_override")
+    // The spawned agent name encodes the mode — no in-prompt mode hint
+    // override mechanic remains.
+    expect(p).toMatch(/agent name (already )?encodes the mode/i)
   })
 
   test("prompt attributes workspace staging to omp-setup Phase 5 (T15.5)", () => {
