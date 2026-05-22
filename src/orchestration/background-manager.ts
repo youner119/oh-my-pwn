@@ -30,7 +30,16 @@ import {
   resetPaneTracking,
   findPaneBySession,
 } from "./tmux"
-import { dumpTreeJson, initTreeJson, type OrchestratorInfo } from "./tree-dump"
+import {
+  EVENT_SCHEMA_VERSION,
+  appendEventLine,
+  dumpTreeJson,
+  initTreeJson,
+  nextInstanceId,
+  type Event,
+  type EventType,
+  type OrchestratorInfo,
+} from "./event-log"
 import { EventEmitter } from "node:events"
 import { appendFileSync, mkdirSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
@@ -128,6 +137,12 @@ export class BackgroundManager {
   private readonly sessionPaneIds = new Map<string, string>() // sessionID → tmux paneId
   private readonly concurrency: ConcurrencyManager
   private readonly enableTreeDump: boolean
+  /**
+   * Per-instance identifier for events.log (T27). `<pid>-<counter>` — same
+   * PID can produce multiple IDs across plugin invocations (each sub-agent
+   * session entry reloads the server plugin → fresh module instance).
+   */
+  private readonly instanceId: string
   private pollingInterval?: ReturnType<typeof setInterval>
   private pollingInFlight = false
   /**
@@ -143,6 +158,7 @@ export class BackgroundManager {
     this.serverUrl = options.serverUrl
     this.concurrency = new ConcurrencyManager(options.concurrency)
     this.enableTreeDump = options.enableTreeDump ?? false
+    this.instanceId = nextInstanceId()
     // wait_all/wait_any may attach many listeners concurrently (e.g., VH
     // ensemble + SA race at the same time). Default cap of 10 would warn.
     this.taskEvents.setMaxListeners(0)
@@ -165,12 +181,32 @@ export class BackgroundManager {
   }
 
   /**
-   * tree.json snapshot dump. Best-effort — failure 는 console.error 로만 log,
-   * primary 흐름 (sub-agent spawn) 막지 않음. enableTreeDump=false 면 no-op.
+   * Append a single event to events.log (Rev 6, T25). Best-effort — append
+   * failure is logged but does not block the primary flow. `enableTreeDump
+   * = false` (T26 에서 `enableEventLog` 로 rename 예정) 면 no-op. ts /
+   * version / instance_id 는 이 method 가 자동 채움 — caller 는 type +
+   * payload 만.
+   *
+   * Generic `T extends EventType` + `Extract<Event, { type: T }>` 가 type
+   * 별 required payload 를 정확히 강제 (e.g. `task_completed` 의 `via`
+   * field).
    */
-  private dumpTree(): void {
+  private appendEvent<T extends EventType>(
+    type: T,
+    payload: Omit<Extract<Event, { type: T }>, "version" | "ts" | "instance_id" | "type">,
+  ): void {
     if (!this.enableTreeDump) return
-    dumpTreeJson(this.tasks, this.orchestrators)
+    // Call site narrows T to a literal (e.g. "task_completed") so the
+    // payload param is type-checked per-type. Impl-side TS can't narrow T
+    // back to a literal across the spread, so the assembled object widens
+    // to a partial union — `as unknown as Event` is the documented escape.
+    appendEventLine({
+      version: EVENT_SCHEMA_VERSION,
+      ts: new Date().toISOString(),
+      instance_id: this.instanceId,
+      type,
+      ...payload,
+    } as unknown as Event)
   }
 
   /**
@@ -194,7 +230,11 @@ export class BackgroundManager {
         challengeName,
         startedAt: new Date(),
       })
-      this.dumpTree()
+      this.appendEvent("orchestrator_registered", {
+        session_id: sessionID,
+        agent,
+        challenge_name: challengeName,
+      })
     }
   }
 
@@ -223,7 +263,10 @@ export class BackgroundManager {
       this.concurrency.release(task.concurrencyKey)
       task.status = "failed"
       task.error = String(err)
-      this.dumpTree()
+      this.appendEvent("task_failed", {
+        task_id: task.id,
+        error: String(err),
+      })
       throw err
     }
 
@@ -391,7 +434,7 @@ export class BackgroundManager {
     this.concurrency.release(task.concurrencyKey)
     this.closePaneForTask(task.id)
     this.taskEvents.emit("done", task.id)
-    this.dumpTree()
+    this.appendEvent("task_cancelled", { task_id: taskId })
     return true
   }
 
@@ -441,7 +484,12 @@ export class BackgroundManager {
       concurrencyKey,
     }
     this.tasks.set(id, task)
-    this.dumpTree()
+    this.appendEvent("task_created", {
+      task_id: id,
+      parent_session_id: input.parentSessionID,
+      agent: input.agent,
+      description: input.description,
+    })
     return task
   }
 
@@ -498,7 +546,10 @@ export class BackgroundManager {
     task.sessionID = sessionID
     task.status = "running"
     task.startedAt = new Date()
-    this.dumpTree()
+    this.appendEvent("task_started", {
+      task_id: task.id,
+      session_id: sessionID,
+    })
 
     // Build tool restrictions
     const tools: Record<string, boolean> = {
@@ -587,7 +638,10 @@ export class BackgroundManager {
             this.closePaneForTask(task.id)
             void this.dumpTranscript(task)
             this.taskEvents.emit("done", task.id)
-            this.dumpTree()
+            this.appendEvent("task_completed", {
+              task_id: task.id,
+              via: "gone",
+            })
           }
           continue
         }
@@ -603,7 +657,10 @@ export class BackgroundManager {
         this.closePaneForTask(task.id)
         void this.dumpTranscript(task)
         this.taskEvents.emit("done", task.id)
-        this.dumpTree()
+        this.appendEvent("task_completed", {
+          task_id: task.id,
+          via: "idle",
+        })
       }
 
       // Stop polling if no running tasks remain

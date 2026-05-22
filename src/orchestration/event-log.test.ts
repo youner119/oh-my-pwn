@@ -1,5 +1,5 @@
 /**
- * tree-dump 단위 테스트.
+ * event-log 단위 테스트.
  *
  * 검증 영역:
  * - treeJsonDir/Path 의 env var 우선순위 (OMP_STATE_DIR > XDG_STATE_HOME > ~/.local/state/omp)
@@ -22,14 +22,14 @@ import {
   treeJsonDir,
   treeJsonPath,
   type OrchestratorInfo,
-} from "./tree-dump"
+} from "./event-log"
 import type { BackgroundTask } from "./types"
 
 const ORIG_OMP_STATE_DIR = process.env.OMP_STATE_DIR
 const ORIG_XDG_STATE_HOME = process.env.XDG_STATE_HOME
 
 function mkTempStateDir(): string {
-  const dir = mkdtempSync(join(tmpdir(), "omp-tree-dump-test-"))
+  const dir = mkdtempSync(join(tmpdir(), "omp-event-log-test-"))
   process.env.OMP_STATE_DIR = dir
   return dir
 }

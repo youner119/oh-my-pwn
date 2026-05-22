@@ -22,7 +22,7 @@ import {
   treeJsonPath,
   type TreeJson,
   type TreeNode,
-} from "./orchestration/tree-dump"
+} from "./orchestration/event-log"
 
 const TERMINAL_STATUSES: TreeNode["status"][] = [
   "completed",

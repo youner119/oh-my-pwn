@@ -1,24 +1,179 @@
 /**
- * tree.json — TUI plugin 이 watch 하는 agent tree snapshot.
+ * event-log.ts — TUI plugin 통신 채널.
  *
- * Spec: .omc/specs/deep-interview-tui-plugin-integration.md (T4-T6, D2 정정).
+ * Spec: `.omc/specs/deep-interview-tui-plugin-integration.md` Rev 6
+ * (events.log append + TUI fold, D2 재정의).
  *
- * 위치: `$OMP_STATE_DIR ?? $XDG_STATE_HOME/omp ?? ~/.local/state/omp` 안 `tree.json`.
- * challenge 디렉토리 분리 폐기 (D2 정정 from Rev 2) — single global location,
- * plugin load 시점에 초기화.
+ * **Stage:** Rev 6 race fix. T24 = Event types + serializeEvent helper. T25-T29
+ * 가 기존 snapshotTasks / dumpTreeJson / initTreeJson 폐기 + appendEvent /
+ * initEventsLog / readAndFoldEvents 도입. 현재 stage 는 *Event schema 추가 +
+ * 기존 snapshot 영역 공존* — T29 graduate 시 snapshot 영역 삭제.
  *
- * Write protocol: atomic (`tmp` + `rename`). `src/state/io.ts:saveChallengeState`
- * 와 일치 패턴. partial-read 불가.
- *
- * Failure handling: best-effort. dump 실패가 primary 흐름 (sub-agent spawn)
- * 막지 않음 — try/catch + console.error.
+ * Race 해소 메커니즘: 각 event line 에 `instance_id` (T27 — PID + module load
+ * counter) 박음. Multi-instance 동시 append 가 자연 격리 (append-only +
+ * `O_APPEND` + line < PIPE_BUF 4KB → atomic per line on Linux). 자세한 진단:
+ * spec Rev 6 의 "Race 메커니즘 (정확한 진단)".
  */
 
-import { existsSync, mkdirSync, renameSync, writeFileSync } from "node:fs"
+import { appendFileSync, existsSync, mkdirSync, renameSync, writeFileSync } from "node:fs"
 import { homedir } from "node:os"
 import { join } from "node:path"
 
 import type { BackgroundTask, TaskStatus } from "./types"
+
+// ─────────────────────────────────────────────────────────────────────
+// Event schema (Rev 6, T24)
+// ─────────────────────────────────────────────────────────────────────
+
+/**
+ * Per-event schema version. Bump on breaking changes. Migration helper
+ * inspects this on read (T28 fold). Per-event scope (not file header) so
+ * future schema mix-and-match within the same file stays sound.
+ */
+export const EVENT_SCHEMA_VERSION = 1
+
+/** Common fields across all event types. */
+export interface EventCommon {
+  version: typeof EVENT_SCHEMA_VERSION
+  /** ISO 8601, UTC. */
+  ts: string
+  /**
+   * PID + module load counter (T27). Same PID can have multiple plugin
+   * invocations — each sub-agent session entry reloads the server plugin,
+   * creating a fresh module instance. instance_id keeps them distinguishable.
+   */
+  instance_id: string
+}
+
+/** `registerOrchestrator()` — `omp_load_challenge` 첫 호출. */
+export interface OrchestratorRegisteredEvent extends EventCommon {
+  type: "orchestrator_registered"
+  session_id: string
+  agent: string
+  challenge_name: string
+}
+
+/** `createTask()` — task queued. */
+export interface TaskCreatedEvent extends EventCommon {
+  type: "task_created"
+  task_id: string
+  parent_session_id: string
+  agent: string
+  description: string
+}
+
+/** `startSession()` 성공 — task transitioned to running. */
+export interface TaskStartedEvent extends EventCommon {
+  type: "task_started"
+  task_id: string
+  session_id: string
+}
+
+/** `launchAsync()` 실패 — session create / prompt failed. */
+export interface TaskFailedEvent extends EventCommon {
+  type: "task_failed"
+  task_id: string
+  error: string
+}
+
+/** `cancel()` — user / orchestrator aborted. */
+export interface TaskCancelledEvent extends EventCommon {
+  type: "task_cancelled"
+  task_id: string
+}
+
+/**
+ * Polling detected terminal state. `via` distinguishes the two completion
+ * paths in `pollRunningTasks`: `"idle"` = session status went idle,
+ * `"gone"` = session disappeared from status map (opencode cleaned up).
+ */
+export interface TaskCompletedEvent extends EventCommon {
+  type: "task_completed"
+  task_id: string
+  via: "idle" | "gone"
+}
+
+/**
+ * Discriminated union of all event types. `switch (event.type) { ... }`
+ * for exhaustive narrowing in T28 fold.
+ */
+export type Event =
+  | OrchestratorRegisteredEvent
+  | TaskCreatedEvent
+  | TaskStartedEvent
+  | TaskFailedEvent
+  | TaskCancelledEvent
+  | TaskCompletedEvent
+
+/** Discriminator literal type. */
+export type EventType = Event["type"]
+
+/**
+ * Serialize one event to a single JSONL line (`\n` terminated).
+ *
+ * POSIX `O_APPEND` + line < PIPE_BUF (4KB) → atomic per line on Linux.
+ * OmP event sizes ≤ ~1KB (error messages worst-case) → safe.
+ *
+ * Used by `appendEvent` (T25) to encode before `appendFileSync`.
+ */
+export function serializeEvent(event: Event): string {
+  return `${JSON.stringify(event)}\n`
+}
+
+/**
+ * Module-level counter — increments each plugin instance load. Combined
+ * with PID gives a distinguishable instance_id across sub-agent session
+ * entries (each entry creates a fresh module instance with its own counter
+ * starting from 0).
+ */
+let moduleLoadCounter = 0
+
+/**
+ * Generate a fresh instance_id `<pid>-<counter>` (T27). Called once per
+ * BackgroundManager constructor. Same PID can produce multiple IDs because
+ * each plugin invocation reloads the module — each invocation gets its
+ * own counter starting at 1.
+ */
+export function nextInstanceId(): string {
+  moduleLoadCounter += 1
+  return `${process.pid}-${moduleLoadCounter}`
+}
+
+/**
+ * Resolve the events.log absolute path. Same directory as tree.json (legacy)
+ * — only the file name differs. Honors `OMP_STATE_DIR` / `XDG_STATE_HOME`
+ * / `~/.local/state/omp` resolution order (sibling of `treeJsonPath`).
+ */
+export function eventsLogPath(): string {
+  return join(treeJsonDir(), "events.log")
+}
+
+/**
+ * Append a single event line to events.log (POSIX `appendFileSync` +
+ * `serializeEvent`). Best-effort — append failure is logged to console.error
+ * and swallowed so primary flow (sub-agent spawn) is never blocked.
+ *
+ * Atomicity: POSIX `O_APPEND` + line < PIPE_BUF (4KB) → atomic per line on
+ * Linux. Multi-instance concurrent appends naturally interleave without
+ * partial-line corruption.
+ *
+ * Does NOT initialize the file — caller is expected to initialize on plugin
+ * load (T26 / `initEventsLog`). If the file doesn't exist, `appendFileSync`
+ * creates it (but prior process content may remain — that's why AC2 requires
+ * explicit init).
+ */
+export function appendEventLine(event: Event): void {
+  try {
+    ensureDir(treeJsonDir())
+    appendFileSync(eventsLogPath(), serializeEvent(event), "utf-8")
+  } catch (err) {
+    console.error(`[event-log] append failed: ${String(err)}`)
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// Legacy: tree.json snapshot (Rev 3-5, T4-T6). T29 에서 삭제 예정.
+// ─────────────────────────────────────────────────────────────────────
 
 /** Schema version. Bump when breaking. */
 export const TREE_JSON_VERSION = 1
@@ -199,6 +354,6 @@ export function dumpTreeJson(
     const payload = snapshotTasks(tasks, orchestrators)
     atomicWrite(treeJsonPath(), `${JSON.stringify(payload, null, 2)}\n`)
   } catch (err) {
-    console.error(`[tree-dump] write failed: ${String(err)}`)
+    console.error(`[event-log] write failed: ${String(err)}`)
   }
 }
