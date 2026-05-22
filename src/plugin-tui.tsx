@@ -257,7 +257,7 @@ function HistorySection(props: {
   }
   return (
     <Show when={history().length > 0}>
-      <box>
+      <box marginTop={1}>
         <text>── History ──</text>
         <scrollbox stickyScroll stickyStart="top">
           <For each={history()}>
