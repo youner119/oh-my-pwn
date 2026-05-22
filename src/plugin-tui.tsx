@@ -84,7 +84,7 @@ function Dashboard(props: { tree: () => TreeJson }) {
   })
 
   return (
-    <box>
+    <box border paddingX={1}>
       <text>
         <b>OmP</b>
         <Show when={challengeLabel()}>
@@ -267,7 +267,7 @@ function OmpSidebarView(props: {
   }
 
   return (
-    <box>
+    <box flexDirection="column" gap={1}>
       <Dashboard tree={props.tree} />
       <ActiveTree
         tree={props.tree}
