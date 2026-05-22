@@ -15,11 +15,12 @@
 
 import type { TuiPlugin } from "@opencode-ai/plugin/tui"
 import { createMemo, createSignal, For, Show } from "solid-js"
-import { existsSync, readFileSync, unwatchFile, watchFile } from "node:fs"
+import { unwatchFile, watchFile } from "node:fs"
 
 import {
-  TREE_JSON_VERSION,
-  treeJsonPath,
+  eventsLogPath,
+  foldEvents,
+  readEventsLog,
   type TreeJson,
   type TreeNode,
 } from "./orchestration/event-log"
@@ -32,25 +33,6 @@ const TERMINAL_STATUSES: TreeNode["status"][] = [
 
 function isTerminal(status: TreeNode["status"]): boolean {
   return TERMINAL_STATUSES.includes(status)
-}
-
-function emptyTree(): TreeJson {
-  return {
-    version: TREE_JSON_VERSION,
-    updated_at: new Date().toISOString(),
-    nodes: [],
-  }
-}
-
-function readTreeSafe(path: string): TreeJson {
-  try {
-    if (!existsSync(path)) return emptyTree()
-    const content = readFileSync(path, "utf-8")
-    return JSON.parse(content) as TreeJson
-  } catch (err) {
-    console.error(`[plugin-tui] read tree.json failed: ${String(err)}`)
-    return emptyTree()
-  }
 }
 
 /** ms → human-friendly elapsed (Xs / Xm Ys / Xh Ym). */
@@ -299,17 +281,21 @@ function OmpSidebarView(props: {
 }
 
 const OmpTuiPlugin: TuiPlugin = async (api, _options, _meta) => {
-  const path = treeJsonPath()
+  const path = eventsLogPath()
 
-  const [tree, setTree] = createSignal<TreeJson>(readTreeSafe(path))
+  function readAndFold(): TreeJson {
+    return foldEvents(readEventsLog(path))
+  }
 
-  // fs.watchFile (stat polling) — inotify / atomic write / inode rename 일체
-  // 무관. Node 표준 + Bun 공식 호환. 500ms interval = sub-agent transition 의
-  // 사용자 인식 한계 안.
+  const [tree, setTree] = createSignal<TreeJson>(readAndFold())
+
+  // fs.watchFile (stat polling) — events.log 의 mtime 변동 감지. Append 마다
+  // mtime 갱신 → 500ms 안에 fold 결과 반영. inotify 회피 (Rev 5 결정 — Bun
+  // 머신에서 atomic write inode 이벤트 누락 사례).
   const POLL_INTERVAL_MS = 500
   const listener = (curr: { mtimeMs: number }, prev: { mtimeMs: number }) => {
     if (curr.mtimeMs === prev.mtimeMs) return
-    setTree(readTreeSafe(path))
+    setTree(readAndFold())
   }
   watchFile(path, { interval: POLL_INTERVAL_MS, persistent: false }, listener)
 

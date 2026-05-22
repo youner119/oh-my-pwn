@@ -34,7 +34,7 @@ import {
   EVENT_SCHEMA_VERSION,
   appendEventLine,
   dumpTreeJson,
-  initTreeJson,
+  initEventsLog,
   nextInstanceId,
   type Event,
   type EventType,
@@ -124,7 +124,7 @@ export interface BackgroundManagerOptions {
    * 기본 false (test 가 home dir 의 tree.json 덮어쓰지 않게).
    * Default: false.
    */
-  enableTreeDump?: boolean
+  enableEventLog?: boolean
 }
 
 export class BackgroundManager {
@@ -136,7 +136,7 @@ export class BackgroundManager {
   private readonly paneIds = new Map<string, string>() // taskId → tmux paneId
   private readonly sessionPaneIds = new Map<string, string>() // sessionID → tmux paneId
   private readonly concurrency: ConcurrencyManager
-  private readonly enableTreeDump: boolean
+  private readonly enableEventLog: boolean
   /**
    * Per-instance identifier for events.log (T27). `<pid>-<counter>` — same
    * PID can produce multiple IDs across plugin invocations (each sub-agent
@@ -157,7 +157,7 @@ export class BackgroundManager {
     this.directory = options.directory
     this.serverUrl = options.serverUrl
     this.concurrency = new ConcurrencyManager(options.concurrency)
-    this.enableTreeDump = options.enableTreeDump ?? false
+    this.enableEventLog = options.enableEventLog ?? false
     this.instanceId = nextInstanceId()
     // wait_all/wait_any may attach many listeners concurrently (e.g., VH
     // ensemble + SA race at the same time). Default cap of 10 would warn.
@@ -175,17 +175,16 @@ export class BackgroundManager {
 
     // Initialize tree.json (empty) at plugin load time so TUI plugin watcher
     // sees a clean state (previous session's tree 잔여 사라짐).
-    if (this.enableTreeDump) {
-      initTreeJson()
+    if (this.enableEventLog) {
+      initEventsLog()
     }
   }
 
   /**
    * Append a single event to events.log (Rev 6, T25). Best-effort — append
-   * failure is logged but does not block the primary flow. `enableTreeDump
-   * = false` (T26 에서 `enableEventLog` 로 rename 예정) 면 no-op. ts /
-   * version / instance_id 는 이 method 가 자동 채움 — caller 는 type +
-   * payload 만.
+   * failure is logged but does not block the primary flow. `enableEventLog
+   * = false` 면 no-op. ts / version / instance_id 는 이 method 가 자동
+   * 채움 — caller 는 type + payload 만.
    *
    * Generic `T extends EventType` + `Extract<Event, { type: T }>` 가 type
    * 별 required payload 를 정확히 강제 (e.g. `task_completed` 의 `via`
@@ -195,7 +194,7 @@ export class BackgroundManager {
     type: T,
     payload: Omit<Extract<Event, { type: T }>, "version" | "ts" | "instance_id" | "type">,
   ): void {
-    if (!this.enableTreeDump) return
+    if (!this.enableEventLog) return
     // Call site narrows T to a literal (e.g. "task_completed") so the
     // payload param is type-checked per-type. Impl-side TS can't narrow T
     // back to a literal across the spread, so the assembled object widens

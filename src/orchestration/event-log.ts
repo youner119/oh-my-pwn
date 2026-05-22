@@ -15,7 +15,16 @@
  * spec Rev 6 의 "Race 메커니즘 (정확한 진단)".
  */
 
-import { appendFileSync, existsSync, mkdirSync, renameSync, writeFileSync } from "node:fs"
+import {
+  appendFileSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  readdirSync,
+  renameSync,
+  unlinkSync,
+  writeFileSync,
+} from "node:fs"
 import { homedir } from "node:os"
 import { join } from "node:path"
 
@@ -169,6 +178,167 @@ export function appendEventLine(event: Event): void {
   } catch (err) {
     console.error(`[event-log] append failed: ${String(err)}`)
   }
+}
+
+/**
+ * Read events.log and parse each JSONL line. Best-effort — corrupt lines
+ * (JSON parse error) are skipped with console.error. Returns [] if the
+ * file doesn't exist.
+ *
+ * Used by TUI consumer (T28) before fold. Read I/O separated from fold
+ * for testability.
+ */
+export function readEventsLog(path: string): Event[] {
+  if (!existsSync(path)) return []
+  try {
+    const content = readFileSync(path, "utf-8")
+    const events: Event[] = []
+    for (const line of content.split("\n")) {
+      if (!line) continue
+      try {
+        events.push(JSON.parse(line) as Event)
+      } catch (err) {
+        console.error(`[event-log] line parse failed: ${String(err)} — line skipped`)
+      }
+    }
+    return events
+  } catch (err) {
+    console.error(`[event-log] read failed: ${String(err)}`)
+    return []
+  }
+}
+
+/**
+ * Fold events into a TreeJson snapshot (T28). Pure reducer — given the
+ * same events sequence, always returns the same TreeJson. Used by the TUI
+ * to re-render whenever the events.log mtime changes.
+ *
+ * Implementation: walks events in order, accumulating tasks Map +
+ * orchestrators Map, then hands the result to `snapshotTasks` (legacy
+ * function reused for hierarchy / parent resolution). Reconstructed
+ * BackgroundTask uses placeholder `prompt: ""` + `concurrencyKey: agent`
+ * since `snapshotTasks` only reads id / sessionID / agent / parentSessionID
+ * / status / startedAt / createdAt / completedAt.
+ */
+export function foldEvents(events: Event[]): TreeJson {
+  const tasks = new Map<string, BackgroundTask>()
+  const orchestrators = new Map<string, OrchestratorInfo>()
+
+  for (const e of events) {
+    switch (e.type) {
+      case "orchestrator_registered":
+        orchestrators.set(e.session_id, {
+          sessionID: e.session_id,
+          agent: e.agent,
+          challengeName: e.challenge_name,
+          startedAt: new Date(e.ts),
+        })
+        break
+      case "task_created":
+        tasks.set(e.task_id, {
+          id: e.task_id,
+          parentSessionID: e.parent_session_id,
+          agent: e.agent,
+          description: e.description,
+          prompt: "",
+          status: "queued",
+          createdAt: new Date(e.ts),
+          concurrencyKey: e.agent,
+        })
+        break
+      case "task_started": {
+        const task = tasks.get(e.task_id)
+        if (task) {
+          task.sessionID = e.session_id
+          task.status = "running"
+          task.startedAt = new Date(e.ts)
+        }
+        break
+      }
+      case "task_failed": {
+        const task = tasks.get(e.task_id)
+        if (task) {
+          task.status = "failed"
+          task.error = e.error
+          task.completedAt = new Date(e.ts)
+        }
+        break
+      }
+      case "task_cancelled": {
+        const task = tasks.get(e.task_id)
+        if (task) {
+          task.status = "cancelled"
+          task.completedAt = new Date(e.ts)
+        }
+        break
+      }
+      case "task_completed": {
+        const task = tasks.get(e.task_id)
+        if (task) {
+          task.status = "completed"
+          task.completedAt = new Date(e.ts)
+        }
+        break
+      }
+    }
+  }
+
+  return snapshotTasks(tasks, orchestrators)
+}
+
+/**
+ * Marker file path for the current process's events.log init. Used to
+ * detect "this process already initialized" so re-entry (e.g. another
+ * plugin invocation in the same process) doesn't truncate prior events.
+ */
+function initMarkerPath(): string {
+  return join(treeJsonDir(), `.events-init-pid-${process.pid}`)
+}
+
+/**
+ * Delete `.events-init-pid-<PID>` markers for PIDs other than the current
+ * process. Prevents indefinite marker accumulation across reboots.
+ */
+function cleanupStalePidMarkers(): void {
+  try {
+    const dir = treeJsonDir()
+    const entries = readdirSync(dir)
+    for (const name of entries) {
+      const match = name.match(/^\.events-init-pid-(\d+)$/)
+      if (!match) continue
+      const pid = Number(match[1])
+      if (pid === process.pid) continue
+      try {
+        unlinkSync(join(dir, name))
+      } catch {
+        // marker disappeared between readdir + unlink — concurrent cleanup
+      }
+    }
+  } catch {
+    // dir read failed — non-fatal
+  }
+}
+
+/**
+ * Initialize events.log (T26). PID-based marker prevents same-process
+ * re-init from truncating events written by other plugin invocations
+ * (would defeat the race fix invariant).
+ *
+ * Strategy:
+ *   1. If `.events-init-pid-<our-PID>` marker exists → another plugin
+ *      invocation in the same process already initialized; skip.
+ *   2. Otherwise: truncate events.log, create the marker, cleanup stale
+ *      markers from previous PIDs.
+ *
+ * Called from BackgroundManager constructor when `enableEventLog = true`.
+ */
+export function initEventsLog(): void {
+  ensureDir(treeJsonDir())
+  const marker = initMarkerPath()
+  if (existsSync(marker)) return
+  writeFileSync(eventsLogPath(), "", "utf-8")
+  writeFileSync(marker, "", "utf-8")
+  cleanupStalePidMarkers()
 }
 
 // ─────────────────────────────────────────────────────────────────────

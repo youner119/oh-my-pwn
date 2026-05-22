@@ -106,7 +106,7 @@ const OmpPlugin: Plugin = async (input) => {
         client: sessionClient,
         directory,
         serverUrl,
-        enableTreeDump: true,
+        enableEventLog: true,
       })
     : undefined
 
