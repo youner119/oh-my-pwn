@@ -25,6 +25,13 @@ import {
   type TreeNode,
 } from "./orchestration/event-log"
 
+/**
+ * Tick signal — 매 초 갱신. Dashboard / ActiveTreeNode 의 elapsed 표시가
+ * events.log 변동 없는 사이에도 시계로 갱신되도록 createMemo 의 dep
+ * marker 로 사용. setInterval 은 OmpTuiPlugin lifecycle 안에서 박음.
+ */
+const [now, setNow] = createSignal(Date.now())
+
 const TERMINAL_STATUSES: TreeNode["status"][] = [
   "completed",
   "failed",
@@ -80,6 +87,7 @@ function Dashboard(props: { tree: () => TreeJson }) {
   const elapsedLabel = createMemo(() => {
     const root = oldestActiveRoot()
     if (!root) return ""
+    now() // dep marker — tick signal 의존 등록, 매 초 re-compute
     return formatElapsed(elapsedSince(root.started_at))
   })
 
@@ -117,9 +125,10 @@ function ActiveTreeNode(props: {
   const hasChildren = createMemo(() => children().length > 0)
   const isCollapsed = createMemo(() => props.collapsed().has(props.node.task_id))
   const indent = "  ".repeat(props.depth)
-  const elapsedStr = createMemo(() =>
-    formatElapsed(elapsedSince(props.node.started_at)),
-  )
+  const elapsedStr = createMemo(() => {
+    now() // dep marker — tick signal 의존 등록, 매 초 re-compute
+    return formatElapsed(elapsedSince(props.node.started_at))
+  })
 
   return (
     <box>
@@ -301,6 +310,14 @@ const OmpTuiPlugin: TuiPlugin = async (api, _options, _meta) => {
 
   api.lifecycle.onDispose(() => {
     unwatchFile(path, listener)
+  })
+
+  // Tick signal driver — events.log 변동 없는 사이에도 elapsed 표시 매 초
+  // 갱신. Dashboard + ActiveTreeNode 의 createMemo 가 `now()` dep marker
+  // 로 의존 등록 → 매 초 re-compute → re-render.
+  const tickInterval = setInterval(() => setNow(Date.now()), 1000)
+  api.lifecycle.onDispose(() => {
+    clearInterval(tickInterval)
   })
 
   function navigate(sessionID: string | undefined): void {
