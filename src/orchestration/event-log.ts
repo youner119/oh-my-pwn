@@ -13,6 +13,14 @@
  * counter) 박음. Multi-instance 동시 append 가 자연 격리 (append-only +
  * `O_APPEND` + line < PIPE_BUF 4KB → atomic per line on Linux). 자세한 진단:
  * spec Rev 6 의 "Race 메커니즘 (정확한 진단)".
+ *
+ * **Rev 8 — Multi-omp-run isolation (T35+).** `events.log` 단일 file 폐기,
+ * `events-<OMP_INSTANCE_ID>.log` per-instance file. discriminator = `omp`
+ * 런처 (zsh alias) 가 invocation 시점 `OMP_INSTANCE_ID="$(date +%s)-$$"`
+ * 박음 → 두 omp 인스턴스 동시 실행 시 cross-talk 자체 소멸. retention =
+ * `OMP_EVENTS_RETENTION_DAYS` (default 7). 위 Rev 6 의 PID-marker race fix
+ * 는 *한 omp run 안의 plugin closure reload* 영역에 그대로 적용 (마커 scope
+ * 가 PID → instance id 로 갱신).
  */
 
 import {
@@ -21,6 +29,7 @@ import {
   mkdirSync,
   readFileSync,
   readdirSync,
+  statSync,
   unlinkSync,
   writeFileSync,
 } from "node:fs"
@@ -163,12 +172,45 @@ export function nextInstanceId(): string {
 }
 
 /**
- * Resolve the events.log absolute path. Same directory as tree.json (legacy)
- * — only the file name differs. Honors `OMP_STATE_DIR` / `XDG_STATE_HOME`
- * / `~/.local/state/omp` resolution order (sibling of `treeJsonPath`).
+ * Default value when `OMP_INSTANCE_ID` env is unset — preserves single-file
+ * behavior for users who run `opencode` directly without the `omp` launcher.
+ */
+const DEFAULT_INSTANCE_ID = "default"
+
+/** Default retention window for stale per-instance events.log + markers. */
+const DEFAULT_RETENTION_DAYS = 7
+
+/**
+ * Per-omp-run discriminator (Rev 8). Set by the `omp` launcher (zsh alias)
+ * before exec'ing opencode → inherited by both server plugin process and TUI
+ * plugin process so each side resolves the same `events-<id>.log` file.
+ *
+ * Multi-instance isolation: two concurrent `omp` invocations get distinct
+ * ids (e.g. `1717000000-12345`) → distinct event files → no cross-talk.
+ * Fallback `"default"` keeps a single shared file for users not using the
+ * launcher (backward compat with Rev 6/7 behavior).
+ */
+export function ompInstanceId(): string {
+  return process.env.OMP_INSTANCE_ID || DEFAULT_INSTANCE_ID
+}
+
+/** Parse `OMP_EVENTS_RETENTION_DAYS` env (Rev 8). Default 7. */
+function retentionDays(): number {
+  const raw = process.env.OMP_EVENTS_RETENTION_DAYS
+  if (!raw) return DEFAULT_RETENTION_DAYS
+  const n = Number(raw)
+  if (!Number.isFinite(n) || n < 0) return DEFAULT_RETENTION_DAYS
+  return n
+}
+
+/**
+ * Resolve the events.log absolute path (Rev 8 — per-instance). File name
+ * encodes the omp-run discriminator from `OMP_INSTANCE_ID`. Honors
+ * `OMP_STATE_DIR` / `XDG_STATE_HOME` / `~/.local/state/omp` for the
+ * directory.
  */
 export function eventsLogPath(): string {
-  return join(treeJsonDir(), "events.log")
+  return join(treeJsonDir(), `events-${ompInstanceId()}.log`)
 }
 
 /**
@@ -371,48 +413,65 @@ export function foldEvents(events: Event[]): TreeJson {
 }
 
 /**
- * Marker file path for the current process's events.log init. Used to
- * detect "this process already initialized" so re-entry (e.g. another
- * plugin invocation in the same process) doesn't truncate prior events.
+ * Marker file path for the current omp-run's events.log init (Rev 8). Scope =
+ * `OMP_INSTANCE_ID`. One marker per instance — within a single run, opencode
+ * reloads the server plugin (same PID, same env) multiple times; the marker
+ * prevents the second+ reload from truncating events written by the first.
  */
 function initMarkerPath(): string {
-  return join(treeJsonDir(), `.events-init-pid-${process.pid}`)
+  return join(treeJsonDir(), `.events-init-${ompInstanceId()}`)
 }
 
 /**
- * Delete `.events-init-pid-<PID>` markers for PIDs other than the current
- * process. Prevents indefinite marker accumulation across reboots.
+ * Prune stale per-instance event files + markers (Rev 8). Walks the state dir
+ * for `events-*.log` + `.events-init-*` entries; deletes ones whose mtime is
+ * older than `OMP_EVENTS_RETENTION_DAYS` (default 7). Our own instance's
+ * files are always skipped regardless of mtime.
+ *
+ * Called from `initEventsLog()` at omp start. Cheap directory scan (≤ tens of
+ * files in practice) — runs once per server plugin load.
  */
-function cleanupStalePidMarkers(): void {
+function pruneOldEventLogs(): void {
+  let entries: string[]
   try {
-    const dir = treeJsonDir()
-    const entries = readdirSync(dir)
-    for (const name of entries) {
-      const match = name.match(/^\.events-init-pid-(\d+)$/)
-      if (!match) continue
-      const pid = Number(match[1])
-      if (pid === process.pid) continue
-      try {
-        unlinkSync(join(dir, name))
-      } catch {
-        // marker disappeared between readdir + unlink — concurrent cleanup
-      }
-    }
+    entries = readdirSync(treeJsonDir())
   } catch {
-    // dir read failed — non-fatal
+    return
+  }
+
+  const selfInstance = ompInstanceId()
+  const cutoff = Date.now() - retentionDays() * 86_400 * 1000
+
+  for (const name of entries) {
+    const logMatch = name.match(/^events-(.+)\.log$/)
+    const markerMatch = name.match(/^\.events-init-(.+)$/)
+    const instance = logMatch?.[1] ?? markerMatch?.[1]
+    if (!instance) continue
+    if (instance === selfInstance) continue
+
+    const full = join(treeJsonDir(), name)
+    try {
+      const stat = statSync(full)
+      if (stat.mtimeMs >= cutoff) continue
+      unlinkSync(full)
+    } catch {
+      // stat / unlink failed (file disappeared, permission) — non-fatal
+    }
   }
 }
 
 /**
- * Initialize events.log (T26). PID-based marker prevents same-process
- * re-init from truncating events written by other plugin invocations
- * (would defeat the race fix invariant).
+ * Initialize events.log (T26, Rev 8 multi-instance). Marker scope =
+ * `OMP_INSTANCE_ID` so the same omp run's plugin closure reloads skip
+ * re-init, while a fresh omp invocation (new instance id) truncates its own
+ * file cleanly.
  *
  * Strategy:
- *   1. If `.events-init-pid-<our-PID>` marker exists → another plugin
- *      invocation in the same process already initialized; skip.
- *   2. Otherwise: truncate events.log, create the marker, cleanup stale
- *      markers from previous PIDs.
+ *   1. If `.events-init-<our-instance>` marker exists → already initialized
+ *      in this omp run; skip (avoid truncating concurrent plugin closure
+ *      reload's events).
+ *   2. Otherwise: truncate our `events-<instance>.log`, create the marker,
+ *      prune other instances' stale files (mtime > retention).
  *
  * Called from BackgroundManager constructor when `enableEventLog = true`.
  */
@@ -422,7 +481,7 @@ export function initEventsLog(): void {
   if (existsSync(marker)) return
   writeFileSync(eventsLogPath(), "", "utf-8")
   writeFileSync(marker, "", "utf-8")
-  cleanupStalePidMarkers()
+  pruneOldEventLogs()
 }
 
 // ─────────────────────────────────────────────────────────────────────
@@ -489,7 +548,7 @@ export interface TreeJson {
  *   2. `$XDG_STATE_HOME/omp`
  *   3. `~/.local/state/omp` (XDG 표준 fallback)
  *
- * Used by `eventsLogPath`, `initMarkerPath`, `cleanupStalePidMarkers`,
+ * Used by `eventsLogPath`, `initMarkerPath`, `pruneOldEventLogs`,
  * `initEventsLog`, `appendEventLine`.
  */
 export function treeJsonDir(): string {

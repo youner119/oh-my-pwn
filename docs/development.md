@@ -89,6 +89,32 @@ opencode 의 `tui.mouse: true` 박은 후 sidebar 의 click 영역 분리 동작
 별개 plugin keybind 구현 영역 없음. opencode 의 기본만으로 mouse 등가
 영역.
 
+### 다중 omp 인스턴스 (Rev 8)
+
+한 머신에서 `omp` 를 두 개 이상 동시 실행 시 — 각 인스턴스의 TUI sidebar
+가 *자기 sub-agent tree 만* 보이도록 events.log 가 per-instance 분리됨.
+
+**메커니즘:**
+- `omp` zsh alias 가 invocation 마다 `OMP_INSTANCE_ID="$(date +%s)-$$"`
+  발급 → server plugin / TUI plugin 둘 다 상속 → 같은 file (`events-<id>.log`)
+  가리킴.
+- 두 인스턴스 동시 실행 시 distinct id → distinct file → cross-talk 자체
+  소멸.
+- 직접 `opencode` 실행 (alias 우회) 시 `OMP_INSTANCE_ID` 미설정 → fallback
+  `default` → 단일 `events-default.log` 사용 (단일 인스턴스 동작 그대로).
+
+**Cleanup:**
+- 새 omp 인스턴스 start 시 자기 file truncate + *다른 인스턴스의 mtime >
+  retention* file 자동 prune.
+- Retention 기본 7일. override: `OMP_EVENTS_RETENTION_DAYS=14` 등.
+- 수동 cleanup: `rm ~/.local/state/omp/events-*.log
+  ~/.local/state/omp/.events-init-*` (모든 인스턴스 종료된 상태에서만).
+
+**한계 (backlog #6 의 나머지):**
+- pwno-mcp container (port 5500) 와 BN MCP (port 9009) 는 여전히 단일.
+  같은 머신에서 두 challenge 를 *동시 디버깅* 하려면 별개 fix 필요. events.log
+  격리는 *TUI 시각화 channel* 만 풀음.
+
 ---
 
 ## 빌드

@@ -13,8 +13,10 @@
 #      - --skip-bn 으로 opt-out 가능 (나중에 수동 설정)
 #   3) ~/.config/omp/opencode/opencode.json 생성 (plugin file:// 경로 등록)
 #   4) ~/.zshrc 에 omp alias 추가:
-#        alias omp="OMP_BN_BRIDGE_PATH=... XDG_CONFIG_HOME=$HOME/.config/omp opencode"
+#        alias omp='OMP_INSTANCE_ID="$(date +%s)-$$" OMP_BN_BRIDGE_PATH=... XDG_CONFIG_HOME=$HOME/.config/omp opencode'
 #      이미 있으면 교체 (bridge 경로가 바뀔 수 있으므로 갱신).
+#      OMP_INSTANCE_ID 는 매 omp 실행마다 fresh id 발급 → events-<id>.log
+#      per-instance 분리 (spec deep-interview-tui-plugin-integration.md Rev 8).
 #   5) opencode debug config 로 플러그인 로드 확인
 #
 # 사용법:
@@ -255,11 +257,16 @@ fi
 
 # ── 4) zshrc alias ────────────────────────────────────────────────────────────
 build_alias_line() {
+  # OMP_INSTANCE_ID 가 매 invocation 마다 fresh 하도록 single-quoted body —
+  # $(date +%s)-$$ 는 alias 정의 시점(.zshrc 로드) 이 아니라 alias 확장 시점
+  # (= omp 실행 시점) 에 평가됨. 두 omp 인스턴스 동시 실행 시 distinct id →
+  # events-<id>.log 분리 (spec Rev 8).
+  local body='OMP_INSTANCE_ID="$(date +%s)-$$"'
   if [[ -n "$BRIDGE_PATH" ]]; then
-    printf 'alias omp="OMP_BN_BRIDGE_PATH=%q XDG_CONFIG_HOME=$HOME/.config/omp opencode"' "$BRIDGE_PATH"
-  else
-    printf 'alias omp="XDG_CONFIG_HOME=$HOME/.config/omp opencode"'
+    body+=" OMP_BN_BRIDGE_PATH=$(printf '%q' "$BRIDGE_PATH")"
   fi
+  body+=' XDG_CONFIG_HOME=$HOME/.config/omp opencode'
+  printf "alias omp='%s'" "$body"
 }
 ALIAS_LINE="$(build_alias_line)"
 
