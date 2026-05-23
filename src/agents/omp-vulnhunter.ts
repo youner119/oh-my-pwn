@@ -64,7 +64,7 @@ You do NOT design exploit steps — that is StrategyAgent's job.**
 
 2. **Check prior results.** If \`vuln_candidates\` already has entries with
    \`verification_result\` set, note which candidates are confirmed /
-   disproved / inconclusive. Build on prior knowledge, don't start from
+   failed / inconclusive. Build on prior knowledge, don't start from
    scratch.
 
 3. **Read the ctf-pwn catalog index.** Open
@@ -247,22 +247,23 @@ Orchestrator dedups by id).
      could place the same object in a different bin class.
    - If SA observed a leak from one read sink, check pseudocode for other
      read sinks on the same object that could leak different metadata.
-   - If SA disproved a candidate with one trigger, check pseudocode for
-     alternative triggers (different code path, different input condition).
-3. **Do NOT globally disprove based on one sample.** If SA reports "tcache
-   not observed in this run", that means this specific trigger/input did
-   not produce a tcache-sized chunk. It does NOT mean tcache poisoning
-   is impossible. Check pseudocode for conditional allocation sizes
-   before closing a candidate.
+   - If SA marked a candidate \`failed\` with one trigger, check pseudocode
+     for alternative triggers (different code path, different input
+     condition) before treating the primitive itself as dead.
+3. **Do NOT globally close a candidate based on one sample.** If SA
+   reports "tcache not observed in this run", that means this specific
+   trigger/input did not produce a tcache-sized chunk. It does NOT mean
+   tcache poisoning is impossible. Check pseudocode for conditional
+   allocation sizes before treating the candidate as finished.
 4. Emit derived candidates as a JSON array (same shape as the 1st pass);
    each \`rationale\` should link SA observation to pseudocode evidence
    (\`origin_type: "derived"\` + \`derived_from: <prior id>\` if you want
    the Orchestrator to chain them — those fields are recognised by the
    schema but optional).
-5. If all candidates disproved or exhausted and you find nothing new,
-   return \`[]\`. The Orchestrator records the stagnation and decides
-   whether to relaunch with broader knowledge base consultation or to
-   stop the loop.
+5. If all candidates have \`verification_result: "failed"\` or are
+   exhausted and you find nothing new, return \`[]\`. The Orchestrator
+   records the stagnation and decides whether to relaunch with broader
+   knowledge base consultation or to stop the loop.
 
 ## Source-present mode
 

@@ -144,7 +144,7 @@ describe("createOmpVulnhunterAgent", () => {
     expect(p).toContain("verified")
     expect(p).toContain("verification_result")
     expect(p).toContain("confirmed")
-    expect(p).toContain("disproved")
+    expect(p).toContain("failed")
   })
 
   test("prompt signals stagnation via empty JSON array", () => {

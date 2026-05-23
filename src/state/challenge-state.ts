@@ -106,7 +106,7 @@ export const VulnCandidateSchema = z.object({
    * always-redundant flag and was removed).
    */
   verification_result: z
-    .enum(["confirmed", "disproved", "inconclusive"])
+    .enum(["confirmed", "failed", "inconclusive"])
     .optional(),
   /** How this candidate was discovered. Defaults to "initial" for backward compat. */
   origin_type: CandidateOriginSchema.optional(),

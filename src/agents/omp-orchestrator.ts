@@ -769,10 +769,15 @@ When you write \`omp_patch_state\` inside the loop, the patch must reflect:
     and stays forbidden here). If SA's primitive is unrelated to the
     candidate's, do NOT rewrite — treat as a verification-method issue
     via \`verification_blockers\` instead.
-- If \`status: "failed"\` / \`"inconclusive"\`:
-  - Update \`verification_result\` accordingly. Leave the candidate
-    available for retry in a later round (or in a same-round dynamic
-    spawn) if you choose.
+- If \`status: "failed"\` → set \`verification_result: "failed"\`.
+  If \`status: "inconclusive"\` → set \`verification_result: "inconclusive"\`.
+  SA's status enum matches the state enum 1:1
+  (\`confirmed\`/\`failed\`/\`inconclusive\`) — forward verbatim. Do not
+  invent any other value (e.g. \`"disproved"\` is not a valid enum
+  member; using it causes \`patch_state\` to reject the write with
+  \`validation_error\` and the candidate stays unchanged). Leave the
+  candidate available for retry in a later round (or in a same-round
+  dynamic spawn) if you choose.
 - **Do NOT store leak values for script reuse.** Leak values are
   runtime-dependent (ASLR). The \`poc_script_path\` contains the leak
   logic — future COMBINE tasks reference the PoC code, not stored values.
