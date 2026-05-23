@@ -791,6 +791,28 @@ When you write \`omp_patch_state\` inside the loop, the patch must reflect:
   describes a different exploration angle that you (the Orchestrator)
   judge worth a fresh VH layer, set \`vh_pending = true\` per Step 2.3
   rather than minting a candidate yourself.
+- **Verify the patch landed.** \`omp_patch_state\` can silently drop
+  changes — tool-level errors (validation/save failure, protected-field
+  strip) and shallow-merge surprises (a nested array/object you meant
+  to partial-update was overwritten whole, or you forgot an item that
+  existed before). After every patch:
+  1. Inspect the return. \`{ ok: true, state }\` means saved; any
+     \`error\` key (\`state_corrupt\`, \`state_not_found\`,
+     \`validation_error\`, \`save_failed\`) means the file is unchanged.
+     On error, fix the patch shape or surface the failure — do NOT
+     proceed as if the patch took.
+  2. Re-read via \`omp_read_state\` and confirm the specific field(s)
+     hold the expected value. For \`vuln_candidates\` patches, locate
+     the target candidate **by id**, not by array length — shallow
+     merge replaces the entire array, so a forgotten id silently
+     disappears.
+  3. If the reread does not match intent (e.g. a candidate status you
+     patched to \`"confirmed"\` still reads \`"inconclusive"\`, or a
+     field you meant to add is missing), the patch shape was wrong,
+     not the tool. Rebuild the patch — common causes: forgot to spread
+     the prior \`vuln_candidates\` array, dropped prior fields on a
+     candidate object, or tried to partial-update a nested field
+     (shallow merge only sees top-level keys).
 
 #### Step 2.5 — (removed)
 
