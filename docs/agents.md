@@ -315,7 +315,7 @@ Orchestrator
 | `omp_task_launch` | fire-and-forget spawn. `{task_id, session_id}` 즉시 반환. category alias 지원 (`setup`/`reverser`/`vulnhunter`/`strategist`/`exploiter`) | `reference/oh-my-openagent/src/tools/delegate-task/` (디자인만 차용) |
 | `omp_task_wait_all` / `_wait_any` / `_cancel` | explicit wait/cancel. wait는 state-first check + EventEmitter wake-up. wait_any가 dynamic spawn을 가능하게 함 | (OmP 자체 구현) |
 | BackgroundManager | 실행 중 task 추적, polling으로 terminal 감지, `taskEvents` EventEmitter로 wait_* 깨움 | `reference/oh-my-openagent/src/features/background-agent/manager.ts` |
-| ConcurrencyManager | 모델별 동시 실행 제한 (기본 5개) | `reference/oh-my-openagent/src/features/background-agent/concurrency.ts` |
+| ConcurrencyManager | 동시 launch 제한 — `concurrencyKey` (= `providerID/modelID` 또는 `"default"` fallback) 당 `defaultLimit=20`. 우회 사례: `omp_task_launch` 가 `LaunchInput.model` 안 박아서 *agent 별 bucket* 으로 분산 → fix `e4676b4` 에서 fallback 을 단일 `"default"` bucket 으로 통합. | `reference/oh-my-openagent/src/features/background-agent/concurrency.ts` |
 | (envsetup 재설계 이후) | container 는 user-managed. omp-setup agent 가 Phase 5 에서 sanity-check (bash `docker ps` + `curl`). 별도 stored field 없이 workspace path 는 `omp-<basename>-<sha8>` derive | `.omc/specs/deep-interview-envsetup-agent.md` |
 
 ### 통신 흐름
