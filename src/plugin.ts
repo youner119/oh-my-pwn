@@ -126,9 +126,13 @@ const OmpPlugin: Plugin = async (input) => {
     "chat.params": async (input, output) => {
       const effort = process.env["OMP_REASONING_EFFORT"]
       if (!effort) return
-      if (input.provider.info.id !== "openai") return
-      if (!input.agent.startsWith("omp-")) return
+      // Defensive — opencode invokes chat.params from several code paths
+      // (model call, summarize/compaction, internal probes). Some omit
+      // provider / info / agent. Treat any missing field as not-applicable.
+      if (input.provider?.info?.id !== "openai") return
+      if (!input.agent?.startsWith("omp-")) return
 
+      output.options ??= {}
       const providerOpts =
         (output.options["providerOptions"] as Record<string, unknown> | undefined) ?? {}
       const openaiOpts =
