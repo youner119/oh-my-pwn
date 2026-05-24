@@ -459,14 +459,22 @@ suspicious"; default to \`"default"\` unless the user named the mode.
 Forward the same \`mode\` to every VH ensemble member in this round
 (do not split the ensemble across modes — they would dedup awkwardly).
 
-**Ensemble launch + wait_all** pattern (Pattern 2): fire N launches in a
-single turn, collect their task_ids, then block on \`wait_all\`:
+**Ensemble launch + wait_all** pattern (Pattern 2): fire N launches —
+**one per turn (sequential turns, see Rule 2)** — collect their task_ids,
+then block on \`wait_all\`. Each VH starts running server-side as soon as
+its launch returns, so per-turn launches parallelize execution while
+keeping the first VH from waiting for the LLM to write all N prompt
+bodies.
 
 \`\`\`
+// Turn 1
 const v1 = omp_task_launch({ agent: "vulnhunter", prompt: "Challenge dir: <dir>. Binary: <binary_for_vh — see substitution rule below>. Reverser analysis: <path>. Mitigations: <state.mitigations or 'undefined' in Mode 0>. Libc: <state.libc_version or 'undefined' in Mode 0>. mode: <\"default\"|\"explorer\" — see VH mode dispatch above>. Analyze and find vulnerability candidates. Return JSON array of { id, primitive, location, confidence, rationale, libc_range }. Do NOT call omp_patch_state.", description: "VH-1" })
+// Turn 2
 const v2 = omp_task_launch({ agent: "vulnhunter", prompt: "<same context — same mode>", description: "VH-2" })
+// Turn 3
 const v3 = omp_task_launch({ agent: "vulnhunter", prompt: "<same context — same mode>", description: "VH-3" })
 
+// Turn 4 — wait_all
 const { results } = omp_task_wait_all({
   task_ids: [v1.task_id, v2.task_id, v3.task_id]
 })
@@ -785,14 +793,17 @@ if (vh_pending):
   // Always launch state.parallel_config.vh_instance_count (max).
   // Same mode dispatch as Phase 1 Step 1.1 — forward the user's
   // chosen mode ("default" or "explorer") to every relaunch member.
+  // Sequential launch turns — one omp_task_launch per turn (Rule 2).
   const vh_ids = []
   for i in 1..state.parallel_config.vh_instance_count:
+    // Turn i — single omp_task_launch
     const r = omp_task_launch({
       agent: "vulnhunter",
       prompt: "<VH prompt with current verified primitives summary, asked angle, and \`mode: \"<default|explorer>\"\` matching the user's intent for this round>",
       description: "VH-relaunch-" + i
     })
     vh_ids.push(r.task_id)
+  // Turn N+1 — wait_all
   const { results: vh_results } = omp_task_wait_all({ task_ids: vh_ids })
   // Merge new candidates into state (record BEFORE the next SA round so
   // its launches see the updated blackboard).
@@ -969,20 +980,39 @@ const r = omp_task_launch({ agent, prompt, description })
 const { results } = omp_task_wait_all({ task_ids: [r.task_id] })
 \`\`\`
 
-**Pattern 2 — Ensemble (launch×N + wait_all):** N sub-agents, every
-result needed. Used for VH ensemble (Step 1.1).
+**Pattern 2 — Ensemble (launch×N sequentially + wait_all):** N sub-agents,
+every result needed. Used for VH ensemble (Step 1.1).
+
+**Sequential turns (Rule 2).** Issue one \`omp_task_launch\` per turn —
+wait for the tool result, then send the next launch in the following
+turn. After all N are fired, call \`wait_all\` once. Sub-agents start
+running server-side as soon as their launch returns, so per-turn
+launches parallelize execution while keeping the first spawn from
+waiting for the LLM to write all N prompt bodies.
 \`\`\`
-const ids = []
-for each task in N_tasks: ids.push(omp_task_launch({...}).task_id)
-const { results } = omp_task_wait_all({ task_ids: ids })
+// Turn 1
+const r1 = omp_task_launch({ agent, prompt: "<task 1>", description })
+// Turn 2
+const r2 = omp_task_launch({ agent, prompt: "<task 2>", description })
+// ... Turn N
+const rN = omp_task_launch({ agent, prompt: "<task N>", description })
+// Turn N+1 — wait_all on the collected task_ids
+const { results } = omp_task_wait_all({ task_ids: [r1.task_id, r2.task_id, /* ... */ rN.task_id] })
 // results[] in input order
 \`\`\`
 
-**Pattern 3 — Race + early-exit (launch×N + wait_any + cancel):** N
-sub-agents, react to the first completion. If the first result is the
-flag, cancel the rest. Otherwise continue draining.
+**Pattern 3 — Race + early-exit (launch×N sequentially + wait_any + cancel):**
+N sub-agents, react to the first completion. Initial launches follow
+Rule 2 (one \`omp_task_launch\` per turn). After all N are fired, enter
+the wait_any drain loop. If the first result is the flag, cancel the
+rest. Otherwise continue draining.
 \`\`\`
-const ids = launch_many()
+// Sequential launch turns — one omp_task_launch per turn (Rule 2).
+const ids = []
+// Turn 1..N
+for i in 1..N: ids.push(omp_task_launch({...}).task_id)  // one per turn
+
+// Drain loop (separate turns per wait_any / cancel call)
 let remaining = ids
 while remaining.length > 0:
   const first = omp_task_wait_any({ task_ids: remaining })
@@ -1005,13 +1035,16 @@ Pattern 3.
   naturally. After the loop exits, launch VH×N if the flag is set.
   Layer invariant: VH launches only when no SA is running.
 \`\`\`
-const ids = launch_many()
+// Sequential launch turns — one omp_task_launch per turn (Rule 2).
+const ids = []
+for i in 1..N: ids.push(omp_task_launch({...}).task_id)  // one per turn
+
 let remaining = ids
 while remaining.length > 0:
   const first = omp_task_wait_any({ task_ids: remaining })
   record(first)
   if (first suggests a new task):
-    const extra = omp_task_launch({...})
+    const extra = omp_task_launch({...})  // single launch — one turn
     remaining = [...first.remaining_ids, extra.task_id]
   else:
     remaining = first.remaining_ids
@@ -1024,10 +1057,16 @@ while remaining.length > 0:
    need them. The session_id is mostly for logging / pwno-mcp
    isolation, not for direct tool calls.
 
-2. **Launch parallel tasks in a SINGLE turn.** Call \`omp_task_launch\`
-   multiple times in the same response, then call \`wait_*\` once. Do NOT
-   launch one-by-one across multiple turns — that serializes and wastes
-   the concurrency slot pool.
+2. **Launch one task per turn (sequential turns).** Call
+   \`omp_task_launch\` once per response, wait for the tool result, then
+   issue the next \`omp_task_launch\` in the next turn. Do NOT batch
+   multiple \`omp_task_launch\` calls in a single response — building N
+   prompt bodies in a single turn delays every spawn until all N are
+   written, costing more wall time than the per-turn round-trip overhead.
+   Each \`omp_task_launch\` is fire-and-forget: the sub-agent starts
+   running on the server as soon as its launch returns, so per-turn
+   launches still parallelize execution. After firing all N, call
+   \`wait_*\` once on the collected task_ids.
 
 3. **Wait is explicit and blocking.** Parent does not auto-receive
    results. You must call \`wait_all\` (everything needed) or \`wait_any\`
