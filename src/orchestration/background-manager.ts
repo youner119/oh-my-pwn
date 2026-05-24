@@ -487,9 +487,11 @@ export class BackgroundManager {
     }
 
     // Create child session.
-    // Sub-agents must be fully autonomous — no user interaction possible.
-    // Auto-allow all tool permissions so they never block on approval prompts.
-    // Auto-deny "question" so they don't try to ask the user.
+    // Sub-agents auto-allow tool permissions so they never block on technical
+    // approvals. `question` is `ask` (not deny) so user-directed questions
+    // propagate via opencode's parent chain to reach the user at the
+    // orchestrator/primary session.
+    // See .omc/research/subagent-permission-forward.md.
     const rawCreateResult = await this.client.create({
       body: {
         parentID: input.parentSessionID,
@@ -500,7 +502,7 @@ export class BackgroundManager {
           { permission: "bash", action: "allow", pattern: "*" },
           { permission: "mcp", action: "allow", pattern: "*" },
           { permission: "external_directory", action: "allow", pattern: "*" },
-          { permission: "question", action: "deny", pattern: "*" },
+          { permission: "question", action: "ask", pattern: "*" },
         ],
       } as Record<string, unknown>,
       query: { directory: parentDirectory },
