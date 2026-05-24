@@ -8,7 +8,19 @@
 
 import { tool, type ToolDefinition } from "@opencode-ai/plugin/tool"
 import { loadChallengeState, saveChallengeState, ChallengeStateLoadError } from "../state/io"
-import { ChallengeStateSchema } from "../state/challenge-state"
+import {
+  ChallengeStateSchema,
+  VulnCandidateDetailSchema,
+} from "../state/challenge-state"
+
+/**
+ * Detail-only fields — vuln_candidates rows in state.json accept summary
+ * fields only (spec: state-split-vuln-candidates.md D3). Auto-derived from
+ * the Detail schema shape so adding a detail field never silently leaks.
+ */
+const VULN_CANDIDATE_DETAIL_FIELDS = Object.keys(
+  VulnCandidateDetailSchema.shape,
+)
 
 export const ompPatchStateTool: ToolDefinition = tool({
   description:
@@ -72,6 +84,34 @@ export const ompPatchStateTool: ToolDefinition = tool({
     const safePatch = { ...patch }
     delete safePatch["challenge_dir"]
     delete safePatch["schema_version"]
+
+    // 2a. vuln_candidates 영역 = summary array. detail field 박힘 시 reject
+    //     (spec: state-split-vuln-candidates.md D3) — detail 변경은 별개
+    //     `omp_patch_candidate` tool 의 영역, 두 채널 명확히 분리.
+    const patchCandidates = safePatch["vuln_candidates"]
+    if (Array.isArray(patchCandidates)) {
+      for (let i = 0; i < patchCandidates.length; i++) {
+        const row = patchCandidates[i]
+        if (row === null || typeof row !== "object" || Array.isArray(row)) continue
+        const rowObj = row as Record<string, unknown>
+        const leaked = VULN_CANDIDATE_DETAIL_FIELDS.filter((f) => f in rowObj)
+        if (leaked.length > 0) {
+          return JSON.stringify({
+            error: "vuln_candidates_detail_in_summary_patch",
+            message:
+              `vuln_candidates[${i}]` +
+              (typeof rowObj["id"] === "string" ? ` (id=${rowObj["id"]})` : "") +
+              ` contains detail fields: ${leaked.join(", ")}. ` +
+              "state.json.vuln_candidates accepts summary fields only " +
+              "(id / primitive / verification_result / agent / combined_from / " +
+              "description / gives_count / needs_count / has_poc). For detail " +
+              "changes use omp_patch_candidate.",
+            index: i,
+            leaked_fields: leaked,
+          })
+        }
+      }
+    }
 
     const merged = { ...state, ...safePatch }
 
