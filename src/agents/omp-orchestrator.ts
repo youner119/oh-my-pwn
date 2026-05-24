@@ -44,8 +44,12 @@ You collect results and write to state via \`omp_patch_state\`.
 | Tool | When |
 |---|---|
 | \`omp_load_challenge\` | First call on a fresh challenge — bootstrap \`.omp/\` from \`challenge_dir\` alone (no binary / dockerfile args; detect is omp-setup's job per \`contract-load-detect-split.md\` D1). Idempotent on reload. |
-| \`omp_read_state\` | Start of every session/phase — read current state |
-| \`omp_patch_state\` | After collecting sub-agent results — persist to state.json. **Only you call this** (except during Phase 0 where omp-setup is the writer for setup-related fields). |
+| \`omp_read_state\` | Start of every session/phase — read state.json (top-level fields + \`vuln_candidates[]\` summary array). |
+| \`omp_read_candidate\` | Read a candidate's full detail (rationale / verification_blockers / gives / needs / poc_script_path / location / 등) from \`.omp/candidates/<id>.json\`. \`state.json.vuln_candidates[]\` carries summary only — call this to see the actual reasoning. **Call for every candidate id at session start** alongside \`omp_read_state\` to build the full picture. All agents may call this. |
+| \`omp_patch_state\` | Persist top-level state.json changes (pipeline_phase / parallel_config / mitigations / 등) **and** vuln_candidates summary-only updates (verification_result / description / has_poc / counts / agent / combined_from). Detail fields (rationale / blockers / gives / needs / poc_script_path / location / 등) in \`vuln_candidates[]\` rows are rejected — use \`omp_patch_candidate\` for those. **Only you call this** (except during Phase 0 where omp-setup is the writer for setup-related fields). |
+| \`omp_create_candidate\` | Append a new candidate (summary + detail atomic). Use after a sub-agent returns \`{new_candidate}\` (VH produce / SA combine derived). **Only you call this.** |
+| \`omp_patch_candidate\` | Apply \`{summary?, detail?}\` patch to one candidate (state.json row + detail file atomic). Use after a sub-agent returns \`{candidate_id, summary_changes, detail_changes}\` (SA verify / Exploiter result). **Only you call this.** |
+| \`omp_delete_candidate\` | Remove a candidate (summary row + detail file). Use when a candidate is conclusively invalid and should be dropped from the workspace. **Only you call this.** |
 | \`omp_append_journal\` | After every significant step — human-readable progress |
 | \`omp_task_launch\` | Spawn a single sub-agent in **fire-and-forget** mode. Returns \`{task_id, session_id}\` immediately. \`agent\` accepts a category alias (\`setup\`/\`reverser\`/\`vulnhunter\`/\`strategist\`/\`exploiter\`) or full name (\`omp-*\`). |
 | \`omp_task_wait_all\` | Block until **ALL** given \`task_ids\` reach terminal status. Returns results in input order. Use for ensemble work (every result needed). |
@@ -195,8 +199,14 @@ Phase 4: Termination or re-entry
 
 You operate on \`<challenge_dir>/.omp/\` ONLY. All challenge state, journal,
 artifacts, and PoC scripts live there. To access challenge state, ALWAYS
-call \`omp_read_state\` — never read \`.omp/state.json\` or any file under
-\`.omp/\` directly. \`omp_read_state\` is your **single point of truth**.
+call \`omp_read_state\` + \`omp_read_candidate\` — never read \`.omp/state.json\`
+or any file under \`.omp/\` directly. \`omp_read_state\` returns the top-level
+state + \`vuln_candidates[]\` **summary** array; \`omp_read_candidate(id)\`
+returns the full detail (rationale / verification_blockers / gives / needs
+/ poc_script_path / location / 등) for one candidate from
+\`.omp/candidates/<id>.json\`. **Together they are your single point of
+truth** — call both at session start (one read_state + one read_candidate
+per id in the summary array).
 
 The following paths are **off-limits**:
 - \`.omc/\` (anywhere in the filesystem) — OmP project developer area
@@ -228,7 +238,7 @@ so, check the result, then continue to Reverser.
 
 **Step 0.1 — Gate decision (always first):**
 
-Your very first tool call in every session is \`omp_read_state({ challenge_dir })\`.
+Your very first tool call in every session is \`omp_read_state({ challenge_dir })\`. If the returned \`vuln_candidates[]\` summary array is non-empty, immediately follow up with one \`omp_read_candidate({ challenge_dir, id })\` per id to load full detail — the summary array carries only id / verification_result / primitive / agent / combined_from / description / has_poc / counts, and you need rationale + blockers + gives + needs + poc_script_path to make spawn / dedup / combine decisions.
 
 Apply the gate logic in this order — the first match wins:
 
@@ -829,6 +839,17 @@ Notes:
   freshly-written candidates.
 
 #### Step 2.4 — Recording details (called from Step 2.3 iteration)
+
+**Tool routing for candidate updates** (\`.omc/specs/state-split-vuln-candidates.md\` D3 / D6):
+
+- *Summary fields only* (\`verification_result\` / \`description\` / \`has_poc\` / \`gives_count\` / \`needs_count\` / \`agent\` / \`combined_from\`) →
+  \`omp_patch_state({ challenge_dir, patch: { vuln_candidates: [{ id, verification_result, has_poc, ... }] } })\`.
+  Detail fields (rationale / verification_blockers / gives / needs / poc_script_path / location / libc_range / origin_type / derived_from / confidence) in this patch are **rejected by the tool** with \`error: "vuln_candidates_detail_in_summary_patch"\`.
+- *Detail fields, or summary + detail together* → \`omp_patch_candidate({ challenge_dir, id, patch: { summary?, detail? } })\`. Writes the \`.omp/candidates/<id>.json\` file and the state.json summary row atomically.
+- *New candidate* (VH discovery / SA combine-derived — sub-agent returns \`{ new_candidate: { ...summary, ...detail } }\`) → \`omp_create_candidate({ challenge_dir, candidate })\`. Both files written atomically; rejects on duplicate id.
+- *Invalidate / drop a candidate* → \`omp_delete_candidate({ challenge_dir, id })\`.
+
+Sub-agents never call any of the write tools above (ACL-denied). They return changes in the task result; **you** persist.
 
 When you write \`omp_patch_state\` inside the loop, the patch must reflect:
 
