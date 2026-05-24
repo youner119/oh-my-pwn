@@ -446,9 +446,12 @@ export class BackgroundManager {
 
   private createTask(input: LaunchInput): BackgroundTask {
     const id = generateTaskId()
+    // Single-bucket fallback when `input.model` is absent (current omp_task_launch
+    // path). Per-agent keys would partition limits across agents calling the same
+    // provider, multiplying the effective cap by the number of agent kinds in flight.
     const concurrencyKey = input.model
       ? `${input.model.providerID}/${input.model.modelID}`
-      : input.agent
+      : "default"
     const task: BackgroundTask = {
       id,
       parentSessionID: input.parentSessionID,
