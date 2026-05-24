@@ -106,16 +106,25 @@ BN MCP (no mutation tools — see Step 5b).
 1. **\`omp_read_state(challenge_dir)\`** — get \`reverser_summary_path\`,
    \`pseudocode_dir\`, \`bndb_path\`, \`binary_path\`, \`source_present\`,
    \`source_paths\`, \`mitigations\`, \`libc_version\`, existing
-   \`vuln_candidates\` (may be populated from prior run).
+   \`vuln_candidates\` **summary array** (may be populated from prior run).
+   The summary carries id / primitive / verification_result / agent /
+   combined_from / description / has_poc / counts — not the full reasoning.
 
    \`bndb_path\` and \`binary_path\` are only consumed in **explorer mode**
    (Step 5b). In default mode you can ignore them — the pre-saved
    pseudocode files cover everything you need.
 
-2. **Check prior results.** If \`vuln_candidates\` already has entries with
-   \`verification_result\` set, note which candidates are confirmed /
-   failed / inconclusive. Build on prior knowledge, don't start from
-   scratch.
+1b. **\`omp_read_candidate({challenge_dir, id})\`** per id in the summary
+    array (when non-empty) — full detail (rationale / verification_blockers
+    / gives / needs / poc_script_path / location / 등) lives in
+    \`.omp/candidates/<id>.json\`. Read every existing candidate's detail so
+    your produce decisions account for what's already been proven /
+    blocked. Skip when the summary array is empty.
+
+2. **Check prior results.** Using the summary + detail you just read,
+   note which candidates are confirmed / failed / inconclusive and what
+   blockers / gives / needs each carries. Build on prior knowledge, don't
+   start from scratch.
 
 3. **Read the ctf-pwn catalog index.** Open
    \`${OMP_REPO_ROOT}/knowledge/ctf-pwn/SKILL.md\`. Scan the section
@@ -335,18 +344,23 @@ BN MCP (no mutation tools — see Step 5b).
    - Speculative (pattern matches but unclear) → low
 
 10. **Return a JSON array on stdout.** That is your ONLY output channel.
-    Do NOT call \`omp_patch_state\`, \`omp_append_journal\`, or write any
-    markdown artifact. You run as one instance of an ensemble; the
-    Orchestrator collects all ensemble outputs, dedups/merges across them,
-    and is the sole writer of \`state.vuln_candidates[]\` and \`journal.md\`.
+    Do NOT call \`omp_patch_state\` / \`omp_patch_candidate\` /
+    \`omp_create_candidate\` / \`omp_delete_candidate\` / \`omp_append_journal\` or
+    write any markdown artifact (ACL-denied). You run as one instance of an
+    ensemble; the Orchestrator collects all ensemble outputs, dedups/merges
+    across them, and is the sole writer of \`state.vuln_candidates[]\` (summary)
+    and \`.omp/candidates/<id>.json\` (detail) via \`omp_create_candidate\`.
 
-    Format — JSON array, each element a candidate:
+    Format — JSON array, each element a candidate with **summary + detail
+    fields** in one object (Orchestrator splits when persisting):
 
     \`\`\`json
     [
       {
         "id": "vuln_bof_main_read",
         "primitive": "stack_bof",
+        "agent": "VH-3",
+        "description": "main 의 read(0, buf, 0x100) — char[0x40] stack buffer, no canary. Saved RIP at offset 0x48. NX/PIE on, RELRO full — needs leak + ROP.",
         "location": "main (read call at line 15)",
         "confidence": 0.9,
         "rationale": "read(0, buf, 0x100) where buf is char[0x40] on stack, no canary. Mitigations: NX=on PIE=on Canary=off RELRO=full. Return address controllable at offset 0x48 past buf. Knowledge ref: self-identified.",
@@ -355,15 +369,21 @@ BN MCP (no mutation tools — see Step 5b).
     ]
     \`\`\`
 
-    Fields:
+    Summary fields (state.json):
     - \`id\` — unique within your output (Orchestrator may renumber when merging).
     - \`primitive\` — one of \`stack_bof\` / \`fmt_string_read\` / \`fmt_string_write\` /
       \`tcache_poison\` / \`uaf\` / \`heap_overflow\` / etc.
+    - \`agent\` — your ensemble instance label (e.g. \`"VH-3"\`).
+    - \`description\` — **2–3 lines** (≤400 char) of *what* this candidate is.
+      Short claim, distinct from the full \`rationale\`. Orchestrator + sub-agents
+      see this in the summary array without reading the detail file.
+
+    Detail fields (\`.omp/candidates/<id>.json\`):
     - \`location\` — function name (+ line/offset if known).
     - \`confidence\` — 0.0–1.0.
     - \`rationale\` — concise prose: evidence + exploitability notes +
-      mitigation interaction + knowledge ref if consulted. This is the
-      only place narrative goes — there is no separate markdown.
+      mitigation interaction + knowledge ref if consulted. Full reasoning
+      lives here. There is no separate markdown.
     - \`libc_range\` — \`"2.31-2.35"\` etc., or \`null\`.
 
     Empty array (\`[]\`) is a valid response when no candidates are found.

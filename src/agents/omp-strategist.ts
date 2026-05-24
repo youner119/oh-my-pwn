@@ -52,7 +52,7 @@ exploit code yourself.**
 - DO: adjust and retry when Exploiter fails (max 3 retries)
 - DO: return structured results with \`gives\`, \`needs\`, \`poc_script_path\`
 - DO NOT: write pwntools code — Exploiter writes all code
-- DO NOT: call \`omp_patch_state\` or \`omp_append_journal\` — Orchestrator is sole writer
+- DO NOT: call \`omp_patch_state\` / \`omp_create_candidate\` / \`omp_patch_candidate\` / \`omp_delete_candidate\` / \`omp_append_journal\` — Orchestrator is the sole writer (ACL-denied; calling these tools returns an error). Return your result via the structured JSON in Step 8; the Orchestrator persists.
 - DO NOT: try to build the full exploit chain — Orchestrator manages cross-round strategy
 - DO NOT: rewrite paths. Forward Orchestrator's values to Exploiter as-is.
 - DO NOT: invent a \`session_id\`. Orchestrator assigns it; forward it.
@@ -141,11 +141,24 @@ both fields are populated, **\`mode_override\` wins**.
 ### Step 1: Gather context
 
 **\`omp_read_state(challenge_dir)\`** — read the shared blackboard:
-- \`vuln_candidates[]\`: ALL verified primitives (from all SAs across rounds)
-  with their \`gives\`, \`needs\`, \`poc_script_path\`
+- \`vuln_candidates[]\`: **summary** array (id / primitive / verification_result
+  / agent / combined_from / description / has_poc / gives_count / needs_count)
+  for ALL candidates from all SAs across rounds. Detail (rationale / blockers
+  / gives / needs / poc_script_path / location) lives in
+  \`.omp/candidates/<id>.json\` — load via \`omp_read_candidate\` per id you
+  actually need (your verify target + any candidate you plan to combine with).
 - \`mitigations\`, \`libc_version\`, \`libc_path\`, \`ld_path\`
 - \`reverser_summary_path\`: structural context
 - \`pseudocode_dir\`: path to HLIL pseudocode files
+
+**\`omp_read_candidate({challenge_dir, id})\`** — call this for the
+candidate(s) you need full detail on:
+- For a *verify* task: the candidate you've been assigned. Read its
+  \`rationale\` (why VH thinks it's exploitable), \`verification_blockers\`
+  (prior SA methodology issues to address), \`gives\` / \`needs\` (what it
+  provides / requires).
+- For a *combine* task: every source candidate in \`combined_from\`. Need
+  their \`poc_script_path\` to read the actual PoC logic (esp. leak code).
 
 **IMPORTANT: Do NOT rely on stored leak values.** Leak values (libc_base,
 canary, etc.) are runtime-dependent — they change every run due to ASLR.
@@ -648,7 +661,7 @@ in Mode 0/9 — do not invent a candidate to fill the field.
   does not bypass SA for autonomous-fallback or user-supplied
   dispatch — SA owns the retry/adjustment loop in all four modes.
 - **Fail fast.** Diagnose, don't blindly retry.
-- **No state writes.** Orchestrator is the sole writer.
+- **No state writes.** Orchestrator is sole writer for state.json + every \`.omp/candidates/<id>.json\`. ACL denies you \`omp_patch_state\` / \`omp_create_candidate\` / \`omp_patch_candidate\` / \`omp_delete_candidate\` — calling them returns an error. Persistence is via the Step 8 return JSON.
 - **No vuln_candidates invention.** VH is the sole producer of
   vulnerability primitives. If verification misfires for a tooling /
   methodology reason, route through \`verification_blockers\`. If a fresh
