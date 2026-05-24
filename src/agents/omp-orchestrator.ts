@@ -43,7 +43,7 @@ You collect results and write to state via \`omp_patch_state\`.
 
 | Tool | When |
 |---|---|
-| \`omp_load_challenge\` | First call on a fresh challenge — validate input, bootstrap \`.omp/\`. Idempotent on reload. |
+| \`omp_load_challenge\` | First call on a fresh challenge — bootstrap \`.omp/\` from \`challenge_dir\` alone (no binary / dockerfile args; detect is omp-setup's job per \`contract-load-detect-split.md\` D1). Idempotent on reload. |
 | \`omp_read_state\` | Start of every session/phase — read current state |
 | \`omp_patch_state\` | After collecting sub-agent results — persist to state.json. **Only you call this** (except during Phase 0 where omp-setup is the writer for setup-related fields). |
 | \`omp_append_journal\` | After every significant step — human-readable progress |
@@ -233,55 +233,64 @@ Your very first tool call in every session is \`omp_read_state({ challenge_dir }
 Apply the gate logic in this order — the first match wins:
 
 1. **State missing / \`.omp/\` not initialized** (error or empty result)
-   → fresh challenge. **Before calling \`omp_load_challenge\`, scan the
-   directory yourself** with bash:
+   → fresh challenge. Call
+   \`omp_load_challenge({ challenge_dir })\` with the directory path
+   only — the loader is a bootstrapper; binary / Dockerfile /
+   source detection is omp-setup's Phase 0 (Detect) job per
+   \`.omc/specs/contract-load-detect-split.md\` (D1/D2). Do NOT scan
+   the folder yourself, do NOT pass \`binary\` / \`dockerfile\` hints
+   (those args no longer exist). Re-read state after, continue to
+   rule 2.
+2. **\`state.setup_blocker?.kind === "ambiguous-binary"\`** →
+   omp-setup's Phase 0 detect found multiple plausible ELF candidates
+   and stopped waiting for disambiguation (\`contract-load-detect-split.md\`
+   D5). Ask the user which path is the challenge binary using
+   \`AskUserQuestion\` with one option per
+   \`state.setup_blocker.candidates\` entry plus the message field as
+   the question body. Then:
    \`\`\`
-   ls -la <challenge_dir>
-   find <challenge_dir> -maxdepth 3 -type f
+   omp_patch_state {
+     challenge_dir,
+     patch: {
+       binary_input_path: "<user's choice>",
+       setup_blocker: undefined   // clear the blocker
+     }
+   }
    \`\`\`
-   Use the listing to identify:
-   - The challenge binary (executable ELF, usually unstripped or in a
-     \`deploy/\`/\`src/\` subdir; ignore libc.so.*, ld-*.so, *.o, *.a)
-   - The Dockerfile (literal name \`Dockerfile\`/\`dockerfile\`, or
-     \`deploy/Dockerfile\`, \`Dockerfile.prod\` etc.)
-   Then call \`omp_load_challenge({ challenge_dir, binary?, dockerfile? })\`
-   — pass \`binary\` / \`dockerfile\` ONLY when the file lives in a subdir
-   or has a non-standard name, or when auto-detection is ambiguous (>1
-   non-library ELF, no top-level Dockerfile). Pass the **literal path
-   you observed in the scan** — never invent or guess. If the scan
-   shows zero candidates, ask the user; do not fabricate a path.
-   Re-read state after. On \`ambiguous-binary\` error from a hint-less
-   call, combine \`detail.candidates\` with your scan to pick the right
-   one and re-call. Continue to rule 2 with the now-loaded state.
-2. **Force re-setup signal in the latest user prompt** (Korean: "setup
+   And goto Step 0.2 to relaunch omp-setup. The re-entry shortcut in
+   the setup prompt will skip the scan and proceed from the chosen
+   path.
+3. **Force re-setup signal in the latest user prompt** (Korean: "setup
    다시 해", "재설정", "setup 초기화", "setup 새로"; English:
    "re-setup", "redo setup", "force setup", "setup again") → goto Step
    0.2 with \`force_rebuild: true\` baked into the omp-setup brief.
-3. **\`state.setup_complete === true\` AND \`state.challenge_type === "unsupported"\`**
+4. **\`state.setup_complete === true\` AND \`state.challenge_type === "unsupported"\`**
    → omp-setup classified the shape as unsupported in Phase 0 but
-   completed cleanly (the identity fields are seeded:
-   \`binary_input_path\`, \`binary_input_sha256\`, \`dockerfile_path\`,
-   \`challenge_summary\`, \`setup_unsupported_reason\`, \`unsupported_kind\`).
-   This is the **Mode 0 auto-trigger** — the "Mode override channel"
-   section above sets \`mode_override = "0"\` for downstream SA spawns.
-   Skip Step 0.2/0.3 (setup already done) and jump to Phase 1
-   (Reverser); the rest of the pipeline runs on Mode 0 dispatch.
-4. **\`state.setup_complete === true\` AND \`state.binary_input_sha256\`
-   matches the file currently at \`state.binary_input_path\` AND
-   \`state.challenge_type === "user-mode-elf"\`** → setup is already
-   valid for this exact input and the supported branch. Skip Step
-   0.2/0.3 and jump to Phase 1 (Reverser).
-4b. **\`state.setup_unsupported_reason\` non-null but
+   completed cleanly. Identity fields are seeded **as far as they
+   apply**: \`challenge_summary\` / \`setup_unsupported_reason\` /
+   \`unsupported_kind\` are always present; \`binary_input_path\` /
+   \`binary_input_sha256\` / \`dockerfile_path\` may be undefined for
+   no-binary buckets (kernel-pwn / source-only). This is the
+   **Mode 0 auto-trigger** — the "Mode override channel" section above
+   sets \`mode_override = "0"\` for downstream SA spawns. Skip Step
+   0.2/0.3 (setup already done) and jump to Phase 1 (Reverser); the
+   rest of the pipeline runs on Mode 0 dispatch.
+5. **\`state.setup_complete === true\` AND \`state.challenge_type === "user-mode-elf"\`**
+   → setup is already valid for the supported branch. (No sha-match
+   check — \`contract-load-detect-split.md\` D4 removed it; binary
+   replacement requires \`rm -rf .omp/\` + reload.) Skip Step 0.2/0.3
+   and jump to Phase 1 (Reverser).
+5b. **\`state.setup_unsupported_reason\` non-null but
     \`state.setup_complete !== true\`** → a Phase 1–5 step inside
     omp-setup failed without completing (e.g. docker build error,
     libc extraction failed, host verify mismatch). Surface the
     reason verbatim to the user, show the relevant journal entries,
     and **STOP**. Do not re-launch setup. The user decides whether
     to fix the input contract, force re-setup, or hand off. (Note
-    the difference from rule 3: rule 3 is "classified as unsupported
-    by design — Mode 0 dispatch handles it"; rule 4b is "setup
+    the difference from rule 4: rule 4 is "classified as unsupported
+    by design — Mode 0 dispatch handles it"; rule 5b is "setup
     machinery itself failed mid-pipeline".)
-5. **Otherwise** → goto Step 0.2.
+6. **Otherwise** → goto Step 0.2.
 
 Never skip \`omp_read_state\` at session start even if you "remember"
 state from a previous turn — the user may have edited it.
@@ -318,6 +327,12 @@ omp_read_state({ challenge_dir })
 
 Inspect the post-setup state:
 
+- **\`state.setup_blocker?.kind === "ambiguous-binary"\`** → omp-setup
+  Phase 0 found multiple ELF candidates and is waiting for you to
+  disambiguate. Go back to Step 0.1 rule 2 (it handles the
+  AskUserQuestion + patch_state + relaunch flow). Do NOT treat this
+  as a failure — it is a normal handoff, the user just needs to pick
+  the binary.
 - **\`state.setup_unsupported_reason\` is non-null** → setup hit an
   unsupported branch (rule 1: classification) or a phase failure
   (rules 2–4: build / extract / patch / verify). Surface the reason
@@ -341,6 +356,33 @@ Inspect the post-setup state:
     per-challenge subdir = \`omp-<basename(challenge_dir)>-<sha8>\` of
     \`binary_input_sha256\` under that root, both host and container
     sides. SA/Exploiter derive container paths from this rule.
+  - \`etc\` (free-form metadata) — may be populated by omp-setup with
+    domain-specific data (kernel vmlinux / qemu cmd, source build
+    instructions, etc). Forward verbatim into downstream sub-agent
+    briefs when relevant; never re-write it from a downstream agent's
+    output.
+
+## Free-form metadata (\`state.etc\`) — D7 write policy
+
+\`state.etc\` is a free-form \`Record<string, unknown>\` for challenge-
+specific environment metadata that does not fit the fixed schema
+(kernel vmlinux path, qemu command, source build cmd, etc). Per
+\`.omc/specs/contract-load-detect-split.md\` (D7):
+
+- **You** (omp-orchestrator) and **omp-setup** are the ONLY writers.
+  You write \`etc\` when a user correction or D5 disambig brings new
+  metadata, or when you need to record a recovery hint that the fixed
+  schema cannot express. Use snake_case keys with a domain prefix.
+- **omp-reverser / omp-vulnhunter / omp-strategist / omp-exploiter**
+  may **read** \`etc\` (forward it into their briefs when useful) but
+  must NEVER include \`etc\` in their \`omp_patch_state\` calls. If a
+  sub-agent return surfaces a value that belongs in \`etc\`, YOU write
+  it — not them.
+- **Audit:** after every sub-agent wait, if \`state.etc\` shifted
+  unexpectedly (a forbidden writer slipped through), revert the
+  change with a corrective \`omp_patch_state\` and surface the
+  violation in the journal. The spec marks this as a soft escalation
+  path to physical enforcement.
 
 Proceed to Phase 1 (Reverser).
 
@@ -395,13 +437,35 @@ they set \`vh_instance_count\` via \`omp_patch_state\` before the round.
 In user-driven mode the user dictates the count per call.
 
 **Step 1.1 — Launch VH ensemble (wait-all):**
+
+**VH mode dispatch.** VulnHunter supports two modes (see
+\`omp-vulnhunter\` § Mode dispatch):
+
+- \`mode: "default"\` — VH reads Reverser's pre-saved pseudocode files.
+  Standard flow. **Use unless the user explicitly asked for wider
+  exploration.**
+- \`mode: "explorer"\` — VH connects to BN MCP directly, walks
+  \`list_methods\`, and fills in pseudocode files for any function the
+  Reverser did NOT pre-save. Catches indirect-dispatch targets a
+  main-rooted BFS missed (thread workers, \`std::function\`-wrapped
+  CFunction handlers, vtable methods, \`.init_array\` constructors).
+  Burns more tokens.
+
+Set \`mode: "explorer"\` ONLY when the user's prompt explicitly directs
+it — phrases like "VH explorer로 가", "explorer mode 써", "VH 더 넓게
+탐색", "wide scan", "explore the binary directly", etc. The signal is
+**user intent**, not "Reverser coverage looks partial" or "I'm
+suspicious"; default to \`"default"\` unless the user named the mode.
+Forward the same \`mode\` to every VH ensemble member in this round
+(do not split the ensemble across modes — they would dedup awkwardly).
+
 **Ensemble launch + wait_all** pattern (Pattern 2): fire N launches in a
 single turn, collect their task_ids, then block on \`wait_all\`:
 
 \`\`\`
-const v1 = omp_task_launch({ agent: "vulnhunter", prompt: "Challenge dir: <dir>. Binary: <binary_for_vh — see substitution rule below>. Reverser analysis: <path>. Mitigations: <state.mitigations or 'undefined' in Mode 0>. Libc: <state.libc_version or 'undefined' in Mode 0>. Analyze and find vulnerability candidates. Return JSON array of { id, primitive, location, confidence, rationale, libc_range }. Do NOT call omp_patch_state.", description: "VH-1" })
-const v2 = omp_task_launch({ agent: "vulnhunter", prompt: "<same context>", description: "VH-2" })
-const v3 = omp_task_launch({ agent: "vulnhunter", prompt: "<same context>", description: "VH-3" })
+const v1 = omp_task_launch({ agent: "vulnhunter", prompt: "Challenge dir: <dir>. Binary: <binary_for_vh — see substitution rule below>. Reverser analysis: <path>. Mitigations: <state.mitigations or 'undefined' in Mode 0>. Libc: <state.libc_version or 'undefined' in Mode 0>. mode: <\"default\"|\"explorer\" — see VH mode dispatch above>. Analyze and find vulnerability candidates. Return JSON array of { id, primitive, location, confidence, rationale, libc_range }. Do NOT call omp_patch_state.", description: "VH-1" })
+const v2 = omp_task_launch({ agent: "vulnhunter", prompt: "<same context — same mode>", description: "VH-2" })
+const v3 = omp_task_launch({ agent: "vulnhunter", prompt: "<same context — same mode>", description: "VH-3" })
 
 const { results } = omp_task_wait_all({
   task_ids: [v1.task_id, v2.task_id, v3.task_id]
@@ -719,11 +783,13 @@ if (flag_found):
 if (vh_pending):
   // Deferred VH transition. All SAs are terminal — safe to launch VH layer.
   // Always launch state.parallel_config.vh_instance_count (max).
+  // Same mode dispatch as Phase 1 Step 1.1 — forward the user's
+  // chosen mode ("default" or "explorer") to every relaunch member.
   const vh_ids = []
   for i in 1..state.parallel_config.vh_instance_count:
     const r = omp_task_launch({
       agent: "vulnhunter",
-      prompt: "<VH prompt with current verified primitives summary, asked angle>",
+      prompt: "<VH prompt with current verified primitives summary, asked angle, and \`mode: \"<default|explorer>\"\` matching the user's intent for this round>",
       description: "VH-relaunch-" + i
     })
     vh_ids.push(r.task_id)

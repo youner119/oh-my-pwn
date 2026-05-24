@@ -59,6 +59,37 @@ describe("createOmpOrchestratorAgent", () => {
     expect(p).toContain('agent: "omp-setup"')
   })
 
+  test("Phase 0 — omp_load_challenge takes challenge_dir only (contract-load-detect-split D1)", () => {
+    const agent = createOmpOrchestratorAgent("test-model")
+    const p = agent.prompt ?? ""
+    expect(p).toContain("omp_load_challenge({ challenge_dir })")
+    expect(p).toContain("contract-load-detect-split.md")
+    expect(p).toContain("Do NOT scan")
+    expect(p).toContain("do NOT pass `binary` / `dockerfile` hints")
+  })
+
+  test("Phase 0 — setup_blocker.kind ambiguous-binary handoff (contract-load-detect-split D5)", () => {
+    const agent = createOmpOrchestratorAgent("test-model")
+    const p = agent.prompt ?? ""
+    expect(p).toContain('state.setup_blocker?.kind === "ambiguous-binary"')
+    expect(p).toContain("AskUserQuestion")
+    expect(p).toContain("state.setup_blocker.candidates")
+    // Clear the blocker via patch_state, then relaunch setup
+    expect(p).toContain("setup_blocker: undefined")
+    expect(p).toContain("relaunch")
+  })
+
+  test("Phase 0 — no sha-match check (contract-load-detect-split D4)", () => {
+    const agent = createOmpOrchestratorAgent("test-model")
+    const p = agent.prompt ?? ""
+    // The new gate rule for already-set-up user-mode-elf states the
+    // sha-match invariant was explicitly removed. The prompt wraps
+    // across lines, so check tolerant fragments.
+    expect(p).toContain("No sha-match")
+    expect(p).toContain("D4 removed it")
+    expect(p).toContain("rm -rf .omp/")
+  })
+
   test("Phase 0 success criterion lists the fields downstream agents read", () => {
     const agent = createOmpOrchestratorAgent("test-model")
     const p = agent.prompt ?? ""
@@ -167,5 +198,24 @@ describe("createOmpOrchestratorAgent", () => {
     // body wraps mid-sentence so search on a shorter substring.
     expect(p).toContain("primitive is unrelated")
     expect(p).toContain("verification_blockers")
+  })
+
+  test("Phase 1 forwards VH mode dispatch (default vs explorer)", () => {
+    // Orchestrator must surface VH's default/explorer mode dispatch
+    // and forward it via the launch prompt. The user opts into
+    // explorer mode by saying so explicitly; orchestrator does not
+    // auto-escalate.
+    const agent = createOmpOrchestratorAgent("test-model")
+    const p = agent.prompt ?? ""
+    expect(p).toContain("VH mode dispatch")
+    expect(p).toContain(`mode: "default"`)
+    expect(p).toContain(`mode: "explorer"`)
+    // The prompt template fed to omp_task_launch must include the mode
+    // slot — so VH actually sees a value to branch on.
+    expect(p).toMatch(/mode:\s*<["\\]+default[^>]*explorer/i)
+    // Auto-escalation explicitly forbidden — must come from user intent.
+    expect(p).toMatch(/explicitly|user intent|user's prompt explicitly/i)
+    // Same mode applies to every ensemble member; do not split.
+    expect(p).toMatch(/same context — same mode|do not split the ensemble across modes/i)
   })
 })
