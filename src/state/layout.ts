@@ -15,6 +15,7 @@ import {
   EXPLOIT_DIR,
   LOGS_DIR,
   ARTIFACTS_DIR,
+  CANDIDATES_DIR,
 } from "./constants"
 
 /** Absolute path to `<challengeDir>/.omp/`. */
@@ -47,6 +48,19 @@ export function resolveArtifactsDir(challengeDir: string): string {
   return join(resolveOmpDir(challengeDir), ARTIFACTS_DIR)
 }
 
+/** Absolute path to `<challengeDir>/.omp/candidates/`. */
+export function resolveCandidatesDir(challengeDir: string): string {
+  return join(resolveOmpDir(challengeDir), CANDIDATES_DIR)
+}
+
+/**
+ * Absolute path to `<challengeDir>/.omp/candidates/<id>.json`. `id` 검증은
+ * 호출자 책임 — io 의 candidate read/write 가 사용 전에 validateCandidateId 박음.
+ */
+export function resolveCandidatePath(challengeDir: string, id: string): string {
+  return join(resolveCandidatesDir(challengeDir), `${id}.json`)
+}
+
 /**
  * All standard subdirectories OmP expects to exist under `.omp/`.
  * Used by {@link import("./io").initializeOmpDir} to seed the layout.
@@ -55,4 +69,5 @@ export const OMP_SUBDIRS: readonly string[] = [
   EXPLOIT_DIR,
   LOGS_DIR,
   ARTIFACTS_DIR,
+  CANDIDATES_DIR,
 ]

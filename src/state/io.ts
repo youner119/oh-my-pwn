@@ -19,18 +19,29 @@
  * the boulder-state reference module in the same repo uses sync `node:fs`.
  */
 
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs"
+import {
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  renameSync,
+  unlinkSync,
+  writeFileSync,
+} from "node:fs"
 import { dirname } from "node:path"
 import {
   ChallengeStateSchema,
+  VulnCandidateSchema,
   createInitialChallengeState,
   type ChallengeState,
   type InitialChallengeStateInput,
+  type VulnCandidate,
 } from "./challenge-state"
 import {
   resolveOmpDir,
   resolveStatePath,
   resolveJournalPath,
+  resolveCandidatePath,
+  resolveCandidatesDir,
   OMP_SUBDIRS,
 } from "./layout"
 import { initializeJournal } from "./journal"
@@ -84,13 +95,13 @@ export function initializeOmpDir(
     if (!loaded) {
       // existsSync said yes but loader said no → filesystem race; treat as fresh.
       state = createInitialChallengeState(input, now)
-      writeStateFileAtomic(statePath, state)
+      writeJsonAtomic(statePath, state)
     } else {
       state = loaded
     }
   } else {
     state = createInitialChallengeState(input, now)
-    writeStateFileAtomic(statePath, state)
+    writeJsonAtomic(statePath, state)
   }
 
   initializeJournal(input.challenge_dir, state, now)
@@ -164,17 +175,21 @@ export function saveChallengeState(
   const validated = ChallengeStateSchema.parse(stamped)
   const statePath = resolveStatePath(validated.challenge_dir)
   ensureDir(dirname(statePath))
-  writeStateFileAtomic(statePath, validated)
+  writeJsonAtomic(statePath, validated)
   return validated
 }
 
-function writeStateFileAtomic(statePath: string, state: ChallengeState): void {
-  const tmpPath = `${statePath}.tmp`
-  // Minified: state grows past opencode's line-based tool output cap when an
-  // agent reads `.omp/state.json` directly. One-line JSON keeps the read result
-  // intact. For human inspection use `jq . .omp/state.json`.
-  writeFileSync(tmpPath, `${JSON.stringify(state)}\n`, "utf-8")
-  renameSync(tmpPath, statePath)
+/**
+ * Atomic single-line JSON write. tmp + rename — readers never see partial
+ * writes; rename is atomic on POSIX same-filesystem. Minified (no indent)
+ * because OmP's state files grow past opencode's line-based tool output cap
+ * when an agent reads them directly. One-line JSON keeps the read result
+ * intact. For human inspection use `jq .`.
+ */
+function writeJsonAtomic(path: string, value: unknown): void {
+  const tmpPath = `${path}.tmp`
+  writeFileSync(tmpPath, `${JSON.stringify(value)}\n`, "utf-8")
+  renameSync(tmpPath, path)
 }
 
 /** Paths consumers may want without pulling in `layout.ts` directly. */
@@ -188,4 +203,110 @@ export function getStatePaths(challengeDir: string): {
     statePath: resolveStatePath(challengeDir),
     journalPath: resolveJournalPath(challengeDir),
   }
+}
+
+/* ── Per-candidate detail files (spec: state-split-vuln-candidates.md) ───── */
+
+/** Thrown when a candidate file exists but cannot be parsed/validated. */
+export class CandidateLoadError extends Error {
+  constructor(
+    message: string,
+    public readonly candidatePath: string,
+    public readonly cause?: unknown,
+  ) {
+    super(message)
+    this.name = "CandidateLoadError"
+  }
+}
+
+/**
+ * Candidate id charset — alphanumeric + underscore + dash. Tight so the id
+ * maps directly to a filesystem-safe filename (no escape needed).
+ */
+const CANDIDATE_ID_PATTERN = /^[A-Za-z0-9_-]+$/
+
+function validateCandidateId(id: string): void {
+  if (!CANDIDATE_ID_PATTERN.test(id)) {
+    throw new Error(
+      `Invalid candidate id: ${JSON.stringify(id)} (allowed: alphanumeric + _ + -)`,
+    )
+  }
+}
+
+/**
+ * Read `<challengeDir>/.omp/candidates/<id>.json`. Returns `null` when the
+ * file is missing; throws {@link CandidateLoadError} on parse / schema
+ * failure so the Orchestrator fails loud.
+ */
+export function loadCandidate(
+  challengeDir: string,
+  id: string,
+): VulnCandidate | null {
+  validateCandidateId(id)
+  const path = resolveCandidatePath(challengeDir, id)
+  if (!existsSync(path)) return null
+  let raw: string
+  try {
+    raw = readFileSync(path, "utf-8")
+  } catch (err) {
+    throw new CandidateLoadError(
+      `Failed to read candidate file: ${String(err)}`,
+      path,
+      err,
+    )
+  }
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(raw)
+  } catch (err) {
+    throw new CandidateLoadError(
+      `Candidate file is not valid JSON: ${String(err)}`,
+      path,
+      err,
+    )
+  }
+  const result = VulnCandidateSchema.safeParse(parsed)
+  if (!result.success) {
+    throw new CandidateLoadError(
+      `Candidate file failed schema validation: ${result.error.message}`,
+      path,
+      result.error,
+    )
+  }
+  return result.data
+}
+
+/**
+ * Validate + atomic write `<challengeDir>/.omp/candidates/<id>.json`.
+ * Returns the validated candidate (schema may strip unknown fields). The
+ * `id` field of `candidate` must match the `id` argument.
+ */
+export function saveCandidate(
+  challengeDir: string,
+  id: string,
+  candidate: VulnCandidate,
+): VulnCandidate {
+  validateCandidateId(id)
+  if (candidate.id !== id) {
+    throw new Error(
+      `saveCandidate id mismatch: arg=${JSON.stringify(id)} candidate.id=${JSON.stringify(candidate.id)}`,
+    )
+  }
+  const validated = VulnCandidateSchema.parse(candidate)
+  ensureDir(resolveCandidatesDir(challengeDir))
+  const path = resolveCandidatePath(challengeDir, id)
+  writeJsonAtomic(path, validated)
+  return validated
+}
+
+/**
+ * Remove `<challengeDir>/.omp/candidates/<id>.json`. Returns `true` if the
+ * file existed and was deleted, `false` if the file was already absent.
+ */
+export function deleteCandidate(challengeDir: string, id: string): boolean {
+  validateCandidateId(id)
+  const path = resolveCandidatePath(challengeDir, id)
+  if (!existsSync(path)) return false
+  unlinkSync(path)
+  return true
 }

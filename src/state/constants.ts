@@ -24,5 +24,13 @@ export const LOGS_DIR = "logs"
 /** Directory for loose artifacts (extracted libc/ld, Reverser dumps, etc.). */
 export const ARTIFACTS_DIR = "artifacts"
 
+/**
+ * Directory for per-candidate detail files (spec: state-split-vuln-candidates.md).
+ * Each candidate's detail (rationale / blockers / gives / needs / poc / 등) lives
+ * in `.omp/candidates/<id>.json`. state.json 의 vuln_candidates array 에는
+ * summary 만 박힘.
+ */
+export const CANDIDATES_DIR = "candidates"
+
 /** Current ChallengeState schema version. Bump on breaking changes. */
 export const CHALLENGE_STATE_SCHEMA_VERSION = "1"

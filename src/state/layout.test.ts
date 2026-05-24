@@ -7,9 +7,17 @@ import {
   resolveExploitDir,
   resolveLogsDir,
   resolveArtifactsDir,
+  resolveCandidatesDir,
+  resolveCandidatePath,
   OMP_SUBDIRS,
 } from "./layout"
-import { EXPLOIT_DIR, LOGS_DIR, ARTIFACTS_DIR, OMP_DIR } from "./constants"
+import {
+  EXPLOIT_DIR,
+  LOGS_DIR,
+  ARTIFACTS_DIR,
+  CANDIDATES_DIR,
+  OMP_DIR,
+} from "./constants"
 
 describe("omp state layout", () => {
   const challengeDir = "/tmp/fake-challenge"
@@ -30,7 +38,7 @@ describe("omp state layout", () => {
     )
   })
 
-  test("resolveExploitDir / LogsDir / ArtifactsDir point at subdirs", () => {
+  test("resolveExploitDir / LogsDir / ArtifactsDir / CandidatesDir point at subdirs", () => {
     expect(resolveExploitDir(challengeDir)).toBe(
       join(challengeDir, OMP_DIR, EXPLOIT_DIR),
     )
@@ -40,11 +48,20 @@ describe("omp state layout", () => {
     expect(resolveArtifactsDir(challengeDir)).toBe(
       join(challengeDir, OMP_DIR, ARTIFACTS_DIR),
     )
+    expect(resolveCandidatesDir(challengeDir)).toBe(
+      join(challengeDir, OMP_DIR, CANDIDATES_DIR),
+    )
   })
 
-  test("OMP_SUBDIRS lists the three standard subdirectories", () => {
+  test("resolveCandidatePath joins <id>.json under candidates/", () => {
+    expect(resolveCandidatePath(challengeDir, "vuln_4")).toBe(
+      join(challengeDir, OMP_DIR, CANDIDATES_DIR, "vuln_4.json"),
+    )
+  })
+
+  test("OMP_SUBDIRS lists the four standard subdirectories", () => {
     expect([...OMP_SUBDIRS].sort()).toEqual(
-      [EXPLOIT_DIR, LOGS_DIR, ARTIFACTS_DIR].sort(),
+      [EXPLOIT_DIR, LOGS_DIR, ARTIFACTS_DIR, CANDIDATES_DIR].sort(),
     )
   })
 })
