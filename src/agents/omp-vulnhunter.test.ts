@@ -179,4 +179,44 @@ describe("createOmpVulnhunterAgent", () => {
     expect(p).toContain("Rank candidates")
     expect(p).toContain("Return a JSON array")
   })
+
+  test("prompt defines default vs explorer mode dispatch", () => {
+    // Explorer mode: VH walks list_methods directly via BN MCP and
+    // fills in pseudocode files for functions the Reverser did not
+    // pre-save. Default mode: VH trusts Reverser's pre-saved files.
+    const agent = createOmpVulnhunterAgent("test-model")
+    const p = agent.prompt ?? ""
+    expect(p).toContain("Mode dispatch")
+    expect(p).toContain(`"default"`)
+    expect(p).toContain(`"explorer"`)
+    expect(p).toMatch(/Default mode|default branch|Default mode — pre-saved/i)
+    expect(p).toMatch(/Explorer mode|explorer branch|BN MCP direct query/i)
+  })
+
+  test("explorer mode walks list_methods and saves missing pseudocode", () => {
+    const agent = createOmpVulnhunterAgent("test-model")
+    const p = agent.prompt ?? ""
+    // View discovery + list_methods walk.
+    expect(p).toContain("list_view")
+    expect(p).toContain("list_methods")
+    // Skip rules carry over from Reverser's analysis-set policy.
+    expect(p).toContain("`sub_`")
+    expect(p).toContain("`_dl_`")
+    expect(p).toMatch(/__libc_|__GI_/)
+    // Disk write of HLIL when pseudocode file does not yet exist.
+    expect(p).toContain("decompile_function")
+    expect(p).toMatch(/<pseudocode_dir>\/<name>\.txt|pseudocode_dir\/<name>\.txt|pseudocode\/<name>\.txt/)
+    expect(p).toMatch(/does NOT exist|not exist on disk|write the returned HLIL/i)
+  })
+
+  test("explorer mode obeys BN MCP read-only invariant", () => {
+    const agent = createOmpVulnhunterAgent("test-model")
+    const p = agent.prompt ?? ""
+    // Forbidden mutation tools must be explicitly called out.
+    expect(p).toMatch(/MUST NOT call any mutation tool|Read-only BN MCP enforcement|read-only BN MCP/i)
+    expect(p).toContain("rename_function")
+    expect(p).toContain("set_comment")
+    expect(p).toContain("save_bndb")
+    expect(p).toMatch(/neutral|user's review artifact/i)
+  })
 })

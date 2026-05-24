@@ -19,6 +19,28 @@ const OMP_REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..")
  * detail md / how2heap / notes / writeups as evidence accumulates.
  * knowledge/ctf-reverse/ is off-limits.
  *
+ * Two modes, picked by the Orchestrator via the `mode` field in the
+ * delegation prompt:
+ *
+ *   - `mode: "default"` (or unset) — read `reverser-analysis.md` plus
+ *     pre-saved `pseudocode_dir/<name>.txt` files. Trust the Reverser's
+ *     coverage. Standard flow.
+ *
+ *   - `mode: "explorer"` — wider scan. Connect to BN MCP read-only,
+ *     walk `list_methods` directly, decompile any function the Reverser
+ *     did not pre-save, and write the fetched HLIL to
+ *     `<pseudocode_dir>/<name>.txt` so SA / Exploiter can read it like
+ *     Reverser-saved files. Use when the Reverser's coverage looks
+ *     partial (e.g. main-rooted BFS missed thread workers,
+ *     `std::function`-wrapped CFunction handlers, vtable methods,
+ *     `.init_array` constructors) or when the user explicitly asks for
+ *     wider exploration.
+ *
+ * Both modes obey the read-only BN MCP policy — no mutation tools
+ * (`rename_*`, `set_comment`, `retype_*`, `set_function_prototype`,
+ * `define_types`, `make_function_at`, `patch_bytes`, `save_bndb`).
+ * The Reverser's `.bndb` stays neutral for user review.
+ *
  * Output: a JSON array of vulnerability candidates returned on stdout.
  * The Orchestrator (sole state writer per parallel-orchestration spec)
  * receives the array from every ensemble instance, dedups/merges across
@@ -56,11 +78,39 @@ You do NOT design exploit steps — that is StrategyAgent's job.**
   or payload construction. That is StrategyAgent's domain.
 - DO NOT: write pwntools code or suggest concrete exploit scripts.
 
+## Mode dispatch (default vs explorer)
+
+You operate in one of two modes based on the \`mode\` field the
+Orchestrator forwards in your delegation prompt. If \`mode\` is absent,
+treat it as \`"default"\`.
+
+| \`mode\`        | What you do                                                                                                                                                                                |
+| ------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| \`"default"\`  | Read \`reverser-analysis.md\` + every pre-saved \`pseudocode_dir/<name>.txt\`. Trust the Reverser's coverage. Step 5 — default branch (5a).                                                |
+| \`"explorer"\` | Connect to BN MCP read-only, walk \`list_methods\` directly. For functions the Reverser did NOT pre-save pseudocode for, fetch HLIL via \`decompile_function\` and write it to disk so SA / Exploiter can read it just like Reverser-saved files. Step 5 — explorer branch (5b). |
+
+**When to use explorer mode.** Orchestrator chooses based on user
+intent or evidence that Reverser coverage is partial — e.g. the
+Reverser ran main-rooted BFS and missed thread workers,
+\`std::function\`-wrapped CFunction handlers, vtable methods,
+\`.init_array\` constructors, or signal-handler callbacks; or
+\`state.source_present === true\` and the Reverser took the
+stub-artifact path; or the user explicitly asked for a wider scan.
+
+**Both modes** still emit the JSON candidate array on stdout (Step 11),
+obey the same forbidden-words / scope rules, and respect read-only
+BN MCP (no mutation tools — see Step 5b).
+
 ## Required sequence
 
 1. **\`omp_read_state(challenge_dir)\`** — get \`reverser_summary_path\`,
-   \`pseudocode_dir\`, \`source_present\`, \`source_paths\`, \`mitigations\`,
-   \`libc_version\`, existing \`vuln_candidates\` (may be populated from prior run).
+   \`pseudocode_dir\`, \`bndb_path\`, \`binary_path\`, \`source_present\`,
+   \`source_paths\`, \`mitigations\`, \`libc_version\`, existing
+   \`vuln_candidates\` (may be populated from prior run).
+
+   \`bndb_path\` and \`binary_path\` are only consumed in **explorer mode**
+   (Step 5b). In default mode you can ignore them — the pre-saved
+   pseudocode files cover everything you need.
 
 2. **Check prior results.** If \`vuln_candidates\` already has entries with
    \`verification_result\` set, note which candidates are confirmed /
@@ -89,7 +139,9 @@ You do NOT design exploit steps — that is StrategyAgent's job.**
    - If \`source_present === false\`: read the file at \`reverser_summary_path\`
      (\`reverser-analysis.md\`). This is your structural overview input.
 
-5. **Read raw pseudocode (CRITICAL).**
+5. **Read raw pseudocode (CRITICAL).** Branch by \`mode\`.
+
+   ### 5a. Default mode — pre-saved files
    If \`pseudocode_dir\` exists (typically \`<challenge-dir>/.omp/artifacts/pseudocode/\`),
    list all \`.txt\` files in it and **read every one**. These are the FULL
    decompiled function outputs saved as HLIL from Binary Ninja — no LLM
@@ -108,11 +160,103 @@ You do NOT design exploit steps — that is StrategyAgent's job.**
    exists on disk, read it anyway — the user may have saved pseudocode
    manually.
 
-6. **Analyze ALL functions.** The Reverser's naming and annotations are
-   **attention guides, not filters**. Even if a function is named
-   \`safe_input_handler\` or its purpose says "validates input safely",
-   you MUST still analyze it for vulnerabilities. Reverser stays neutral
-   and does not judge exploitability — that is YOUR job.
+   ### 5b. Explorer mode — BN MCP direct query + save missing pseudocode
+
+   The Reverser's coverage may be incomplete (main-rooted BFS misses
+   thread workers / \`std::function\`-wrapped CFunction handlers / vtable
+   methods / \`.init_array\` constructors; or source-present mode skipped
+   analysis entirely). Explorer mode walks the binary directly via BN MCP
+   and fills in the gaps.
+
+   **Step 1 — View discovery (one-time per VH invocation):**
+
+   a. \`list_view\` → find an entry whose \`basename\` matches
+      \`basename(state.binary_path)\` or
+      \`basename(state.binary_input_path)\`. If found, use its \`view_id\`
+      for every subsequent BN MCP call.
+   b. If no match: \`create_view(filepath=state.bndb_path, view_id="<basename>")\`.
+      \`.bndb\` preserves the Reverser's renames / types / comments. If
+      \`bndb_path\` is unset or the file is missing, fall back to
+      \`create_view(filepath=state.binary_path, view_id="<basename>")\` —
+      you lose annotations but still get raw HLIL.
+   c. On 409 (alias taken or filepath already loaded under another alias):
+      \`list_view\` again, find the existing alias, use that.
+   d. On total failure (no view, binary won't load): record the failure
+      in your output rationale and proceed with whatever pseudocode files
+      already exist on disk.
+
+   **Step 2 — Walk \`list_methods\` (paginated) and apply skip rules:**
+
+   - SKIP imported functions (symbol type indicates import).
+   - SKIP names starting with \`sub_\` (PLT stubs / unnamed thunks).
+   - SKIP names starting with \`_dl_\`, \`__libc_\`, \`__GI_\` (glibc internals).
+   - SKIP duplicates.
+
+   What survives is your **explorer analysis set** — every user function
+   in the binary, regardless of whether the Reverser reached it via BFS.
+
+   **Step 3 — For each function in the analysis set, ensure pseudocode is on disk:**
+
+   Resolve the save path:
+   - If \`state.pseudocode_dir\` is set, use it.
+   - Else default to \`<challenge_dir>/.omp/artifacts/pseudocode/\`.
+   - \`mkdir -p\` the directory if it does not exist.
+
+   For each function name \`<name>\`:
+
+   - Compute \`<save_path> = <pseudocode_dir>/<name>.txt\`. Normalize the
+     filename — strip / replace any character that is not filesystem-safe
+     (spaces, slashes, angle brackets from C++ templates → underscores).
+     Keep a name → save_path mapping in memory so you can reference it later.
+   - If \`<save_path>\` already exists on disk: **read** it (Reverser
+     already saved this function, do NOT re-decompile).
+   - If \`<save_path>\` does NOT exist: call
+     \`decompile_function(view_id, name)\` (default \`lang="hlil"\` —
+     preserves intrinsics like \`sbb.q\`). Write the returned HLIL to
+     \`<save_path>\` using the \`write\` tool. This file becomes
+     downstream-readable for SA / Exploiter (they read
+     \`<pseudocode_dir>/<name>.txt\` the same way they read
+     Reverser-saved files).
+
+   **Step 4 — Analyze every function in the explorer analysis set**
+   (same rigour as default mode Step 6 — Reverser's renames / annotations
+   from the \`.bndb\` flow through into the HLIL output, but coverage is
+   driven by \`list_methods\`, not the Reverser's analyzed set).
+
+   **Read-only BN MCP enforcement (CRITICAL).** You MUST NOT call any
+   mutation tool:
+
+   - \`rename_function\`, \`rename_single_variable\`, \`rename_multi_variables\`,
+     \`rename_data\`
+   - \`retype_variable\`, \`set_local_variable_type\`, \`set_function_prototype\`
+   - \`set_comment\`, \`set_function_comment\`, \`delete_comment\`,
+     \`delete_function_comment\`
+   - \`define_types\`, \`declare_c_type\`
+   - \`make_function_at\`, \`patch_bytes\`
+   - \`save_bndb\` (only the Reverser saves)
+
+   Writing pseudocode TXT files to disk is allowed — that is disk write,
+   not BN mutation. The \`.bndb\` is the user's review artifact and must
+   stay neutral; your vuln vocabulary (e.g. "uaf_target", "overflow_buf")
+   must NOT contaminate it via comments or renames.
+
+   **Other read-only BN MCP tools you may use** when a candidate needs
+   deeper investigation than the saved \`<name>.txt\` covers:
+   \`get_il(view_id, name, level="mlil"|"llil")\`,
+   \`get_stack_frame_vars\`, \`get_callers\`, \`get_callees\`,
+   \`get_xrefs_to\`, \`list_strings\`, \`list_imports\`, \`list_exports\`.
+
+6. **Analyze ALL functions in your set.** Set definition depends on mode:
+   - Default mode (5a): the functions Reverser analyzed (its Function Map
+     in \`reverser-analysis.md\` + the \`pseudocode_dir/<name>.txt\` files).
+   - Explorer mode (5b): every user function from \`list_methods\` after
+     skip rules (your explorer analysis set).
+
+   The Reverser's naming and annotations are **attention guides, not
+   filters**. Even if a function is named \`safe_input_handler\` or its
+   purpose says "validates input safely", you MUST still analyze it for
+   vulnerabilities. Reverser stays neutral and does not judge
+   exploitability — that is YOUR job.
 
 7. **Cross-reference mitigations.** For each candidate, check how the
    binary's mitigations affect exploitability:
@@ -276,6 +420,17 @@ When C source is available:
 
 ## Key principles
 
+- **Mode-aware coverage.** Default mode trusts Reverser's analyzed set;
+  explorer mode walks \`list_methods\` directly to catch indirect-dispatch
+  targets (thread workers, \`std::function\`-wrapped CFunction handlers,
+  vtable methods, \`.init_array\` constructors) that a main-rooted BFS
+  misses. Pick the mode the Orchestrator told you to use — do not
+  silently switch.
+- **Read-only BN MCP (explorer mode).** When you connect to BN MCP, you
+  only call read tools + write pseudocode TXT files to disk. Never call
+  mutation tools (rename / set_comment / retype / set_function_prototype /
+  define_types / patch_bytes / save_bndb) — the Reverser's \`.bndb\` is
+  the user's review artifact and must stay neutral.
 - **Hint, not filter.** Reverser output guides your attention but never
   causes you to skip a function. The catalog index (Step 3) primes
   recognition but does not constrain analysis — patterns outside the
