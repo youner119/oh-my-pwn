@@ -62,14 +62,15 @@
 |---|---|---|
 | `schema_version` | `"1"` | 스키마 버전 상수 |
 | `challenge_dir` | string | challenge 폴더 절대경로 |
-| `binary_path` | string | binary 절대경로 (원본 또는 patched) |
-| `binary_sha256` | string | 현재 활성 binary의 sha (원본 또는 patched) |
-| `binary_original_path` | string? | patchelf 백업 경로 `<.omp/artifacts/<name>.orig>` |
-| `binary_original_sha256` | string? | patch 전 sha — input contract identity 보존용 |
-| `binary_patched` | boolean? | patchelf가 이 run 또는 이전 run에서 적용됐는지 |
-| `dockerfile_path` | string | Dockerfile 절대경로 |
-| `source_present` | boolean | C 소스 존재 여부 |
+| `binary_path` | string? | patched binary 절대경로 (omp-setup Phase 3 산출) |
+| `binary_sha256` | string? | patched binary 의 sha |
+| `binary_input_path` | string? | 원본 input binary 절대경로 — omp-setup Phase 0 (Detect) 가 시드. no-binary 케이스 (kernel-pwn / source-only 등) 는 undefined |
+| `binary_input_sha256` | string? | 원본 binary sha — 정보용 (drift idempotency 폐지, D4) |
+| `dockerfile_path` | string? | Dockerfile 절대경로 — Phase 0 시드. Dockerfile 없는 challenge 는 undefined (D3) |
+| `source_present` | boolean | C 소스 존재 여부 — Phase 0 시드 |
 | `source_paths` | string[] | 발견된 소스 파일 경로들 |
+| `setup_blocker` | `{kind:"ambiguous-binary", candidates[], message}?` | omp-setup Phase 0 가 ELF 후보 2+ 발견 시 박는 handoff signal. orchestrator 가 사용자 disambig 받아 해소 (D5) |
+| `etc` | `Record<string, unknown>?` | 자유 형식 메타데이터 — omp-setup / omp-orchestrator 만 write, 그 외 read-only. kernel vmlinux 경로 / qemu cmd 등 (D7) |
 
 ### Environment (envsetup T04가 채움)
 

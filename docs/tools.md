@@ -35,7 +35,7 @@ tool로 만들지 않고 agent prompt에서 자연어로 처리합니다.
 
 | Tool | 역할 | Library-backed? | 읽기/쓰기 |
 |---|---|---|---|
-| `omp_load_challenge` | Challenge 폴더 validate + `.omp/` 초기화 + `state.workspace_root` 시드 | Yes (T03 loader) | 쓰기 |
+| `omp_load_challenge` | Challenge 폴더 부트스트랩 (`.omp/` 초기화 + `state.workspace_root` 시드). binary/dockerfile/source 식별은 omp-setup Phase 0 (Detect) — `.omc/specs/contract-load-detect-split.md` D1. | Yes (loader) | 쓰기 |
 | `omp_read_state` | `state.json` 로드 | Yes (T02 io) | 읽기 |
 | `omp_patch_state` | `state.json` 부분 업데이트 (Zod validated, atomic) | Yes | 쓰기 |
 | `omp_append_journal` | `journal.md` append | Yes | 쓰기 |
@@ -62,49 +62,47 @@ agent + atomic 4개 (`omp_setup_*`) 가 흡수.
 
 ## `omp_load_challenge`
 
-**용도:** 새 challenge 폴더를 처음 로드할 때. 파일 시스템 validation,
-`.omp/` 디렉토리 초기화, `state.json` 시드, binary sha256 계산, C source
-탐지.
+**용도:** 새 challenge 폴더를 처음 로드할 때 `.omp/` 디렉토리를 부트스트랩.
+binary / Dockerfile / source 식별은 **하지 않는다** — 그건 omp-setup Phase 0
+(Detect) 의 책임. 본 tool 은 디렉토리 존재 검증 + `.omp/{state.json,
+journal.md, artifacts/, logs/, exploit/}` 초기화 + (옵션) `state.workspace_root`
+시드만 수행. spec: `.omc/specs/contract-load-detect-split.md` (D1).
 
 **Arguments:**
 ```ts
 {
   challenge_dir: string       // 절대경로 (예: /tmp/ctf/chall1)
-  binary?: string             // binary hint (basename / 상대 / 절대경로)
-  dockerfile?: string         // Dockerfile hint (basename / 상대 / 절대경로)
 }
 ```
+
+binary / dockerfile arg 는 contract 변경으로 제거됨 (구버전 prompt 가 남아
+있다면 갱신 필요).
 
 **성공 응답:**
 ```json
 {
   "ok": true,
   "state": { /* 전체 ChallengeState */ },
-  "freshlyInitialized": false,
-  "shaDrift": false
+  "freshlyInitialized": false
 }
 ```
 
 `freshlyInitialized`: `.omp/` 이 이 호출로 처음 만들어졌는지. Reload시
-`false`.
-
-`shaDrift`: 기존 state의 `binary_sha256`와 현재 binary sha가 다른지. `true`면
-사용자가 binary를 교체한 것 — journal에 `## binary sha drift` 블록이 append
-되고 state는 건드리지 않음 (재시딩은 사용자 명시 지시 필요).
+`false`. binary 교체 시 sha drift 감지는 폐지 — `rm -rf .omp/` 후 reload
+가 정본 (D4).
 
 **에러 케이스:**
 - `missing-dir` — 폴더 존재하지 않음
 - `not-a-directory` — 경로가 파일임
-- `missing-dockerfile` — Dockerfile 없음
-- `missing-binary` — binary hint 가리킨 파일 없음
-- `ambiguous-binary` — 자동 탐지 시 여러 ELF 후보 — response에 `detail.candidates`
-  (후보 경로 리스트) 포함 → 사용자에게 물어보고 `binary` hint로 재호출
-- `binary-not-elf` — 파일은 있는데 ELF magic이 아님
-- `binary-not-executable` — ELF인데 executable bit 없음
 
-**사용 맥락:** Orchestrator pipeline의 **Stage 0 (Load)**. 매 challenge의
-첫 tool 호출. 재실행 시에는 cache hit으로 빠르게 반환 (파일 재스캔 없이
-state.json 재로드).
+binary 후보 0개 / 2개 이상, Dockerfile 부재, ELF magic 검증 등은 모두
+omp-setup Phase 0 (Detect) 가 처리. ELF 후보 여러 개면 setup 이
+`state.setup_blocker = {kind: "ambiguous-binary", candidates[], message}` 박고
+stop → orchestrator 가 사용자 disambig 받아 `omp_patch_state` 로
+`binary_input_path` 박고 blocker clear → setup 재시작 (D5).
+
+**사용 맥락:** Orchestrator pipeline 의 **Stage 0 (Load)** — 매 challenge
+의 첫 tool 호출. 재실행 시 idempotent: 기존 state.json 그대로 로드.
 
 **파일:** `src/tools/omp-load-challenge.ts`, backed by
 `src/loader/load-challenge-folder.ts`
@@ -191,12 +189,20 @@ sanity) 은 omp-setup agent 가 Phase 5 에서 bash (`docker ps` + `curl`)
 }
 ```
 
-**Protected fields (자동 제거):** `challenge_dir`, `schema_version`,
-`binary_input_path`, `binary_input_sha256`. 이 넷은 loader 초기 시딩 (또는
-challenge identity invariant) 외에는 변경 금지라 patch에서 자동 stripping됨.
-`binary_path` 는 envsetup 재설계 (spec D3) 로 의미가 재정의되어 — omp-setup
-agent Phase 3 에서 patched copy 경로로 update 해야 하므로 stripping 대상
-아님.
+**Protected fields (자동 제거):** `challenge_dir`, `schema_version` 만.
+이 둘은 `omp_load_challenge` 초기 시딩 외에 변경 금지라 patch 에서 자동
+stripping. 그 외 모든 필드는 patchable —
+`binary_input_path` / `binary_input_sha256` / `dockerfile_path` /
+`source_present` / `source_paths` 는 omp-setup Phase 0 (Detect) 가 쓰고,
+orchestrator 도 D5 disambig 시 `binary_input_path` 박음. spec:
+`.omc/specs/contract-load-detect-split.md` D2/D6.
+
+**`etc` write 정책 (POLICY-ENFORCED, D7):** `etc` (free-form
+`Record<string, unknown>`) 는 strip 대상이 *아니지만* 정책상 **omp-setup /
+omp-orchestrator 만 write 가능**. omp-reverser / omp-vulnhunter /
+omp-strategist / omp-exploiter 는 read 만 — patch 에 `etc` 포함시키면
+orchestrator audit 이 잡고 revert. 위반 누적 시 physical enforcement
+(patch_state.context.agent 확인) 로 escalate.
 
 **성공 응답:** 업데이트된 전체 state.
 

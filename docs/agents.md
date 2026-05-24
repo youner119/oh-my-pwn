@@ -292,13 +292,14 @@ Orchestrator
 > Script 작성 + 실행 + 결과 판정을 한 agent가 수행. 역할 분리의 이점보다
 > agent 간 통신 오버헤드 감소가 더 큼.
 
-### omp-discoverer (T18 sub-step)
+### omp-discoverer (폐지 — contract-load-detect-split 으로 흡수)
 
-- **역할:** Orchestrator의 Load stage 전에 "이 challenge 폴더에서 binary /
-  Dockerfile이 어디 있는지" discovery. LLM이 폴더 구조와 README를 읽고
-  판단.
-- **현재 대체:** 사람이 `omp_load_challenge({ binary, dockerfile })` hint를
-  직접 전달 (Orchestrator prompt에 지시).
+- **이전 역할:** Orchestrator 의 Load stage 전에 "이 challenge 폴더에서
+  binary / Dockerfile 이 어디 있는지" discovery.
+- **현재:** `.omc/specs/contract-load-detect-split.md` (D1/D2) 로 흡수. 
+  `omp_load_challenge` 는 폴더 부트스트랩만, detect 책임은 omp-setup
+  Phase 0 (Detect). ELF 후보 2+ 면 setup 이 `setup_blocker.kind=
+  "ambiguous-binary"` 박고 stop → orchestrator 가 사용자 disambig 받음 (D5).
 
 ---
 
