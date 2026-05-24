@@ -15,7 +15,7 @@
 #      pwno-mcp stdio MCP entry. Image `pwno-mcp:latest` 는 ~/Tools/pwno-mcp
 #      에서 로컬 빌드한 fork 가정 — opencode 가 자동 spawn.)
 #   4) ~/.zshrc 에 omp alias 추가:
-#        alias omp='OMP_INSTANCE_ID="$(date +%s)-$$" OMP_BN_BRIDGE_PATH=... OMP_REASONING_EFFORT=xhigh XDG_CONFIG_HOME=$HOME/.config/omp opencode'
+#        alias omp='OMP_INSTANCE_ID="$(date +%s)-$$" OMP_BN_BRIDGE_PATH=... XDG_CONFIG_HOME=$HOME/.config/omp opencode'
 #      이미 있으면 교체 (bridge 경로가 바뀔 수 있으므로 갱신).
 #      OMP_INSTANCE_ID 는 매 omp 실행마다 fresh id 발급 → events-<id>.log
 #      per-instance 분리 (spec deep-interview-tui-plugin-integration.md Rev 8).
@@ -284,10 +284,6 @@ build_alias_line() {
   if [[ -n "$BRIDGE_PATH" ]]; then
     body+=" OMP_BN_BRIDGE_PATH=$(printf '%q' "$BRIDGE_PATH")"
   fi
-  # OMP_REASONING_EFFORT — plugin 의 chat.params hook 이 OpenAI 호출에 reasoning
-  # effort 박음. xhigh = gpt-5.5(-fast) 의 깊은 thinking 활성. 사용자가 다른
-  # 값 원하면 .zshrc 수정. opencode upgrade 후 xhigh reject 시 unset 하면 no-op.
-  body+=' OMP_REASONING_EFFORT=xhigh'
   body+=' XDG_CONFIG_HOME=$HOME/.config/omp opencode'
   printf "alias omp='%s'" "$body"
 }
