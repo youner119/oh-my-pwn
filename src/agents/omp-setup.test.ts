@@ -37,7 +37,7 @@ describe("createOmpSetupAgent", () => {
   test("prompt names all six phases (0..6) with required transitions", () => {
     const agent = createOmpSetupAgent("test-model")
     const p = agent.prompt ?? ""
-    expect(p).toContain("Phase 0 — Inspect & Classify")
+    expect(p).toContain("Phase 0 — Detect & Classify")
     expect(p).toContain("Phase 1 — Docker build")
     expect(p).toContain("Phase 2 — Dependency discovery")
     expect(p).toContain("Phase 3 — Extraction + host-side patchelf")
@@ -148,6 +148,42 @@ describe("createOmpSetupAgent", () => {
     expect(p).toContain("Omitting ld from the map")
     // Success criterion mentions the ld entry too
     expect(p).toContain('includes the ld entry')
+  })
+
+  test("Phase 0 owns input-contract detection (contract-load-detect-split D2)", () => {
+    const agent = createOmpSetupAgent("test-model")
+    const p = agent.prompt ?? ""
+    // Phase 0 seeds binary_input_path / sha / dockerfile_path / source_*
+    // (loader no longer touches them per D1/D2).
+    expect(p).toContain("contract-load-detect-split.md")
+    expect(p).toContain("loader no longer touches")
+    expect(p).toContain("binary_input_path")
+    expect(p).toContain("binary_input_sha256")
+    expect(p).toContain("dockerfile_path")
+    expect(p).toContain("source_present")
+  })
+
+  test("Phase 0 emits setup_blocker on ambiguous-binary and stops (contract-load-detect-split D5)", () => {
+    const agent = createOmpSetupAgent("test-model")
+    const p = agent.prompt ?? ""
+    expect(p).toContain("Ambiguous binary handoff")
+    expect(p).toContain('kind: "ambiguous-binary"')
+    expect(p).toContain("candidates:")
+    expect(p).toContain("setup_complete MUST stay false")
+    // Re-entry: when orchestrator clears the blocker by writing
+    // binary_input_path, Phase 0 must skip the scan.
+    expect(p).toContain("Re-entry shortcut")
+    expect(p).toContain("skip the ELF-candidate scan")
+  })
+
+  test("Phase 0 — no-binary unsupported buckets leave binary_input_path undefined (D3)", () => {
+    const agent = createOmpSetupAgent("test-model")
+    const p = agent.prompt ?? ""
+    // The D3 relaxation: kernel-pwn / source-only / library-only buckets
+    // may seed no binary_input_path at all. The prompt must teach this.
+    expect(p).toContain("Omit when")
+    expect(p).toContain("source-only")
+    expect(p).toContain("kernel")
   })
 
   test("Phase 5 stages from input/image, not from patched artifacts (2026-05-21)", () => {

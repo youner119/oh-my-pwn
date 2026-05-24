@@ -145,9 +145,18 @@ Read these from state first (\`omp_read_state\` once at the top):
 - \`state.challenge_dir\` — absolute host path to the challenge folder.
 - \`state.binary_input_path\` — the untouched input binary (typically
   \`<challenge_dir>/deploy/prob\` or similar). **NEVER mutate this
-  file.**
+  file.** May be \`undefined\` on a fresh invocation —
+  \`omp_load_challenge\` no longer seeds it; **Phase 0 (Detect) below
+  is the writer** (\`.omc/specs/contract-load-detect-split.md\` D1/D2).
+  When \`binary_input_path\` is already populated on entry, you are
+  being relaunched (e.g. after orchestrator resolved a
+  \`setup_blocker.kind: "ambiguous-binary"\`) — skip the scan-and-detect
+  steps and proceed straight to sha computation + Phase 1.
 - \`state.binary_input_sha256\` — challenge identity sha. First 8 hex
   chars (\`<sha8>\`) feed the workspace ID and the default image tag.
+  Phase 0 (Detect) computes and seeds this alongside
+  \`binary_input_path\`. No longer used for setup-gate idempotency
+  (sha-match check removed by \`contract-load-detect-split.md\` D4).
 - \`state.workspace_root\` — absolute host path to the plugin's
   workspace mount source (\`<plugin-root>/workspace/\`). When this is
   missing, abort with
@@ -176,12 +185,46 @@ Examples (with \`basename(challenge_dir) = "afterimage"\` and
 - \`<workspace_dir> = "<workspace_root>/omp-afterimage-a1b2c3d4"\`
 - \`<container_dir> = "/workspace/omp-afterimage-a1b2c3d4"\`
 
-## Phase 0 — Inspect & Classify (FULLY AGENTIC, read-only)
+## Phase 0 — Detect & Classify (FULLY AGENTIC, read-only)
 
-**Goal:** decide \`challenge_type\` (\`"user-mode-elf"\` or
-\`"unsupported"\`), seed \`binary_input_path\` / \`binary_input_sha256\`
-(if not already populated by the loader), and write a 1–3 sentence
-factual \`challenge_summary\`.
+**Goal:** scan \`challenge_dir\`, decide \`challenge_type\`
+(\`"user-mode-elf"\` or \`"unsupported"\`), seed the input-contract fields
+(\`binary_input_path\` / \`binary_input_sha256\` / \`dockerfile_path\` /
+\`source_present\` / \`source_paths\`) that the loader no longer touches
+(\`.omc/specs/contract-load-detect-split.md\` D1/D2), and write a 1–3
+sentence factual \`challenge_summary\`.
+
+**Re-entry shortcut:** if \`state.binary_input_path\` is already
+populated on entry, the orchestrator has already resolved a previous
+\`setup_blocker\` (you stopped earlier with \`ambiguous-binary\`). Trust
+that path — skip the ELF-candidate scan, compute its sha256, ensure
+\`binary_input_sha256\` / \`dockerfile_path\` / \`source_*\` are in state,
+then proceed straight to the classification rules / Phase 1.
+
+**Ambiguous binary handoff:** if your scan finds **two or more**
+executable ELF candidates that all look like plausible challenge
+targets (after dropping libc / ld / *.so siblings), DO NOT pick one.
+Write a \`setup_blocker\` and stop:
+
+\`\`\`text
+omp_patch_state {
+  setup_blocker: {
+    kind: "ambiguous-binary",
+    candidates: ["<abs path 1>", "<abs path 2>", ...],   // every plausible candidate
+    message: "Found N executable ELF candidates in challenge_dir. The user must pick the challenge binary."
+  }
+  // setup_complete MUST stay false
+}
+omp_append_journal {
+  section: "phase 0 blocked — ambiguous binary",
+  body: "<one line per candidate with file output / size / where it was found>"
+}
+\`\`\`
+
+…then **return** without running any other phase. The orchestrator
+will ask the user to disambiguate, write the chosen path to
+\`binary_input_path\`, clear \`setup_blocker\`, and relaunch you — at
+which point the re-entry shortcut above kicks in.
 
 You may use bash freely. Suggested commands (apply judgement — every
 challenge layout differs):
@@ -259,9 +302,13 @@ omp_patch_state {
   challenge_type: <decision>,
   unsupported_kind: <bucket>,               // ONLY when challenge_type === "unsupported"; omit for "user-mode-elf"
   challenge_summary: "<1-3 factual sentences>",
-  binary_input_path: "<abs path>",          // only if not already in state
-  binary_input_sha256: "<sha>",             // only if not already in state
-  dockerfile_path: "<abs path>",            // only if not already in state
+  // Input-contract fields — write the values you detected. Omit when
+  // truly absent (e.g. no binary at all in a source-only / kernel
+  // bucket → omit binary_input_path / binary_input_sha256; no
+  // Dockerfile → omit dockerfile_path).
+  binary_input_path: "<abs path>",
+  binary_input_sha256: "<sha>",
+  dockerfile_path: "<abs path>",
   source_present: <bool>,
   source_paths: [<abs paths>]
 }
@@ -279,17 +326,20 @@ omp_append_journal {
   \`setup_unsupported_reason: "<rule number + concrete indicator>"\` AND
   \`setup_complete: true\`. Phase 1–5 are skipped; downstream Mode 0 (or
   Mode 9 if the user supplied an explicit prompt) runs against
-  \`binary_input_path\` directly — there is no patched binary. The
-  required fields for Mode 0/9 dispatch
-  (\`binary_input_path\` / \`binary_input_sha256\` / \`dockerfile_path\` /
-  \`challenge_summary\` / \`setup_unsupported_reason\` /
-  \`unsupported_kind\`) are exactly what Phase 0 already seeds, so a
-  single \`omp_patch_state\` call closes the agent. Append a final
+  \`binary_input_path\` when one exists, or directly against the
+  knowledge bucket otherwise. The identity fields you seed are
+  *whichever subset is present* (\`challenge_summary\` /
+  \`setup_unsupported_reason\` / \`unsupported_kind\` are always set;
+  \`binary_input_path\` / \`binary_input_sha256\` are absent for buckets
+  with no ELF — kernel-pwn / source-only — per
+  \`.omc/specs/contract-load-detect-split.md\` D3). Append a final
   journal section titled \`"phase 0 classification — unsupported"\` and
   **return**. Do not run any later phase. Spec:
   \`.omc/specs/deep-interview-mode-0-9-setup.md\` (ACS-4).
-- \`user-mode-elf\` → continue to Phase 1. \`setup_complete: true\` is
-  set at the end of Phase 5, NOT here.
+- \`user-mode-elf\` → \`binary_input_path\` and \`dockerfile_path\` MUST be
+  set in the same patch call (the rest of the pipeline needs them).
+  Continue to Phase 1. \`setup_complete: true\` is set at the end of
+  Phase 5, NOT here.
 
 ## Phase 1 — Docker build
 
