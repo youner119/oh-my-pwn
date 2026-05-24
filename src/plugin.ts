@@ -30,6 +30,10 @@ import {
   createOmpLoadChallengeTool,
   ompGetTemplateTool,
   ompVerifyTemplateOutputTool,
+  ompReadCandidateTool,
+  ompCreateCandidateTool,
+  ompPatchCandidateTool,
+  ompDeleteCandidateTool,
   createOmpSetupDockerBuildTool,
   createOmpSetupExtractFileTool,
   createOmpSetupPatchElfTool,
@@ -200,6 +204,13 @@ const OmpPlugin: Plugin = async (input) => {
       omp_append_journal: ompAppendJournalTool,
       omp_get_template: ompGetTemplateTool,
       omp_verify_template_output: ompVerifyTemplateOutputTool,
+      // Candidate per-file tools (state-split-vuln-candidates.md P3).
+      // ACL — read = all agents, create/patch/delete = orchestrator-only
+      // (enforced in agent-tool-restrictions.ts).
+      omp_read_candidate: ompReadCandidateTool,
+      omp_create_candidate: ompCreateCandidateTool,
+      omp_patch_candidate: ompPatchCandidateTool,
+      omp_delete_candidate: ompDeleteCandidateTool,
       // omp_save_decompiled removed — use BN MCP tool `decompile_to_file` instead.
       // omp_run_envsetup / omp_stage_challenge / omp_pwno_status retired by
       // T12-T14 — omp-setup agent absorbs all three.

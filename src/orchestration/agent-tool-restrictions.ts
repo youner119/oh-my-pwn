@@ -12,6 +12,18 @@
  * together so an agent can't half-spawn (launch without wait, etc.).
  */
 
+/**
+ * Candidate write tools — Orchestrator sole writer per
+ * `.omc/specs/state-split-vuln-candidates.md` D6. Sub-agents return
+ * `{summary_changes, detail_changes}` or `{new_candidate}` in their task
+ * result; the Orchestrator persists via these tools.
+ */
+const CANDIDATE_WRITE_DENY = {
+  omp_create_candidate: false,
+  omp_patch_candidate: false,
+  omp_delete_candidate: false,
+} as const
+
 const AGENT_RESTRICTIONS: Record<string, Record<string, boolean>> = {
   "omp-setup": {
     // Leaf agent — single-transaction Phase 0 ground-work. No
@@ -20,24 +32,28 @@ const AGENT_RESTRICTIONS: Record<string, Record<string, boolean>> = {
     omp_task_wait_all: false,
     omp_task_wait_any: false,
     omp_task_cancel: false,
+    ...CANDIDATE_WRITE_DENY,
   },
   "omp-reverser": {
     omp_task_launch: false,
     omp_task_wait_all: false,
     omp_task_wait_any: false,
     omp_task_cancel: false,
+    ...CANDIDATE_WRITE_DENY,
   },
   "omp-vulnhunter": {
     omp_task_launch: false,
     omp_task_wait_all: false,
     omp_task_wait_any: false,
     omp_task_cancel: false,
+    ...CANDIDATE_WRITE_DENY,
   },
   "omp-strategist": {
     omp_task_launch: true,
     omp_task_wait_all: true,
     omp_task_wait_any: true,
     omp_task_cancel: true,
+    ...CANDIDATE_WRITE_DENY,
   },
   // Exploiter — 4 mode agents (post `mode-0-9-setup` T8 cutover). All
   // four are leaf agents with the same restriction shape (cannot spawn
@@ -48,24 +64,28 @@ const AGENT_RESTRICTIONS: Record<string, Record<string, boolean>> = {
     omp_task_wait_all: false,
     omp_task_wait_any: false,
     omp_task_cancel: false,
+    ...CANDIDATE_WRITE_DENY,
   },
   "omp-exploiter-mode-2": {
     omp_task_launch: false,
     omp_task_wait_all: false,
     omp_task_wait_any: false,
     omp_task_cancel: false,
+    ...CANDIDATE_WRITE_DENY,
   },
   "omp-exploiter-mode-0": {
     omp_task_launch: false,
     omp_task_wait_all: false,
     omp_task_wait_any: false,
     omp_task_cancel: false,
+    ...CANDIDATE_WRITE_DENY,
   },
   "omp-exploiter-mode-9": {
     omp_task_launch: false,
     omp_task_wait_all: false,
     omp_task_wait_any: false,
     omp_task_cancel: false,
+    ...CANDIDATE_WRITE_DENY,
   },
 }
 

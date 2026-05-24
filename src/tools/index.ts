@@ -1,6 +1,11 @@
 export { ompReadStateTool } from "./omp-read-state"
 export { ompPatchStateTool } from "./omp-patch-state"
 export { ompAppendJournalTool } from "./omp-append-journal"
+// Candidate per-file tools (spec: state-split-vuln-candidates.md P3).
+export { ompReadCandidateTool } from "./omp-read-candidate"
+export { ompCreateCandidateTool } from "./omp-create-candidate"
+export { ompPatchCandidateTool } from "./omp-patch-candidate"
+export { ompDeleteCandidateTool } from "./omp-delete-candidate"
 export {
   createOmpLoadChallengeTool,
   ompLoadChallengeTool,
