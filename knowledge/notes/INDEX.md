@@ -11,8 +11,7 @@ For policy and broader context see
 
 ## Categories
 
-_(empty — categories are created on-demand when the first note in
-that category is added)_
+- [lua/](lua/INDEX.md) — Lua 언어 / VM / bytecode (embedded interpreter, sandbox escape, custom VM)
 
 ## When you add a new note
 
