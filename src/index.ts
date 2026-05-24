@@ -16,6 +16,8 @@ export {
   type Mitigations,
   type RemoteEntrypoint,
   type VulnCandidate,
+  type VulnCandidateSummary,
+  type VulnCandidateDetail,
   type UserCorrection,
   type InitialChallengeStateInput,
 } from "./state/challenge-state"

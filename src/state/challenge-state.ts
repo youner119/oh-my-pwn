@@ -88,29 +88,62 @@ export const CandidateOriginSchema = z.enum([
 ])
 export type CandidateOrigin = z.infer<typeof CandidateOriginSchema>
 
-/** VulnHunter's ranked candidate entry. */
-export const VulnCandidateSchema = z.object({
+/**
+ * VulnCandidate split — Summary + Detail.
+ *
+ * Spec: `.omc/specs/state-split-vuln-candidates.md` (D2/D6 — strict sole
+ * writer + per-file detail).
+ *
+ * - Summary = `state.json.vuln_candidates[]` (Orchestrator sole writer).
+ * - Detail  = `.omp/candidates/<id>.json` (Orchestrator sole writer).
+ *
+ * Combined `VulnCandidateSchema` = `Summary.merge(Detail)` — used by
+ * `omp_create_candidate` / `omp_patch_candidate` payloads (P3) and the
+ * sub-agent `result.new_candidate` return value (D3.1).
+ */
+
+/** Summary fields — agent prompt context, state.json 의 vuln_candidates array. */
+export const VulnCandidateSummarySchema = z.object({
   id: z.string().min(1),
   /** Exploitation primitive tag: "stack_bof", "fmt_string_read", "tcache_poison", ... */
   primitive: z.string().min(1),
-  /** Location hint: function name, offset, or source line. */
-  location: z.string().optional(),
-  /** 0.0–1.0 confidence from the hunter. */
-  confidence: z.number().min(0).max(1).optional(),
-  /** Why the hunter thinks this candidate is viable. */
-  rationale: z.string().optional(),
-  /** Optional libc range this candidate requires ("2.31-2.35"). */
-  libc_range: z.string().optional(),
   /**
    * Verification outcome set by the Orchestrator after StrategyAgent +
    * Exploiter run. Presence of this field IS the verification flag —
    * `verification_result === undefined` means the candidate has not been
-   * verified yet (the earlier `verified: boolean` field was an
-   * always-redundant flag and was removed).
+   * verified yet.
    */
   verification_result: z
     .enum(["confirmed", "failed", "inconclusive"])
     .optional(),
+  /** Producing sub-agent (e.g. "VH-3" / "SA-04"). Trace of provenance. */
+  agent: z.string().min(1).optional(),
+  /** For combined / derived candidates: source candidate ids. */
+  combined_from: z.array(z.string()).optional(),
+  /**
+   * 2-3 line short claim of *what* this candidate is (≤400 chars). VH / SA
+   * produces, Orchestrator forwards. Distinct from `rationale` (detail file —
+   * full reasoning of *why*).
+   */
+  description: z.string().max(400).optional(),
+  /** Derived counters — Orchestrator syncs from detail at patch time. */
+  gives_count: z.number().int().min(0).optional(),
+  needs_count: z.number().int().min(0).optional(),
+  /** Whether `detail.poc_script_path` is set (boolean for summary visibility). */
+  has_poc: z.boolean().optional(),
+})
+export type VulnCandidateSummary = z.infer<typeof VulnCandidateSummarySchema>
+
+/** Detail fields — `.omp/candidates/<id>.json`. Heavy reasoning + lists. */
+export const VulnCandidateDetailSchema = z.object({
+  /** Location hint: function name, offset, or source line. */
+  location: z.string().optional(),
+  /** 0.0–1.0 confidence from the hunter. */
+  confidence: z.number().min(0).max(1).optional(),
+  /** Why the hunter thinks this candidate is viable (full reasoning). */
+  rationale: z.string().optional(),
+  /** Optional libc range this candidate requires ("2.31-2.35"). */
+  libc_range: z.string().optional(),
   /** How this candidate was discovered. Defaults to "initial" for backward compat. */
   origin_type: CandidateOriginSchema.optional(),
   /** For derived/incidental candidates: the confirmed candidate id that triggered discovery. */
@@ -121,8 +154,6 @@ export const VulnCandidateSchema = z.object({
   gives: z.array(z.string()).optional(),
   /** What this primitive requires from other verified primitives (e.g., "libc_base" for ROP). */
   needs: z.array(z.string()).optional(),
-  /** For combined primitives: IDs of candidates that were combined to create this one. */
-  combined_from: z.array(z.string()).optional(),
   /**
    * SA-reported verification methodology issues that blocked the verify task
    * (e.g. PIE base translation needed, GDB attach failed for tooling reason).
@@ -141,6 +172,12 @@ export const VulnCandidateSchema = z.object({
     )
     .optional(),
 })
+export type VulnCandidateDetail = z.infer<typeof VulnCandidateDetailSchema>
+
+/** Combined — summary + detail. Used by create/patch tool payloads and sub-agent return values. */
+export const VulnCandidateSchema = VulnCandidateSummarySchema.merge(
+  VulnCandidateDetailSchema,
+)
 export type VulnCandidate = z.infer<typeof VulnCandidateSchema>
 
 /** Parallel pipeline configuration. Orchestrator reads this to decide instance counts and budget. */
@@ -559,7 +596,11 @@ export const ChallengeStateSchema = z.object({
    * existed in the pre-ensemble T10 design and were retired with the
    * parallel orchestration cutover; markdown artifact is gone too.)
    */
-  vuln_candidates: z.array(VulnCandidateSchema).default([]),
+  /**
+   * Candidate summary array (spec: state-split-vuln-candidates.md). Detail =
+   * `.omp/candidates/<id>.json`. Orchestrator sole writer.
+   */
+  vuln_candidates: z.array(VulnCandidateSummarySchema).default([]),
 
   /* ── StrategyAgent (T14) ────────────────────────────────────────────────── */
 

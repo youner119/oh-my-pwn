@@ -57,13 +57,12 @@ describe("ChallengeStateSchema", () => {
         {
           id: "v1",
           primitive: "stack_bof",
-          location: "main+0x40",
-          confidence: 0.8,
-          rationale: "unchecked read",
           verification_result: "confirmed",
-          poc_script_path: "/c/.omp/exploit/v1.py",
-          gives: ["rip_control"],
-          needs: [],
+          agent: "VH-3",
+          description: "main 의 unchecked read — saved RIP 위 stack BOF",
+          gives_count: 1,
+          needs_count: 0,
+          has_poc: true,
         },
       ],
       corrections: [
@@ -80,9 +79,8 @@ describe("ChallengeStateSchema", () => {
     const parsed = ChallengeStateSchema.parse(fullState)
     expect(parsed.libc_version).toBe("2.35")
     expect(parsed.vuln_candidates[0]?.verification_result).toBe("confirmed")
-    expect(parsed.vuln_candidates[0]?.poc_script_path).toBe(
-      "/c/.omp/exploit/v1.py",
-    )
+    expect(parsed.vuln_candidates[0]?.has_poc).toBe(true)
+    expect(parsed.vuln_candidates[0]?.description).toContain("BOF")
     expect(parsed.corrections[0]?.user_text).toBe("libc는 2.35야")
   })
 
@@ -125,134 +123,10 @@ describe("ChallengeStateSchema", () => {
     expect(() => ChallengeStateSchema.parse(bad)).toThrow()
   })
 
-  test("accepts vuln_candidates with origin_type and derived_from", () => {
-    const state = {
-      ...createInitialChallengeState(baseInput),
-      vuln_candidates: [
-        {
-          id: "vuln_bof_main",
-          primitive: "stack_bof",
-          confidence: 0.9,
-          origin_type: "initial",
-        },
-        {
-          id: "vuln_bof_leak",
-          primitive: "bof_libc_leak",
-          confidence: 0.7,
-          origin_type: "derived",
-          derived_from: "vuln_bof_main",
-        },
-        {
-          id: "vuln_heap_obs",
-          primitive: "heap_uaf",
-          confidence: 0.5,
-          origin_type: "incidental",
-          derived_from: "vuln_bof_main",
-        },
-      ],
-    }
-    const parsed = ChallengeStateSchema.parse(state)
-    expect(parsed.vuln_candidates).toHaveLength(3)
-    expect(parsed.vuln_candidates[0]?.origin_type).toBe("initial")
-    expect(parsed.vuln_candidates[1]?.origin_type).toBe("derived")
-    expect(parsed.vuln_candidates[1]?.derived_from).toBe("vuln_bof_main")
-    expect(parsed.vuln_candidates[2]?.origin_type).toBe("incidental")
-  })
-
-  test("accepts vuln_candidates with poc_script_path, gives, needs, combined_from", () => {
-    const state = {
-      ...createInitialChallengeState(baseInput),
-      vuln_candidates: [
-        {
-          id: "vuln_1",
-          primitive: "stack_bof",
-          verification_result: "confirmed",
-          poc_script_path: "/c/.omp/exploit/vuln_1/verify.py",
-          gives: ["rip_control"],
-          needs: ["canary"],
-        },
-        {
-          id: "vuln_2",
-          primitive: "fmt_string_leak",
-          verification_result: "confirmed",
-          poc_script_path: "/c/.omp/exploit/vuln_2/verify.py",
-          gives: ["libc_base", "canary"],
-          needs: [],
-        },
-        {
-          id: "vuln_3",
-          primitive: "rop_shell",
-          verification_result: "confirmed",
-          poc_script_path: "/c/.omp/exploit/vuln_3/exploit.py",
-          gives: ["shell"],
-          needs: ["rip_control", "libc_base"],
-          combined_from: ["vuln_1", "vuln_2"],
-          origin_type: "derived",
-        },
-      ],
-    }
-    const parsed = ChallengeStateSchema.parse(state)
-    expect(parsed.vuln_candidates[0]?.gives).toEqual(["rip_control"])
-    expect(parsed.vuln_candidates[0]?.needs).toEqual(["canary"])
-    expect(parsed.vuln_candidates[0]?.poc_script_path).toContain("verify.py")
-    expect(parsed.vuln_candidates[2]?.combined_from).toEqual(["vuln_1", "vuln_2"])
-    expect(parsed.vuln_candidates[2]?.gives).toEqual(["shell"])
-  })
-
-  test("rejects invalid origin_type", () => {
-    const bad = {
-      ...createInitialChallengeState(baseInput),
-      vuln_candidates: [
-        { id: "v1", primitive: "bof", origin_type: "magic" },
-      ],
-    }
-    expect(() => ChallengeStateSchema.parse(bad)).toThrow()
-  })
-
-  test("accepts vuln_candidates with verification_blockers (2026-05-21)", () => {
-    const state = {
-      ...createInitialChallengeState(baseInput),
-      vuln_candidates: [
-        {
-          id: "vuln_1",
-          primitive: "uaf_read_write",
-          verification_result: "inconclusive",
-          verification_blockers: [
-            {
-              cause:
-                "BN VA 0x4553ab includes imagebase 0x400000; PIE breakpoints did not fire",
-              suggested_fix:
-                "translate via PIE_BASE + (BN_ADDR - 0x400000) before pwno-mcp_set_breakpoint",
-              retry_recommended: true,
-            },
-          ],
-        },
-      ],
-    }
-    const parsed = ChallengeStateSchema.parse(state)
-    const blockers = parsed.vuln_candidates[0]?.verification_blockers
-    expect(blockers).toHaveLength(1)
-    expect(blockers?.[0]?.cause).toContain("BN VA")
-    expect(blockers?.[0]?.suggested_fix).toContain("PIE_BASE")
-    expect(blockers?.[0]?.retry_recommended).toBe(true)
-  })
-
-  test("verification_blockers.retry_recommended defaults to false when omitted", () => {
-    const state = {
-      ...createInitialChallengeState(baseInput),
-      vuln_candidates: [
-        {
-          id: "vuln_1",
-          primitive: "bof",
-          verification_blockers: [{ cause: "missing debug info" }],
-        },
-      ],
-    }
-    const parsed = ChallengeStateSchema.parse(state)
-    expect(
-      parsed.vuln_candidates[0]?.verification_blockers?.[0]?.retry_recommended,
-    ).toBe(false)
-  })
+  // Detail-field tests (origin_type / derived_from / poc_script_path / gives /
+  // needs / combined_from / verification_blockers) — moved to per-file detail
+  // io / tool tests in P2-P3. Spec: state-split-vuln-candidates.md D2/D6.
+  // state.json 의 vuln_candidates 영역은 summary 만 박힘.
 
   test("accepts parallel_config with defaults", () => {
     const state = {
