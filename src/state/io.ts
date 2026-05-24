@@ -170,7 +170,10 @@ export function saveChallengeState(
 
 function writeStateFileAtomic(statePath: string, state: ChallengeState): void {
   const tmpPath = `${statePath}.tmp`
-  writeFileSync(tmpPath, `${JSON.stringify(state, null, 2)}\n`, "utf-8")
+  // Minified: state grows past opencode's line-based tool output cap when an
+  // agent reads `.omp/state.json` directly. One-line JSON keeps the read result
+  // intact. For human inspection use `jq . .omp/state.json`.
+  writeFileSync(tmpPath, `${JSON.stringify(state)}\n`, "utf-8")
   renameSync(tmpPath, statePath)
 }
 
