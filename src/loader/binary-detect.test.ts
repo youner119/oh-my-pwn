@@ -8,7 +8,6 @@ import {
   isExecutable,
   looksLikeSharedObject,
 } from "./binary-detect"
-import { ChallengeLoadError } from "./challenge-load-error"
 
 const ELF_HEADER = Buffer.from([0x7f, 0x45, 0x4c, 0x46, 0x02, 0x01, 0x01, 0x00])
 
@@ -107,63 +106,45 @@ describe("binary-detect", () => {
   })
 
   describe("detectBinary", () => {
-    test("returns the lone executable ELF when only one candidate exists", () => {
+    test("returns {kind:'ok'} with the lone executable ELF when only one candidate exists", () => {
       const expected = writeElf(dir, "chall")
       writePlain(dir, "Dockerfile", "FROM ubuntu\n")
       writePlain(dir, "README.md", "# challenge\n")
-      expect(detectBinary(dir)).toBe(expected)
+      expect(detectBinary(dir)).toEqual({ kind: "ok", path: expected })
     })
 
     test("excludes libc/ld/.so siblings even when they are executable ELFs", () => {
       const expected = writeElf(dir, "chall")
       writeElf(dir, "libc.so.6")
       writeElf(dir, "ld-linux-x86-64.so.2")
-      expect(detectBinary(dir)).toBe(expected)
+      expect(detectBinary(dir)).toEqual({ kind: "ok", path: expected })
     })
 
     test("excludes ELF files without the executable bit", () => {
       const expected = writeElf(dir, "chall")
       writeElf(dir, "old-binary", 0o644)
-      expect(detectBinary(dir)).toBe(expected)
+      expect(detectBinary(dir)).toEqual({ kind: "ok", path: expected })
     })
 
     test("excludes plain non-ELF files even when executable", () => {
       const expected = writeElf(dir, "chall")
       writePlain(dir, "run.sh", "#!/bin/sh\necho hi\n", 0o755)
-      expect(detectBinary(dir)).toBe(expected)
+      expect(detectBinary(dir)).toEqual({ kind: "ok", path: expected })
     })
 
-    test("throws ambiguous-binary (none) when no candidate is found", () => {
+    test("returns {kind:'none'} when no candidate is found", () => {
       writePlain(dir, "Dockerfile", "FROM ubuntu\n")
       writePlain(dir, "notes.txt", "nothing here\n")
-      try {
-        detectBinary(dir)
-        throw new Error("expected throw")
-      } catch (err) {
-        expect(err).toBeInstanceOf(ChallengeLoadError)
-        const e = err as ChallengeLoadError
-        expect(e.kind).toBe("ambiguous-binary")
-        if (e.detail.kind === "ambiguous-binary") {
-          expect(e.detail.reason).toBe("none")
-          expect(e.detail.candidates).toEqual([])
-        }
-      }
+      expect(detectBinary(dir)).toEqual({ kind: "none" })
     })
 
-    test("throws ambiguous-binary (multiple) and lists every candidate", () => {
+    test("returns {kind:'multiple'} with every candidate when more than one exists", () => {
       const a = writeElf(dir, "chall_a")
       const b = writeElf(dir, "chall_b")
-      try {
-        detectBinary(dir)
-        throw new Error("expected throw")
-      } catch (err) {
-        expect(err).toBeInstanceOf(ChallengeLoadError)
-        const e = err as ChallengeLoadError
-        expect(e.kind).toBe("ambiguous-binary")
-        if (e.detail.kind === "ambiguous-binary") {
-          expect(e.detail.reason).toBe("multiple")
-          expect(e.detail.candidates.sort()).toEqual([a, b].sort())
-        }
+      const result = detectBinary(dir)
+      expect(result.kind).toBe("multiple")
+      if (result.kind === "multiple") {
+        expect(result.candidates.sort()).toEqual([a, b].sort())
       }
     })
 
@@ -175,7 +156,7 @@ describe("binary-detect", () => {
         const linkPath = join(dir, "chall")
         symlinkSync(realPath, linkPath)
 
-        expect(detectBinary(dir)).toBe(linkPath)
+        expect(detectBinary(dir)).toEqual({ kind: "ok", path: linkPath })
       } finally {
         rmSync(sidecar, { recursive: true, force: true })
       }
@@ -185,7 +166,7 @@ describe("binary-detect", () => {
       const expected = writeElf(dir, "chall")
       mkdirSync(join(dir, "src"), { recursive: true })
       writeElf(join(dir, "src"), "helper")
-      expect(detectBinary(dir)).toBe(expected)
+      expect(detectBinary(dir)).toEqual({ kind: "ok", path: expected })
     })
   })
 })

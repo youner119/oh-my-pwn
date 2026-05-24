@@ -1,22 +1,17 @@
 /**
- * omp_load_challenge — T03 challenge folder loader tool.
+ * omp_load_challenge — challenge folder bootstrapper tool.
  *
- * 에이전트(omp-orchestrator)가 새 challenge를 처음 로드할 때 사용.
- * bash로 직접 파일 탐색하지 않고 이 tool을 호출할 것.
+ * Agent surface for the loader: validates that `challenge_dir` exists and
+ * is a directory, then bootstraps its `<challenge-dir>/.omp/` layout. **Does
+ * not look at the folder contents** — binary / Dockerfile / source detection
+ * is the omp-setup agent's job (Phase 0 Detect), per
+ * `.omc/specs/contract-load-detect-split.md` (D1, D2).
  *
- * 내부적으로 `loadChallengeFolder()` (src/loader/load-challenge-folder.ts)를
- * 호출하는 thin wrapper. 입력 계약 검증 — 디렉토리 존재, Dockerfile 발견,
- * ELF 바이너리 정확히 1개 — 을 거쳐 `<challenge-dir>/.omp/` 레이아웃을
- * 부트스트랩한다. 재실행 시 load-or-init (기존 state.json 존재 시 그대로 로드
- * 후 sha drift만 journal에 기록, state는 절대 덮어쓰지 않음).
+ * Idempotent: calling again on an already-bootstrapped folder reloads the
+ * persisted `ChallengeState` without mutating any file.
  *
- * 성공 시 state + freshlyInitialized + shaDrift 플래그 반환.
- * 실패 시 ChallengeLoadError.kind + detail을 JSON으로 평탄화. 특히
- * `ambiguous-binary` 에러는 `detail.candidates` 목록을 동봉하므로 orchestrator가
- * 사용자에게 "이 중 어느 게 challenge binary인가요?" 하고 물어본 뒤
- * `binary` hint를 채워서 재호출할 수 있다.
- *
- * 이 tool 이후 반드시 `omp_run_envsetup`을 호출해 EnvSetup 파이프라인을 진행할 것.
+ * The orchestrator should call `omp_load_challenge` once at the top of a
+ * session, then dispatch the omp-setup subagent.
  */
 
 import { tool, type ToolDefinition } from "@opencode-ai/plugin/tool"
@@ -37,8 +32,8 @@ export interface OmpLoadChallengeToolOptions {
   workspacePath?: string
   /**
    * Optional callback invoked on successful load — used by plugin.ts to
-   * register the orchestrator session (TUI plugin 의 root TreeNode).
-   * test 환경에서는 미지정.
+   * register the orchestrator session (TUI plugin's root TreeNode).
+   * Tests leave this unset.
    */
   onLoaded?: (input: {
     sessionID: string
@@ -52,60 +47,33 @@ export function createOmpLoadChallengeTool(
 ): ToolDefinition {
   return tool({
     description:
-      "Load and validate a CTF challenge folder, bootstrapping its .omp/ state directory. " +
-      "Before calling, scan the folder structure yourself with bash " +
-      "(`ls -la <challenge_dir>` + `find <challenge_dir> -maxdepth 3 -type f`) to identify the " +
-      "actual binary and Dockerfile locations, then pass them as `binary` / `dockerfile` hints. " +
-      "Never pass empty strings or invented paths — either omit the hint (let auto-detection run " +
-      "when the layout is unambiguous) or pass a literal path you observed in the scan. " +
-      "The loader enforces the input contract (directory exists, Dockerfile present, " +
-      "exactly one executable ELF binary), computes the binary's SHA-256, and creates " +
-      "<challenge-dir>/.omp/{state.json, journal.md, artifacts/, logs/, exploit/}. " +
-      "Idempotent: calling it again on an already-loaded folder reloads state and records sha drift " +
-      "in the journal without mutating state.json. " +
-      "Call this BEFORE the omp-setup agent runs. " +
-      "On ambiguous-binary error, combine `detail.candidates` with your scan to pick the right one " +
-      "and re-call with a `binary` hint. Same for dockerfile disambiguation.",
+      "Bootstrap a CTF challenge folder's .omp/ state directory. " +
+      "Pass only the absolute path to the challenge directory — this tool does NOT " +
+      "scan the folder contents. Binary / Dockerfile / source identification is the " +
+      "omp-setup agent's responsibility (Phase 0 Detect populates " +
+      "binary_input_path / dockerfile_path / source_paths via omp_patch_state). " +
+      "On success creates <challenge-dir>/.omp/{state.json, journal.md, artifacts/, logs/, exploit/} " +
+      "and returns the initial ChallengeState. Idempotent: calling again on an already-loaded " +
+      "folder reloads state without mutating any file. " +
+      "Errors: 'missing-dir' (path does not exist) or 'not-a-directory' (path is a file). " +
+      "Empty folders are valid — omp-setup will classify them as challenge_type='unsupported'. " +
+      "Always call this BEFORE dispatching the omp-setup subagent.",
     args: {
       challenge_dir: tool.schema
         .string()
         .describe(
-          "Absolute path to the challenge directory (the folder that will contain .omp/)",
-        ),
-      binary: tool.schema
-        .string()
-        .optional()
-        .describe(
-          "Optional disambiguation hint for the challenge binary. Basename relative to " +
-            "challenge_dir (e.g. 'chall'), relative subpath (e.g. 'deploy/chall'), or absolute path. " +
-            "Pass this when auto-detection returned ambiguous-binary, or when the binary lives in a " +
-            "subdirectory like 'deploy/'.",
-        ),
-      dockerfile: tool.schema
-        .string()
-        .optional()
-        .describe(
-          "Optional disambiguation hint for the Dockerfile. Same forms as `binary`. " +
-            "Pass this when the Dockerfile lives in a subdirectory (e.g. 'deploy/Dockerfile') " +
-            "or has a non-standard name (e.g. 'Dockerfile.prod'). When omitted, the loader looks " +
-            "for 'Dockerfile' or 'dockerfile' in the immediate children of challenge_dir.",
+          "Absolute path to the challenge directory (the folder that will contain .omp/). " +
+            "Must exist and be a directory; otherwise the tool returns a 'missing-dir' or " +
+            "'not-a-directory' error.",
         ),
     },
-    execute: async ({ challenge_dir, binary, dockerfile }, context) => {
+    execute: async ({ challenge_dir }, context) => {
       try {
-        const opts: {
-          binary?: string
-          dockerfile?: string
-          workspaceRoot?: string
-        } = {}
-        if (binary !== undefined) opts.binary = binary
-        if (dockerfile !== undefined) opts.dockerfile = dockerfile
+        const opts: { workspaceRoot?: string } = {}
         if (options.workspacePath !== undefined) {
           opts.workspaceRoot = options.workspacePath
         }
         const result = loadChallengeFolder(challenge_dir, opts)
-        // Record orchestrator root for TUI sidebar (BackgroundManager.orchestrators).
-        // challenge_name = basename of challenge_dir.
         if (options.onLoaded && context?.sessionID && context?.agent) {
           options.onLoaded({
             sessionID: context.sessionID,
@@ -117,7 +85,6 @@ export function createOmpLoadChallengeTool(
           ok: true,
           state: result.state,
           freshlyInitialized: result.freshlyInitialized,
-          shaDrift: result.shaDrift,
         })
       } catch (err) {
         if (err instanceof ChallengeLoadError) {

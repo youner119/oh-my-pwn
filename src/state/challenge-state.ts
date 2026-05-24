@@ -8,11 +8,14 @@
  *
  * Design rules for this schema:
  *
- * 1. **Forward-compat by default.** Every field an agent produces downstream
- *    of T04 is optional or defaulted, so the loader (T03) can seed a minimal
- *    `ChallengeState` from just a binary + Dockerfile without tripping
- *    validation. EnvSetup (T04), Reverser (T07), VulnHunter (T10), Exploiter
- *    (T14), and Verifier (T15) progressively fill in more fields.
+ * 1. **Forward-compat by default.** Every field beyond `challenge_dir` is
+ *    optional or defaulted, so the loader (`omp_load_challenge`) can seed a
+ *    minimal `ChallengeState` from just the challenge directory without
+ *    tripping validation. omp-setup Phase 0 (Detect) writes
+ *    `binary_input_path` / `binary_input_sha256` / `dockerfile_path` /
+ *    `source_*`; later phases (Phase 1–5) and downstream agents (Reverser,
+ *    VulnHunter, Strategist, Exploiter) progressively fill in more fields.
+ *    See `.omc/specs/contract-load-detect-split.md` (D1, D2).
  * 2. **Schema versioning.** `schema_version` is the first line of defense for
  *    state-format drift across sessions. Bump it on breaking changes and add
  *    an explicit migration path in `io.ts`.
@@ -187,11 +190,43 @@ export const UserCorrectionSchema = z.object({
 export type UserCorrection = z.infer<typeof UserCorrectionSchema>
 
 /**
+ * Setup-side blocker that omp-setup writes when it cannot proceed without
+ * Orchestrator (and ultimately user) input. The Orchestrator inspects
+ * `state.setup_blocker` after every setup subagent return and, if present,
+ * resolves the blocker (e.g. asks the user to disambiguate the binary, seeds
+ * `binary_input_path` via `omp_patch_state`, clears `setup_blocker`) before
+ * relaunching setup.
+ *
+ * Added by `.omc/specs/contract-load-detect-split.md` (D5).
+ */
+export const SetupBlockerSchema = z.object({
+  /**
+   * `"ambiguous-binary"` — Phase 0 detect scanned `challenge_dir` and found
+   * multiple ELF candidates. `candidates` lists absolute paths the user
+   * should choose between. Resolution: Orchestrator picks one (user
+   * disambig) and writes it to `binary_input_path` via `omp_patch_state`,
+   * then clears `setup_blocker` and relaunches omp-setup.
+   *
+   * The kind is a literal-string union so additional blocker shapes can be
+   * added later without breaking parsers.
+   */
+  kind: z.literal("ambiguous-binary"),
+  /** Absolute paths of binary candidates the user should choose between. */
+  candidates: z.array(z.string().min(1)).min(2),
+  /** Human-readable explanation appended to the journal alongside this blocker. */
+  message: z.string().min(1),
+})
+export type SetupBlocker = z.infer<typeof SetupBlockerSchema>
+
+/**
  * ChallengeState — the single source of machine truth per challenge.
  *
- * Every field downstream of identity/input is optional so the loader
- * (`omp_load_challenge`) can seed a valid initial state from just
- * `{binary_input_path, dockerfile_path}`.
+ * Every field beyond `challenge_dir` is optional so the loader
+ * (`omp_load_challenge`) can seed a valid initial state from just the
+ * challenge directory. omp-setup Phase 0 (Detect) writes the input-contract
+ * fields (`binary_input_path` / `dockerfile_path` / `source_*`) via
+ * `omp_patch_state` after scanning `challenge_dir`. See
+ * `.omc/specs/contract-load-detect-split.md` (D1, D2).
  */
 export const ChallengeStateSchema = z.object({
   /** Schema version; bump on breaking changes. */
@@ -200,7 +235,7 @@ export const ChallengeStateSchema = z.object({
   /** Absolute path to the challenge folder that owns this state. */
   challenge_dir: z.string().min(1),
 
-  /* ── Input contract (T03 fills) ───────────────────────────────────────── */
+  /* ── Input contract (omp-setup Phase 0 Detect fills) ──────────────────── */
 
   /**
    * Absolute path to the **patched binary** that downstream agents
@@ -244,32 +279,60 @@ export const ChallengeStateSchema = z.object({
   /**
    * Absolute path to the **untouched input binary** — the canonical input
    * identity the challenge owner provided (`deploy/prob`, etc.). Seeded by
-   * the loader (`omp_load_challenge`) from the resolved binary candidate
-   * and never mutated thereafter. The omp-setup agent makes a separate
-   * patched copy at `binary_path`; downstream agents must NOT execute or
-   * analyse `binary_input_path` directly post-setup (its interpreter still
-   * points at the image's ld).
+   * the **omp-setup agent in Phase 0 (Detect)** from the binary candidate it
+   * resolved by scanning `challenge_dir`, and never mutated thereafter (the
+   * setup agent makes a separate patched copy at `binary_path`; downstream
+   * agents must NOT execute or analyse `binary_input_path` directly
+   * post-setup — its interpreter still points at the image's ld).
    *
-   * Added by spec `deep-interview-envsetup-agent.md` (T01).
+   * `undefined` when omp-setup classified the challenge as `"unsupported"`
+   * with no ELF binary present (kernel image / source-only / browser /
+   * library-only). Downstream Mode 0/9 dispatch handles the no-binary
+   * branch separately.
+   *
+   * Added by spec `deep-interview-envsetup-agent.md` (T01). Phase-0 detect
+   * ownership added by `.omc/specs/contract-load-detect-split.md` (D2).
    */
   binary_input_path: z.string().min(1).optional(),
   /**
-   * SHA-256 of the untouched input binary. Used as the **challenge
-   * identity** for setup-gate idempotency: the orchestrator skips
-   * re-running the setup agent only when this hash matches the file
-   * currently at `binary_input_path`. Stale binary (user replaced the
-   * file) → mismatch → force re-setup.
+   * SHA-256 of the untouched input binary. Seeded by the omp-setup agent in
+   * Phase 0 (Detect) alongside `binary_input_path`. Kept on the state for
+   * informational purposes (journal/audit), but no longer used as an
+   * idempotency key — setup-gate idempotency is now `setup_complete === true`
+   * single-condition. Binary replacement requires `rm -rf .omp/` + reload.
    *
-   * Added by spec `deep-interview-envsetup-agent.md` (T01). Supersedes
-   * `binary_original_sha256`.
+   * Added by spec `deep-interview-envsetup-agent.md` (T01). Idempotency-key
+   * role removed by `.omc/specs/contract-load-detect-split.md` (D4).
    */
   binary_input_sha256: z.string().optional(),
-  /** Absolute path to the Dockerfile (or docker-compose.yml). */
-  dockerfile_path: z.string().min(1),
-  /** True if C source (`chal.c` etc.) is present → Reverser is skipped. */
+  /**
+   * Absolute path to the Dockerfile (or docker-compose.yml). Seeded by the
+   * omp-setup agent in Phase 0 (Detect). `undefined` when no Dockerfile is
+   * present in `challenge_dir` (Phase 1 docker build skipped, Mode 0/9
+   * dispatch).
+   *
+   * Required → optional by `.omc/specs/contract-load-detect-split.md` (D3).
+   */
+  dockerfile_path: z.string().min(1).optional(),
+  /**
+   * True if C/C++ source (`chal.c` etc.) is present. Seeded by the omp-setup
+   * agent in Phase 0 (Detect). Reverser short-circuits when this is `true`.
+   *
+   * Detect ownership moved from loader → setup by
+   * `.omc/specs/contract-load-detect-split.md` (D2).
+   */
   source_present: z.boolean().default(false),
-  /** Absolute path(s) to source files when present. */
+  /** Absolute path(s) to source files when present. Seeded by omp-setup Phase 0. */
   source_paths: z.array(z.string()).default([]),
+  /**
+   * Setup-side blocker requiring Orchestrator (user) resolution. Currently
+   * only `"ambiguous-binary"` is defined — Phase 0 detect found multiple ELF
+   * candidates. Orchestrator clears this after seeding `binary_input_path`
+   * via `omp_patch_state` and relaunches omp-setup. See `SetupBlockerSchema`.
+   *
+   * Added by `.omc/specs/contract-load-detect-split.md` (D5).
+   */
+  setup_blocker: SetupBlockerSchema.optional(),
 
   /* ── Setup gate (T01 omp-setup agent) ────────────────────────────────── */
 
@@ -314,21 +377,26 @@ export const ChallengeStateSchema = z.object({
    *   Downstream agents (Reverser/VH/SA/Exploiter) proceed against the
    *   patched binary at `binary_path`.
    * - `challenge_type === "unsupported"`: Phase 0 classification
-   *   completed and the required identity fields are seeded
-   *   (`binary_input_path` / `binary_input_sha256` / `dockerfile_path` /
-   *   `challenge_summary` / `setup_unsupported_reason` /
-   *   `unsupported_kind`). Phase 1–5 are skipped, so `binary_path` /
-   *   `binary_sha256` / `libc_path` / `ld_path` / `extracted_libs` /
-   *   `libc_version` / `docker_image` / `mitigations` / `remote` stay
-   *   `undefined`. The Orchestrator dispatches Mode 0 / 9.
+   *   completed. Identity fields are seeded **when present** —
+   *   `binary_input_path` / `binary_input_sha256` are `undefined` for
+   *   no-binary unsupported buckets (kernel image / source-only); other
+   *   identity fields (`challenge_summary` / `setup_unsupported_reason` /
+   *   `unsupported_kind`) are always set. Phase 1–5 are skipped, so
+   *   `binary_path` / `binary_sha256` / `libc_path` / `ld_path` /
+   *   `extracted_libs` / `libc_version` / `docker_image` / `mitigations` /
+   *   `remote` stay `undefined`. The Orchestrator dispatches Mode 0 / 9.
    *
    * `false` or `undefined` means setup is needed.
    *
-   * The orchestrator skips the setup agent only when this is `true` AND
-   * `binary_input_sha256` matches the file currently at `binary_input_path`.
+   * Setup-gate idempotency: the orchestrator skips the setup agent when
+   * this is `true`. No sha-match check — binary replacement requires
+   * `rm -rf .omp/` + reload (see `.omc/specs/contract-load-detect-split.md`
+   * D4).
    *
    * Added by spec `deep-interview-envsetup-agent.md` (T01); Mode 0/9
-   * branch added by `deep-interview-mode-0-9-setup.md` (ACS-4).
+   * branch added by `deep-interview-mode-0-9-setup.md` (ACS-4);
+   * sha-match removed by `.omc/specs/contract-load-detect-split.md` (D4);
+   * no-binary unsupported branch by same spec (D3).
    */
   setup_complete: z.boolean().optional(),
   /**
@@ -526,24 +594,20 @@ export const ChallengeStateSchema = z.object({
 export type ChallengeState = z.infer<typeof ChallengeStateSchema>
 
 /**
- * Input required to seed a fresh ChallengeState. The loader (T03) supplies
- * only the input identity (`binary_input_path` + dockerfile + workspace
- * root); `binary_path` / `binary_sha256` are intentionally absent because
- * those describe the patched copy produced by the omp-setup agent in
- * Phase 3 — they cannot be known at load time.
+ * Input required to seed a fresh ChallengeState. The loader
+ * (`omp_load_challenge`) only knows `challenge_dir` (+ optional
+ * `workspace_root`); binary / dockerfile / source identification belongs to
+ * omp-setup Phase 0 (Detect) per
+ * `.omc/specs/contract-load-detect-split.md` (D1, D2).
+ *
+ * `binary_input_path` / `dockerfile_path` / `source_present` / `source_paths`
+ * are intentionally absent here — they are seeded later by the setup agent
+ * via `omp_patch_state` once Phase 0 detect resolves them. Similarly
+ * `binary_path` / `binary_sha256` describe the patched copy produced by the
+ * setup agent in Phase 3 and cannot be known at load time.
  */
 export interface InitialChallengeStateInput {
   challenge_dir: string
-  /**
-   * Absolute path to the untouched input binary as resolved by the loader.
-   * Seeded verbatim into `state.binary_input_path` (the input identity
-   * invariant). The loader does NOT seed `binary_path` — that field stays
-   * undefined until omp-setup Phase 3 writes the patched copy path.
-   */
-  binary_input_path: string
-  dockerfile_path: string
-  source_present?: boolean
-  source_paths?: string[]
   /**
    * Absolute host path to the plugin's workspace mount source. Seeded into
    * `state.workspace_root` so downstream agents (Setup, Reverser, VH, SA,
@@ -555,14 +619,15 @@ export interface InitialChallengeStateInput {
 
 /**
  * Build a minimal valid ChallengeState for a fresh challenge. Use this from
- * T03's loader when initializing `.omp/state.json` for the first time.
+ * `omp_load_challenge` when initializing `.omp/state.json` for the first
+ * time.
  *
- * Seeds the **input identity** only — `binary_input_path` plus
- * dockerfile / workspace_root / source flags. The patched-copy fields
- * (`binary_path`, `binary_sha256`) remain undefined until the omp-setup
- * agent populates them in Phase 3 (or mirrors `binary_input_path` for the
- * static-linked branch). This separation is what makes
- * `setup_complete === true` a meaningful gate for downstream agents.
+ * Seeds only `challenge_dir` (and optional `workspace_root`) — the loader
+ * no longer touches binary / dockerfile / source fields per
+ * `.omc/specs/contract-load-detect-split.md` (D1). Those are written by the
+ * omp-setup agent in Phase 0 (Detect) via `omp_patch_state`. The patched-
+ * copy fields (`binary_path`, `binary_sha256`) remain undefined until the
+ * setup agent populates them in Phase 3.
  */
 export function createInitialChallengeState(
   input: InitialChallengeStateInput,
@@ -572,10 +637,6 @@ export function createInitialChallengeState(
   return ChallengeStateSchema.parse({
     schema_version: CHALLENGE_STATE_SCHEMA_VERSION,
     challenge_dir: input.challenge_dir,
-    binary_input_path: input.binary_input_path,
-    dockerfile_path: input.dockerfile_path,
-    source_present: input.source_present ?? false,
-    source_paths: input.source_paths ?? [],
     ...(input.workspace_root !== undefined
       ? { workspace_root: input.workspace_root }
       : {}),

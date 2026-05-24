@@ -17,10 +17,12 @@ export const ompPatchStateTool: ToolDefinition = tool({
     "Use this after completing work to record results — e.g. after Reverser analysis, patch " +
     "{ reverser_summary_path, reverser_analyzed_at }. " +
     "Only provide fields you want to change; all other fields are preserved. " +
-    "Protected fields (auto-stripped from patch): challenge_dir, schema_version, " +
-    "binary_input_path, binary_input_sha256 — these are loader-only invariants. " +
-    "binary_path is NOT protected (omp-setup agent rewrites it to the patched copy " +
-    "in Phase 3 per spec D3). " +
+    "Protected fields (auto-stripped from patch): challenge_dir, schema_version — these are " +
+    "set by omp_load_challenge and immutable thereafter. All other fields are patchable; in " +
+    "particular binary_input_path / binary_input_sha256 / dockerfile_path / source_present / " +
+    "source_paths are written by the omp-setup agent in Phase 0 (Detect) per " +
+    "`.omc/specs/contract-load-detect-split.md` (D2, D6), and the Orchestrator writes " +
+    "binary_input_path when resolving a setup_blocker.kind='ambiguous-binary' (D5). " +
     "Returns the updated state on success, or an error object on failure.",
   args: {
     challenge_dir: tool.schema
@@ -58,16 +60,14 @@ export const ompPatchStateTool: ToolDefinition = tool({
     }
 
     // 2. patch를 shallow merge — loader-only invariants 만 protected.
-    //    challenge_dir / schema_version 은 loader 초기 시딩 외에 변경 금지.
-    //    binary_input_path / binary_input_sha256 도 input identity invariant
-    //    (T01.6 의 setup-gate idempotency 가 의존). binary_path 는 omp-setup
-    //    agent (envsetup 재설계 spec D3) 가 Phase 3 에서 patched copy 경로로
-    //    update 해야 하므로 stripping 대상에서 제외.
+    //    challenge_dir / schema_version 은 omp_load_challenge 초기 시딩 외
+    //    에 변경 금지. binary_input_path / binary_input_sha256 / dockerfile_path /
+    //    source_* 는 strip 대상에서 제외 — omp-setup Phase 0 (Detect) 가 쓰고
+    //    orchestrator 가 setup_blocker 해소 시 binary_input_path 를 덮어쓴다
+    //    (`.omc/specs/contract-load-detect-split.md` D2/D5/D6).
     const safePatch = { ...patch }
     delete safePatch["challenge_dir"]
     delete safePatch["schema_version"]
-    delete safePatch["binary_input_path"]
-    delete safePatch["binary_input_sha256"]
 
     const merged = { ...state, ...safePatch }
 

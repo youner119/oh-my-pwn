@@ -7,27 +7,22 @@ import { CHALLENGE_STATE_SCHEMA_VERSION } from "./constants"
 
 const baseInput = {
   challenge_dir: "/tmp/challenge-x",
-  binary_input_path: "/tmp/challenge-x/chall",
-  dockerfile_path: "/tmp/challenge-x/Dockerfile",
 }
 
 describe("ChallengeStateSchema", () => {
-  test("createInitialChallengeState seeds input identity only (no binary_path)", () => {
+  test("createInitialChallengeState seeds only challenge_dir + meta (contract-load-detect-split D1)", () => {
     const now = new Date("2026-04-10T00:00:00.000Z")
     const state = createInitialChallengeState(baseInput, now)
 
     expect(state.schema_version).toBe(CHALLENGE_STATE_SCHEMA_VERSION)
     expect(state.challenge_dir).toBe(baseInput.challenge_dir)
-    // Input identity is seeded.
-    expect(state.binary_input_path).toBe(baseInput.binary_input_path)
-    expect(state.dockerfile_path).toBe(baseInput.dockerfile_path)
-    // Patched-copy fields stay undefined until omp-setup Phase 3 writes them.
-    // Loader-side seeding of `binary_path` would force `binary_path === input`
-    // pre-setup, conflicting with the spec D3 invariant that
-    // `binary_path` is the post-setup patched copy.
+    // Loader no longer seeds binary / dockerfile / source — those are written
+    // by omp-setup Phase 0 (Detect) via omp_patch_state.
+    expect(state.binary_input_path).toBeUndefined()
+    expect(state.binary_input_sha256).toBeUndefined()
+    expect(state.dockerfile_path).toBeUndefined()
     expect(state.binary_path).toBeUndefined()
     expect(state.binary_sha256).toBeUndefined()
-    expect(state.binary_input_sha256).toBeUndefined()
     expect(state.source_present).toBe(false)
     expect(state.source_paths).toEqual([])
     expect(state.vuln_candidates).toEqual([])

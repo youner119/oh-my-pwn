@@ -19,20 +19,20 @@ function makeChallengeDir(label: string): string {
 }
 
 function seedState(challengeDir: string): ChallengeState {
-  // Seed a real .omp/ via T02 helpers so the logs directory exists.
+  // Seed a real .omp/ via the loader-style minimal init, then stamp the input
+  // identity fields the way omp-setup Phase 0 (Detect) would after the
+  // contract-load-detect-split change (`.omc/specs/contract-load-detect-split.md`).
   const dockerfilePath = join(challengeDir, "Dockerfile")
   writeFileSync(dockerfilePath, "FROM alpine\n")
   const binaryPath = join(challengeDir, "chall")
   writeFileSync(binaryPath, Buffer.from([0x7f, 0x45, 0x4c, 0x46]))
-  const initial = initializeOmpDir({
-    challenge_dir: challengeDir,
-    binary_input_path: binaryPath,
-    dockerfile_path: dockerfilePath,
-  })
-  // T03 normally fills binary_sha256; do it manually here so docker-build's
-  // invariant check is satisfied.
+  const initial = initializeOmpDir({ challenge_dir: challengeDir })
   return saveChallengeState({
     ...initial,
+    binary_input_path: binaryPath,
+    binary_input_sha256:
+      "abc123def456abc123def456abc123def456abc123def456abc123def456abcd",
+    dockerfile_path: dockerfilePath,
     binary_sha256:
       "abc123def456abc123def456abc123def456abc123def456abc123def456abcd",
   })

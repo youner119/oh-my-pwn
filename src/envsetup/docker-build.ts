@@ -87,6 +87,13 @@ export function dockerBuildImage(
   }
 
   const dockerfilePath = state.dockerfile_path
+  if (dockerfilePath === undefined) {
+    throw new Error(
+      "internal: dockerBuildImage requires state.dockerfile_path to be set " +
+        "(omp-setup Phase 0 detect populates it). Caller must gate on " +
+        "challenge_type === 'user-mode-elf' before invoking.",
+    )
+  }
   const buildContext = dirname(dockerfilePath)
   const now = opts.now ?? new Date()
 

@@ -31,8 +31,11 @@ async function setupHarness(): Promise<Harness> {
   await writeFile(dockerfilePath, "FROM alpine\n")
   const binaryPath = join(challengeDir, "chall")
   await writeFile(binaryPath, Buffer.from([0x7f, 0x45, 0x4c, 0x46]))
-  initializeOmpDir({
-    challenge_dir: challengeDir,
+  // Loader-shape init (challenge_dir only) + setup-Phase-0 detect stamp via
+  // saveChallengeState — matches the contract-load-detect-split flow.
+  const initial = initializeOmpDir({ challenge_dir: challengeDir })
+  saveChallengeState({
+    ...initial,
     binary_input_path: binaryPath,
     dockerfile_path: dockerfilePath,
   })
@@ -47,12 +50,13 @@ function seedSha(
   h: Harness,
   fields: Partial<ChallengeState>,
 ): ChallengeState {
-  const initial = initializeOmpDir({
-    challenge_dir: h.challengeDir,
+  const initial = initializeOmpDir({ challenge_dir: h.challengeDir })
+  return saveChallengeState({
+    ...initial,
     binary_input_path: join(h.challengeDir, "chall"),
     dockerfile_path: join(h.challengeDir, "Dockerfile"),
+    ...fields,
   })
-  return saveChallengeState({ ...initial, ...fields })
 }
 
 const TOOL_CTX = {

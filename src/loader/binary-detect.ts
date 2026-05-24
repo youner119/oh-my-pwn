@@ -1,21 +1,17 @@
 /**
- * Binary detection helpers used by {@link ./load-challenge-folder}.
+ * Binary detection helpers, reused by the omp-setup agent's Phase 0 (Detect)
+ * path per `.omc/specs/contract-load-detect-split.md` (D2).
  *
- * Two responsibilities:
+ * - {@link isElf} / {@link isExecutable} — cheap filesystem-level predicates.
+ * - {@link looksLikeSharedObject} — basename heuristic to drop libc/ld files.
+ * - {@link detectBinary} — pick the executable ELF candidates in `challengeDir`
+ *   and return a discriminated {@link DetectBinaryResult} (`"ok"` / `"none"` /
+ *   `"multiple"`). Callers decide how to handle non-`"ok"` outcomes (the setup
+ *   agent surfaces `"multiple"` to the orchestrator as a `setup_blocker.kind`
+ *   `"ambiguous-binary"`, and treats `"none"` as the no-binary unsupported
+ *   classification).
  *
- * - {@link isElf} / {@link isExecutable} — cheap filesystem-level predicates
- *   that the loader uses both for auto-detection and for validating an
- *   explicit `{ binary }` hint.
- * - {@link detectBinary} — pick exactly one challenge binary out of a folder
- *   by reading the first 4 bytes of every regular file, filtering libc/ld
- *   share-objects out, and requiring the executable bit. Throws a typed
- *   {@link ChallengeLoadError} (`kind: "ambiguous-binary"`) when the result
- *   is anything other than exactly one candidate, so the caller can re-run
- *   the loader with an explicit `{ binary }` after disambiguating with the
- *   user.
- *
- * No I/O outside of `node:fs` synchronous calls — matches T02's I/O style and
- * keeps the loader callable from OmO hook tiers without async plumbing.
+ * No I/O outside of `node:fs` synchronous calls.
  */
 
 import {
@@ -26,7 +22,6 @@ import {
   statSync,
 } from "node:fs"
 import { join } from "node:path"
-import { ChallengeLoadError } from "./challenge-load-error"
 
 /** ELF magic bytes: 0x7F 'E' 'L' 'F'. */
 const ELF_MAGIC = Buffer.from([0x7f, 0x45, 0x4c, 0x46])
@@ -89,19 +84,28 @@ export function looksLikeSharedObject(basename: string): boolean {
 }
 
 /**
- * Auto-detect the single executable ELF binary in `challengeDir`.
+ * Result of {@link detectBinary} — a discriminated union the caller can
+ * pattern-match on. `detectBinary` never throws on detection outcome;
+ * filesystem errors (missing directory, permission denied) propagate from
+ * the underlying `readdirSync` call.
+ */
+export type DetectBinaryResult =
+  | { kind: "ok"; path: string }
+  | { kind: "none" }
+  | { kind: "multiple"; candidates: string[] }
+
+/**
+ * Scan `challengeDir` and report executable-ELF candidates.
  *
  * Strategy:
  *   1. List immediate children (no recursion — CTF challenges are flat).
  *   2. Drop directories and files whose names look like shared objects.
  *   3. Require ELF magic + executable bit.
- *   4. If exactly one survives, return its absolute path.
- *   5. Otherwise throw a typed `ambiguous-binary` error so the caller can
- *      ask the user which file to use.
  *
- * @throws ChallengeLoadError when 0 or >1 candidates remain.
+ * Returns `{kind:"ok", path}` for exactly-one, `{kind:"none"}` for zero,
+ * `{kind:"multiple", candidates}` for more than one (sorted).
  */
-export function detectBinary(challengeDir: string): string {
+export function detectBinary(challengeDir: string): DetectBinaryResult {
   const entries = readdirSync(challengeDir, { withFileTypes: true })
   const candidates: string[] = []
 
@@ -126,30 +130,11 @@ export function detectBinary(challengeDir: string): string {
   }
 
   if (candidates.length === 1) {
-    return candidates[0]!
+    return { kind: "ok", path: candidates[0]! }
   }
-
   if (candidates.length === 0) {
-    throw new ChallengeLoadError({
-      kind: "ambiguous-binary",
-      challengeDir,
-      reason: "none",
-      candidates: [],
-      message:
-        `No executable ELF binary found in ${challengeDir}. ` +
-        `Pass { binary: "<filename>" } to loadChallengeFolder to specify it explicitly.`,
-    })
+    return { kind: "none" }
   }
-
   candidates.sort()
-  const names = candidates.map((p) => p.split("/").pop()).join(", ")
-  throw new ChallengeLoadError({
-    kind: "ambiguous-binary",
-    challengeDir,
-    reason: "multiple",
-    candidates,
-    message:
-      `Multiple executable ELF binaries in ${challengeDir}: ${names}. ` +
-      `Pass { binary: "<filename>" } to loadChallengeFolder to disambiguate.`,
-  })
+  return { kind: "multiple", candidates }
 }

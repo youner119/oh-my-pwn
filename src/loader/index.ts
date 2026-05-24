@@ -1,10 +1,10 @@
 /**
- * T03 — challenge folder loader & validator (barrel).
+ * `omp_load_challenge` loader (barrel).
  *
- * Public surface for the loader. The OmP feature root re-exports these from
- * `src/features/omp/index.ts` so call sites import them as
- * `import { loadChallengeFolder } from "<feature-root>"` rather than reaching
- * into this subdirectory directly.
+ * Public surface for the loader. The loader is a thin bootstrapper per
+ * `.omc/specs/contract-load-detect-split.md` (D1) — `binary-detect` helpers
+ * remain re-exported because the omp-setup agent (which now owns binary
+ * detection) reuses them via the setup-side tools.
  */
 
 export {
@@ -16,17 +16,13 @@ export {
   ChallengeLoadError,
   type ChallengeLoadErrorKind,
   type ChallengeLoadErrorDetail,
-  type AmbiguousBinaryDetail,
-  type MissingBinaryDetail,
-  type BinaryNotElfDetail,
-  type BinaryNotExecutableDetail,
   type MissingDirDetail,
   type NotADirectoryDetail,
-  type MissingDockerfileDetail,
 } from "./challenge-load-error"
 export {
   detectBinary,
   isElf,
   isExecutable,
   looksLikeSharedObject,
+  type DetectBinaryResult,
 } from "./binary-detect"

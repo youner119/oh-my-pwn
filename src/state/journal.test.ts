@@ -34,11 +34,7 @@ describe("omp journal", () => {
   })
 
   test("initializeJournal writes a read-only notice header on first call", () => {
-    initializeOmpDir({
-      challenge_dir: challengeDir,
-      binary_input_path: `${challengeDir}/chall`,
-      dockerfile_path: `${challengeDir}/Dockerfile`,
-    })
+    initializeOmpDir({ challenge_dir: challengeDir })
     const contents = readFileSync(resolveJournalPath(challengeDir), "utf-8")
     expect(contents).toContain("# oh-my-pwn Handoff Journal")
     expect(contents).toContain("append-only progress log")
@@ -46,18 +42,12 @@ describe("omp journal", () => {
   })
 
   test("initializeJournal is a no-op when the journal already exists", () => {
-    initializeOmpDir({
-      challenge_dir: challengeDir,
-      binary_input_path: `${challengeDir}/chall`,
-      dockerfile_path: `${challengeDir}/Dockerfile`,
-    })
+    initializeOmpDir({ challenge_dir: challengeDir })
     const before = readFileSync(resolveJournalPath(challengeDir), "utf-8")
 
     // Directly call initializeJournal a second time with a fake state
     const fakeState = createInitialChallengeState({
       challenge_dir: challengeDir,
-      binary_input_path: `${challengeDir}/chall`,
-      dockerfile_path: `${challengeDir}/Dockerfile`,
     })
     initializeJournal(challengeDir, fakeState, new Date("2030-01-01T00:00:00Z"))
 
@@ -66,11 +56,7 @@ describe("omp journal", () => {
   })
 
   test("appendJournalSection appends a timestamped heading", () => {
-    initializeOmpDir({
-      challenge_dir: challengeDir,
-      binary_input_path: `${challengeDir}/chall`,
-      dockerfile_path: `${challengeDir}/Dockerfile`,
-    })
+    initializeOmpDir({ challenge_dir: challengeDir })
     appendJournalSection(
       challengeDir,
       "EnvSetup",
@@ -83,11 +69,7 @@ describe("omp journal", () => {
   })
 
   test("multiple appends preserve order and never rewrite earlier sections", () => {
-    initializeOmpDir({
-      challenge_dir: challengeDir,
-      binary_input_path: `${challengeDir}/chall`,
-      dockerfile_path: `${challengeDir}/Dockerfile`,
-    })
+    initializeOmpDir({ challenge_dir: challengeDir })
     appendJournalSection(challengeDir, "First", "a", new Date("2026-04-10T05:00:00Z"))
     appendJournalSection(challengeDir, "Second", "b", new Date("2026-04-10T05:01:00Z"))
     appendJournalSection(challengeDir, "Third", "c", new Date("2026-04-10T05:02:00Z"))
@@ -102,11 +84,7 @@ describe("omp journal", () => {
   })
 
   test("appendUserCorrection preserves user_text verbatim in a quote block", () => {
-    initializeOmpDir({
-      challenge_dir: challengeDir,
-      binary_input_path: `${challengeDir}/chall`,
-      dockerfile_path: `${challengeDir}/Dockerfile`,
-    })
+    initializeOmpDir({ challenge_dir: challengeDir })
     appendUserCorrection(challengeDir, {
       timestamp: "2026-04-10T06:00:00.000Z",
       user_text: "libc는 2.35야\n한 줄 더",
@@ -120,11 +98,7 @@ describe("omp journal", () => {
   })
 
   test("appendUserCorrection preserves microsecond precision without Date round-trip", () => {
-    initializeOmpDir({
-      challenge_dir: challengeDir,
-      binary_input_path: `${challengeDir}/chall`,
-      dockerfile_path: `${challengeDir}/Dockerfile`,
-    })
+    initializeOmpDir({ challenge_dir: challengeDir })
     const microsecondStamp = "2026-04-10T06:00:00.123456Z"
     appendUserCorrection(challengeDir, {
       timestamp: microsecondStamp,
