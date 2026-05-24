@@ -140,9 +140,5 @@ export interface ConcurrencyConfig {
 }
 
 export const DEFAULT_CONCURRENCY_CONFIG: ConcurrencyConfig = {
-  // ChatGPT Pro Lite gateway 가 ~5-7 동시 호출부터 5xx 폭주 시작 — 실측
-  // (gitvfs_revenge run, peak conc 18 → 3 outlier step 각 15-34분 wedge).
-  // OmP 의 정합한 동시성 = gateway 한계의 하한. 사용자가 더 throughput
-  // 원하면 ConcurrencyConfig.defaultLimit 또는 modelLimits override.
-  defaultLimit: 5,
+  defaultLimit: 20,
 }
