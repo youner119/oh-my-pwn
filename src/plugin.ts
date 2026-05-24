@@ -113,6 +113,33 @@ const OmpPlugin: Plugin = async (input) => {
   const ompSetupVerifyRuntimeTool = createOmpSetupVerifyRuntimeTool()
 
   return {
+    // chat.params — reasoning effort injection (P2 of variant-via-plugin).
+    // env `OMP_REASONING_EFFORT` (e.g. "xhigh" / "high" / "medium") gates this;
+    // unset → no-op (safe default). Applied only to OpenAI calls from OmP agents
+    // (`omp-*`) so user-added agents or Anthropic providers stay untouched.
+    //
+    // The exact key opencode forwards to the SDK is undocumented for the
+    // `--variant` flag, so we set both Vercel AI SDK's
+    // `providerOptions.openai.reasoningEffort` and a top-level
+    // `reasoningEffort` fallback. Unrecognized keys are ignored by the
+    // downstream provider.
+    "chat.params": async (input, output) => {
+      const effort = process.env["OMP_REASONING_EFFORT"]
+      if (!effort) return
+      if (input.provider.info.id !== "openai") return
+      if (!input.agent.startsWith("omp-")) return
+
+      const providerOpts =
+        (output.options["providerOptions"] as Record<string, unknown> | undefined) ?? {}
+      const openaiOpts =
+        (providerOpts["openai"] as Record<string, unknown> | undefined) ?? {}
+      output.options["providerOptions"] = {
+        ...providerOpts,
+        openai: { ...openaiOpts, reasoningEffort: effort },
+      }
+      output.options["reasoningEffort"] = effort
+    },
+
     config: async (cfg) => {
       // ── agents ────────────────────────────────────────────────────────────
       cfg.agent ??= {}
