@@ -488,9 +488,11 @@ export class BackgroundManager {
 
     // Create child session.
     // Sub-agents auto-allow tool permissions so they never block on technical
-    // approvals. `question` is `ask` (not deny) so user-directed questions
-    // propagate via opencode's parent chain to reach the user at the
-    // orchestrator/primary session.
+    // approvals. `webfetch` / `websearch` are allow — VH / SA / Exploiter
+    // benefit from external knowledge (CVE / public writeup / libc / kernel
+    // semantics) beyond our bundled knowledge/. `question` is `ask` (not
+    // deny) so user-directed questions propagate via opencode's parent
+    // chain to reach the user at the orchestrator/primary session.
     // See .omc/research/subagent-permission-forward.md.
     const rawCreateResult = await this.client.create({
       body: {
@@ -502,6 +504,8 @@ export class BackgroundManager {
           { permission: "bash", action: "allow", pattern: "*" },
           { permission: "mcp", action: "allow", pattern: "*" },
           { permission: "external_directory", action: "allow", pattern: "*" },
+          { permission: "webfetch", action: "allow", pattern: "*" },
+          { permission: "websearch", action: "allow", pattern: "*" },
           { permission: "question", action: "ask", pattern: "*" },
         ],
       } as Record<string, unknown>,
