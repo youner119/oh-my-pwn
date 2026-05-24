@@ -117,7 +117,7 @@ these tools:
 | Tool | When |
 |---|---|
 | \`omp_read_state\` | First thing — read current state to get binary_path, challenge_dir, source_present, cached reverser_summary_path, and \`extracted_libs\` (SONAME → host path map; tells you which libraries the omp-setup agent pulled out of the docker image, so you know what the binary statically depends on) |
-| \`omp_patch_state\` | After writing the artifacts — persist \`reverser_summary_path\`, \`reverser_research_path\`, \`reverser_research_ko_path\`, \`pseudocode_dir\`, and \`reverser_analyzed_at\` |
+| \`omp_patch_state\` | After writing the artifacts — persist \`reverser_summary_path\`, \`reverser_research_path\`, \`reverser_research_ko_path\`, \`pseudocode_dir\`, and \`reverser_analyzed_at\`. **NEVER include \`etc\` in your patch** — it is write-restricted to omp-setup / omp-orchestrator per \`.omc/specs/contract-load-detect-split.md\` (D7). You may freely READ \`state.etc\` for challenge-specific metadata (e.g. kernel vmlinux path) but must not write it back. |
 | \`omp_append_journal\` | After omp_patch_state — append a human-readable summary (neutral) |
 | \`omp_get_template\` | Before writing a template-based artifact (research reports) — fetches template-local rules + skeleton |
 | \`omp_verify_template_output\` | After writing a template-based artifact — mechanical structural check (required sections, placeholders, forbidden words). Fix + re-verify on failure (max 2 retries) |

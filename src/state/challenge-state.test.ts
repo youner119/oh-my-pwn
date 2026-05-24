@@ -410,6 +410,37 @@ describe("ChallengeStateSchema", () => {
     expect(stateWithout.workspace_root).toBeUndefined()
   })
 
+  test("etc accepts free-form Record<string, unknown> (D7 kernel example)", () => {
+    const state = {
+      ...createInitialChallengeState(baseInput),
+      challenge_type: "unsupported" as const,
+      unsupported_kind: "kernel-pwn" as const,
+      setup_unsupported_reason: "kernel challenge",
+      challenge_summary: "kernel summary",
+      setup_complete: true,
+      etc: {
+        kernel_vmlinux_path: "/c/vmlinux",
+        kernel_bzimage_path: "/c/bzImage",
+        kernel_initramfs_path: "/c/rootfs.cpio.gz",
+        kernel_qemu_cmd: "qemu-system-x86_64 -kernel bzImage ...",
+        kernel_kaslr: true,
+        kernel_smap: true,
+        kernel_smep: true,
+        kernel_pti: false,
+        kernel_modules: ["a.ko", "b.ko"],
+      },
+    }
+    const parsed = ChallengeStateSchema.parse(state)
+    expect(parsed.etc?.kernel_vmlinux_path).toBe("/c/vmlinux")
+    expect(parsed.etc?.kernel_kaslr).toBe(true)
+    expect(parsed.etc?.kernel_modules).toEqual(["a.ko", "b.ko"])
+  })
+
+  test("etc is optional and defaults to undefined", () => {
+    const stateWithout = createInitialChallengeState(baseInput)
+    expect(stateWithout.etc).toBeUndefined()
+  })
+
   test("challenge_summary accepts the unsupported-case shape (kernel example)", () => {
     const state = {
       ...createInitialChallengeState(baseInput),

@@ -18,6 +18,15 @@ describe("createOmpReverserAgent", () => {
     expect(desc).toContain("VulnHunter")
   })
 
+  test("prompt forbids writing `etc` (contract-load-detect-split D7)", () => {
+    const agent = createOmpReverserAgent("test-model")
+    const p = agent.prompt ?? ""
+    // Reverser may read state.etc but must never include it in patches.
+    expect(p).toContain("NEVER include `etc` in your patch")
+    expect(p).toContain("write-restricted to omp-setup / omp-orchestrator")
+    expect(p).toContain("freely READ `state.etc`")
+  })
+
   test("prompt mentions the BN MCP read tools", () => {
     const agent = createOmpReverserAgent("test-model")
     expect(agent.prompt).toContain("decompile_function")

@@ -586,6 +586,50 @@ export const ChallengeStateSchema = z.object({
 
   corrections: z.array(UserCorrectionSchema).default([]),
 
+  /* ── Free-form metadata (setup / orchestrator writable) ──────────────── */
+
+  /**
+   * Free-form challenge-specific metadata that does not fit the fixed
+   * schema. Use cases that motivated this field (added by
+   * `.omc/specs/contract-load-detect-split.md` D7):
+   *
+   * - Kernel CTF (`challenge_type: "unsupported"`,
+   *   `unsupported_kind: "kernel-pwn"`): `kernel_vmlinux_path` /
+   *   `kernel_bzimage_path` / `kernel_initramfs_path` / `kernel_qemu_cmd` /
+   *   `kernel_kaslr` (bool) / `kernel_smap` / `kernel_smep` / `kernel_pti` /
+   *   `kernel_kpti` etc. The Mode 0 Exploiter reads these to drive its
+   *   PoC against `qemu-system-*` rather than a user-mode ELF.
+   * - Source-only: `source_build_cmd` (string), `source_build_outputs`
+   *   (array<string>).
+   * - Library-only: `library_host_binary` (path), `library_load_method`
+   *   (`"dlopen"` / `"LD_PRELOAD"` / etc).
+   * - Multi-binary: `binary_roles` (map<role-name, path>).
+   * - User-mode-elf with non-standard env: anything the fixed schema
+   *   does not already cover.
+   *
+   * **Write policy (POLICY-ENFORCED, not physically enforced):**
+   * - **Allowed writers:** `omp-setup` (Phase 0 detect + Phase 1–5 env
+   *   observation), `omp-orchestrator` (user corrections, D5 disambig
+   *   side-channel data, recovery hints).
+   * - **Forbidden writers:** `omp-reverser`, `omp-vulnhunter`,
+   *   `omp-strategist`, `omp-exploiter`. These agents may **read** `etc`
+   *   freely (e.g. Mode 0 Exploiter reading `kernel_vmlinux_path`) but
+   *   must NEVER include `etc` in their `omp_patch_state` calls. Violation
+   *   is caught by orchestrator audit (state diff); spec
+   *   `contract-load-detect-split.md` D7 escalates to physical
+   *   enforcement (`patch_state` checks `context.agent`) if violations
+   *   accumulate.
+   *
+   * **Naming convention:** keys are snake_case with a domain prefix
+   * (e.g. `kernel_*` / `source_*` / `library_*` / `multi_*`). Values are
+   * JSON-able (string / number / boolean / array / nested object). The
+   * schema validates only that the key is a string — value shape is the
+   * writer's responsibility, and readers must defensively cast.
+   *
+   * Added by `.omc/specs/contract-load-detect-split.md` (D7, 2026-05-24).
+   */
+  etc: z.record(z.string(), z.unknown()).optional(),
+
   /* ── Meta ──────────────────────────────────────────────────────────────── */
 
   created_at: IsoTimestampSchema,

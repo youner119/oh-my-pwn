@@ -320,14 +320,47 @@ omp_append_journal {
 }
 \`\`\`
 
+**Free-form metadata via \`etc\` (D7):** when Phase 0 (or any later
+phase) observes challenge-specific environment information that does
+NOT fit a fixed schema field — kernel vmlinux / bzImage / initramfs
+paths, qemu-system command, KASLR / SMAP / SMEP / PTI flags,
+source-only build command, library-only host harness binary, etc —
+write it into \`state.etc\` (a free-form \`Record<string, unknown>\`).
+You and \`omp-orchestrator\` are the only allowed writers; downstream
+agents (Reverser / VulnHunter / Strategist / Exploiter) may read \`etc\`
+but never write it. Use snake_case keys with a domain prefix; values
+are any JSON-able type (string / number / boolean / array / nested
+object).
+
+Example (kernel CTF):
+
+\`\`\`text
+omp_patch_state {
+  etc: {
+    kernel_vmlinux_path: "<abs path>",
+    kernel_bzimage_path: "<abs path>",
+    kernel_initramfs_path: "<abs path>",
+    kernel_qemu_cmd: "qemu-system-x86_64 -kernel ... -append 'kaslr smap smep ...'",
+    kernel_kaslr: true,
+    kernel_smap: true,
+    kernel_smep: true,
+    kernel_pti: false
+  }
+}
+\`\`\`
+
+Spec: \`.omc/specs/contract-load-detect-split.md\` (D7).
+
 **Branching:**
 
 - \`unsupported\` → in the same \`omp_patch_state\` call, ALSO set
   \`setup_unsupported_reason: "<rule number + concrete indicator>"\` AND
-  \`setup_complete: true\`. Phase 1–5 are skipped; downstream Mode 0 (or
-  Mode 9 if the user supplied an explicit prompt) runs against
-  \`binary_input_path\` when one exists, or directly against the
-  knowledge bucket otherwise. The identity fields you seed are
+  \`setup_complete: true\`. For kernel / source-only / library-only /
+  multi-binary buckets, also seed the relevant \`etc\` keys from the
+  example above so the Mode 0 Exploiter has the metadata it needs.
+  Phase 1–5 are skipped; downstream Mode 0 (or Mode 9 if the user
+  supplied an explicit prompt) runs against \`binary_input_path\` when
+  one exists, or directly against the knowledge bucket otherwise. The identity fields you seed are
   *whichever subset is present* (\`challenge_summary\` /
   \`setup_unsupported_reason\` / \`unsupported_kind\` are always set;
   \`binary_input_path\` / \`binary_input_sha256\` are absent for buckets

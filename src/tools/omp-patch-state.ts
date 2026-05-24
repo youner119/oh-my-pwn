@@ -23,6 +23,10 @@ export const ompPatchStateTool: ToolDefinition = tool({
     "source_paths are written by the omp-setup agent in Phase 0 (Detect) per " +
     "`.omc/specs/contract-load-detect-split.md` (D2, D6), and the Orchestrator writes " +
     "binary_input_path when resolving a setup_blocker.kind='ambiguous-binary' (D5). " +
+    "The `etc` field (free-form Record<string, unknown> for challenge-specific metadata — " +
+    "kernel vmlinux path, qemu command, etc) is POLICY-ENFORCED: only omp-setup and " +
+    "omp-orchestrator may write it; omp-reverser / omp-vulnhunter / omp-strategist / " +
+    "omp-exploiter must NEVER include `etc` in their patch (read-only for them) per D7. " +
     "Returns the updated state on success, or an error object on failure.",
   args: {
     challenge_dir: tool.schema

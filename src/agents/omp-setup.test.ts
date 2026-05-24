@@ -176,6 +176,19 @@ describe("createOmpSetupAgent", () => {
     expect(p).toContain("skip the ELF-candidate scan")
   })
 
+  test("etc free-form metadata guide is present (contract-load-detect-split D7)", () => {
+    const agent = createOmpSetupAgent("test-model")
+    const p = agent.prompt ?? ""
+    // Naming + write-policy boilerplate
+    expect(p).toContain("Free-form metadata via `etc`")
+    expect(p).toContain("only allowed writers")
+    expect(p).toContain("snake_case")
+    // Kernel example anchors readers to the most common no-binary case
+    expect(p).toContain("kernel_vmlinux_path")
+    expect(p).toContain("kernel_qemu_cmd")
+    expect(p).toContain("kernel_kaslr")
+  })
+
   test("Phase 0 — no-binary unsupported buckets leave binary_input_path undefined (D3)", () => {
     const agent = createOmpSetupAgent("test-model")
     const p = agent.prompt ?? ""
