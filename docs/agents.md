@@ -346,17 +346,39 @@ Max depth = 3 (OmO 기본값). Orchestrator → SA → Exploiter.
 
 ### State 동시성 — Sole Writer 패턴 + Blackboard
 
-병렬 agent들이 동시에 `state.json`을 쓰면 충돌. 해결:
+병렬 agent들이 동시에 `state.json` 또는 candidate detail 파일을 쓰면 충돌.
+해결 (spec: `.omc/specs/state-split-vuln-candidates.md` D6):
 
-- **SA/Exploiter는 state를 직접 쓰지 않음** — `omp_patch_state` 호출 금지
-- **SA/Exploiter는 결과를 반환** — session 출력으로 structured result 전달
-- **Orchestrator만 `omp_patch_state` 호출** — 결과 수집 후 순차 기록
-- **SA/Exploiter는 `omp_read_state`로 읽기만 가능** (시작 시 context 파악용)
+- **SA/Exploiter/VH 는 state 를 직접 쓰지 않음** — `omp_patch_state` /
+  `omp_create_candidate` / `omp_patch_candidate` / `omp_delete_candidate` 다
+  ACL-denied. `omp_read_state` + `omp_read_candidate` 로 읽기만.
+- **SA/Exploiter/VH 는 결과를 반환** — session return 의 structured JSON
+  으로 `{candidate_id, status, primitive, gives, needs, poc_script_path,
+  verification_blockers, …}` 전달.
+- **Orchestrator 만 write tool 호출** — sub-agent 결과 수집 후 분기:
+  - *Summary fields only* (verification_result / description / has_poc /
+    counts / agent / combined_from) → `omp_patch_state({vuln_candidates:
+    [{id, …summary}]})`
+  - *Detail fields* (or summary + detail together) → `omp_patch_candidate(
+    {id, patch: {summary?, detail?}})` — state.json row + detail file
+    atomic
+  - *New candidate* (VH 의 produce / SA combine derived) →
+    `omp_create_candidate({candidate})`
+  - *Invalidate* → `omp_delete_candidate({id})`
 
-**Blackboard 활용:** 각 라운드 후 Orchestrator가 verified primitive의
-`poc_script_path` / `gives` / `needs` / `combined_from`을 state에 기록.
-다음 라운드 SA는 `omp_read_state`로 blackboard를 읽어 어떤 primitive가
-증명됐고 어떤 것을 COMBINE할 수 있는지 파악.
+`omp_patch_state` 는 `patch.vuln_candidates[]` 의 *detail field* (rationale
+/ verification_blockers / gives / needs / poc_script_path / location /
+libc_range / origin_type / derived_from / confidence) 박힘 시 `error:
+"vuln_candidates_detail_in_summary_patch"` 로 reject — 채널 분리 강제.
+
+**Blackboard 활용:** 각 라운드 후 Orchestrator 가 verified primitive 의
+summary (verification_result / has_poc / gives_count / needs_count /
+description) 를 state.json 에 기록, detail (poc_script_path / gives / needs
+/ combined_from / rationale / verification_blockers) 을
+`.omp/candidates/<id>.json` 에 기록. 다음 라운드 SA 는 `omp_read_state` 로
+summary array 를 읽어 전체 영역 파악, `omp_read_candidate(id)` 로 자기
+verify target 또는 combine source 의 detail 만 lazy load — agent prompt
+context 영역 크기 컨트롤.
 
 ### Operating modes — 자율 vs 사용자 주도 (2026-05-18)
 

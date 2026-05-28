@@ -1,4 +1,4 @@
-# Tools — OmP가 제공하는 `omp_*` tool 14개
+# Tools — OmP가 제공하는 `omp_*` tool 18개
 
 이 문서는 OmP agent들이 사용하는 **tool 목록**과 각 tool의 **역할 / 시그니처 /
 에러 케이스**를 정리합니다.
@@ -31,16 +31,20 @@ tool로 만들지 않고 agent prompt에서 자연어로 처리합니다.
 
 ---
 
-## 현재 tool 14개 — 한 눈에
+## 현재 tool 18개 — 한 눈에
 
 | Tool | 역할 | Library-backed? | 읽기/쓰기 |
 |---|---|---|---|
 | `omp_load_challenge` | Challenge 폴더 부트스트랩 (`.omp/` 초기화 + `state.workspace_root` 시드). binary/dockerfile/source 식별은 omp-setup Phase 0 (Detect) — `.omc/specs/contract-load-detect-split.md` D1. | Yes (loader) | 쓰기 |
-| `omp_read_state` | `state.json` 로드 | Yes (T02 io) | 읽기 |
-| `omp_patch_state` | `state.json` 부분 업데이트 (Zod validated, atomic) | Yes | 쓰기 |
+| `omp_read_state` | `state.json` 로드. `vuln_candidates` 는 *summary array* (detail 미포함). | Yes (state/io) | 읽기 |
+| `omp_patch_state` | `state.json` 부분 업데이트 (Zod validated, atomic). `vuln_candidates[]` 의 detail field 박힘 시 reject (`vuln_candidates_detail_in_summary_patch`). | Yes | 쓰기 |
 | `omp_append_journal` | `journal.md` append | Yes | 쓰기 |
 | `omp_get_template` | 템플릿 문자열 로드 | Yes (src/templates) | 읽기 |
 | `omp_verify_template_output` | 템플릿 작성물 구조 검증 | Yes | 읽기 (idempotent) |
+| `omp_read_candidate` | `.omp/candidates/<id>.json` 로드 → summary + detail merge. **모든 agent read 가능** (sole writer 와 무관). | Yes (state/io) | 읽기 |
+| `omp_create_candidate` | 신규 candidate 박음 — state.json summary row + detail file 둘 다 atomic write. **Orchestrator 전용** (ACL deny sub-agent). | Yes (state/io) | 쓰기 |
+| `omp_patch_candidate` | 기존 candidate 의 `{summary?, detail?}` 부분 갱신. summary 박혔으면 state.json row 갱신 + detail 박혔으면 detail file 갱신 (둘 다 atomic). **Orchestrator 전용** (ACL deny sub-agent). | Yes (state/io) | 쓰기 |
+| `omp_delete_candidate` | state.json summary row 제거 + detail file 삭제. **Orchestrator 전용** (ACL deny sub-agent). | Yes (state/io) | 쓰기 |
 | `omp_task_launch` | 단일 sub-agent를 **fire-and-forget**으로 spawn. `{task_id, session_id}` 즉시 반환. `agent`는 category alias (`setup`/`reverser`/`vulnhunter`/`strategist`/`exploiter`) 또는 full name (`omp-*`). | Yes (orchestration/) | 쓰기 |
 | `omp_task_wait_all` | 주어진 `task_ids[]` **모두** terminal에 도달할 때까지 block. 입력 순서대로 `results[]` 반환. unknown id는 synthetic failed outcome (graceful). | Yes (orchestration/) | 읽기 |
 | `omp_task_wait_any` | 주어진 `task_ids[]` 중 **첫 완료자** + `remaining_ids` 반환. 성공/실패/취소 모두 first-complete로 취급. SA race + dynamic spawn에 사용. | Yes (orchestration/) | 읽기 |
@@ -56,7 +60,11 @@ tool로 만들지 않고 agent prompt에서 자연어로 처리합니다.
 `omp_save_decompiled` 제거, pwno 호환성 수정으로 `omp_pwno_container`
 제거. **envsetup 재설계 (T12-T14)** 로 `omp_run_envsetup` /
 `omp_stage_challenge` / `omp_pwno_status` 3개가 폐지되고 omp-setup
-agent + atomic 4개 (`omp_setup_*`) 가 흡수.
+agent + atomic 4개 (`omp_setup_*`) 가 흡수. **state split P3 (2026-05-24)**
+로 candidate per-file storage tool 4개 (`omp_{read,create,patch,delete}_candidate`)
+가 신설되고 `omp_read_state` / `omp_patch_state` 의 `vuln_candidates` 영역
+contract 가 summary-only 로 좁혀짐 (spec
+`.omc/specs/state-split-vuln-candidates.md` D2/D3).
 
 ---
 
@@ -204,6 +212,16 @@ omp-strategist / omp-exploiter 는 read 만 — patch 에 `etc` 포함시키면
 orchestrator audit 이 잡고 revert. 위반 누적 시 physical enforcement
 (patch_state.context.agent 확인) 로 escalate.
 
+**`vuln_candidates` summary-only contract (state-split-vuln-candidates.md
+D2/D3):** `omp_patch_state` 의 `patch.vuln_candidates[]` 는 summary field
+(`id`, `verification_result`, `primitive`, `agent`, `combined_from`,
+`description`, `gives_count`, `needs_count`, `has_poc`) 만 수락. detail
+field (`rationale`, `verification_blockers`, `gives`, `needs`,
+`poc_script_path`, `location`, `libc_range`, `origin_type`,
+`derived_from`, `confidence`) 박힘 시 `error:
+"vuln_candidates_detail_in_summary_patch"` 로 reject — detail 갱신은
+`omp_patch_candidate` 채널 사용. summary + detail 동시 갱신도 별개 tool.
+
 **성공 응답:** 업데이트된 전체 state.
 
 **에러 케이스:**
@@ -221,6 +239,97 @@ orchestrator audit 이 잡고 revert. 위반 누적 시 physical enforcement
   기록
 
 **파일:** `src/tools/omp-patch-state.ts`
+
+---
+
+## `omp_read_candidate` / `omp_create_candidate` / `omp_patch_candidate` / `omp_delete_candidate`
+
+**용도:** `vuln_candidates` 의 per-file detail storage tool 4종. state.json
+은 summary array 만 박고, detail (rationale / verification_blockers /
+gives / needs / poc_script_path / location / 등) 은
+`.omp/candidates/<id>.json` 한 file 한 candidate 에 박힘 (minified JSON).
+Spec: `.omc/specs/state-split-vuln-candidates.md` D2/D3.
+
+### ACL — Orchestrator sole writer
+
+| Tool | 호출 허용 | 비고 |
+|---|---|---|
+| `omp_read_candidate` | 모든 agent | read 는 sole writer 정책 무관 |
+| `omp_create_candidate` | **Orchestrator 전용** | sub-agent 호출 시 ACL reject |
+| `omp_patch_candidate` | **Orchestrator 전용** | sub-agent 호출 시 ACL reject |
+| `omp_delete_candidate` | **Orchestrator 전용** | sub-agent 호출 시 ACL reject |
+
+ACL enforcement 는 `src/orchestration/agent-tool-restrictions.ts`. VH /
+SA / Exploiter 가 write tool 호출하면 tool 실행 전 reject.
+
+Sub-agent 는 *state 영역 write 자체 안 함*. 결과는 task return value 로 보고
+(D3.1) — `{candidate_id, summary_changes?, detail_changes?, new_candidate?}`
+형식. Orchestrator 가 `omp_task_wait_*` 로 결과 수령 후 적절한 candidate
+tool 호출.
+
+### `omp_read_candidate`
+
+**Arguments:**
+```ts
+{ challenge_dir: string, id: string }
+```
+
+**성공 응답:** `{ ok: true, candidate: VulnCandidate }` — summary + detail
+merge 형태 (`VulnCandidateSchema = VulnCandidateSummary.merge(VulnCandidateDetail)`).
+
+**에러:** `candidate_not_found` / `candidate_corrupt` / `invalid_candidate_id` / `internal_error`.
+
+### `omp_create_candidate`
+
+**Arguments:**
+```ts
+{
+  challenge_dir: string
+  candidate: VulnCandidate    // summary + detail 전체
+}
+```
+
+state.json 의 vuln_candidates array 에 summary row 박힘 + `.omp/candidates/<id>.json` atomic write. id 중복 시 `candidate_id_collision`.
+
+**에러:** `acl_denied` (sub-agent) / `candidate_id_collision` / `invalid_candidate_id` / `validation_error` / `save_failed`.
+
+### `omp_patch_candidate`
+
+**Arguments:**
+```ts
+{
+  challenge_dir: string
+  id: string
+  patch: {
+    summary?: Partial<VulnCandidateSummary>   // state.json row 갱신
+    detail?: Partial<VulnCandidateDetail>     // detail file 갱신
+  }
+}
+```
+
+summary + detail 둘 다 박혔으면 한 호출에서 state.json + detail file 양쪽 atomic 갱신.
+
+**에러:** `acl_denied` (sub-agent) / `candidate_not_found` / `invalid_candidate_id` / `validation_error` / `save_failed`.
+
+### `omp_delete_candidate`
+
+**Arguments:**
+```ts
+{ challenge_dir: string, id: string }
+```
+
+state.json summary row 제거 + detail file 삭제 (둘 다 idempotent — 부재 시 no-op).
+
+**에러:** `acl_denied` (sub-agent) / `invalid_candidate_id` / `save_failed`.
+
+### 사용 맥락
+
+- **VulnHunter 결과 흡수** — VH ensemble return 의 `new_candidate` → Orchestrator 가 `omp_create_candidate`.
+- **SA verify 결과 흡수** — SA return 의 `summary_changes` + `detail_changes` → Orchestrator 가 `omp_patch_candidate`.
+- **SA combine derived candidate** — SA return 의 `new_candidate` (combined_from 박힘) → Orchestrator 가 `omp_create_candidate`.
+- **SA invalidate** — SA 가 candidate 가 invalid 라고 판단 → return 으로 보고 → Orchestrator 가 `omp_delete_candidate`.
+
+**파일:** `src/tools/omp-{read,create,patch,delete}-candidate.ts`, backed by `src/state/io.ts` (`loadCandidate` / `saveCandidate` / `deleteCandidate`).
 
 ---
 
@@ -450,13 +559,14 @@ export const ompSomethingTool: ToolDefinition = tool({
 
 | 파일 | 역할 |
 |---|---|
-| `src/tools/index.ts` | tool re-export (14개 — state IO + load + 4-tool task + 4-tool omp_setup_*) |
+| `src/tools/index.ts` | tool re-export (18개 — state IO + load + 4 candidate + 4-tool task + 4-tool omp_setup_*) |
 | `src/tools/omp-*.ts` | 각 tool 구현 (thin wrapper over library 또는 omp-setup atomic) |
 | `src/orchestration/index.ts` | task surface (`omp_task_*` 4개) re-export |
+| `src/orchestration/agent-tool-restrictions.ts` | per-agent tool ACL (candidate write tool 의 sub-agent deny 정책 enforce) |
 | `src/plugin.ts` | tool map 등록 (session 레벨) |
 | `src/loader/` | load-challenge backed |
 | `src/envsetup/` | docker-build / docker-extract / patch-elf library — atomic omp_setup_* 가 wrap (legacy `run-envsetup.ts` 437 줄은 T19 deprecation 영역) |
-| `src/state/` | read_state / patch_state / append_journal backed |
+| `src/state/` | read_state / patch_state / append_journal / candidate IO backed (`loadCandidate` / `saveCandidate` / `deleteCandidate` in `io.ts`) |
 | `src/templates/` | get_template backed (템플릿 string 저장소) |
 | `src/agents/omp-setup.ts` | atomic 4개 호출 흐름 제어 (Phase 0-6) |
 

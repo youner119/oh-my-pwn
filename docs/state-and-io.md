@@ -33,8 +33,12 @@
 ├── Dockerfile                    ← remote 재현용
 ├── chal.c                        ← (선택) C 소스 — 있으면 Reverser skip
 └── .omp/                         ← OmP 상태 + 산출물
-    ├── state.json                ← machine-truth. Zod schema (ChallengeState)
+    ├── state.json                ← machine-truth. Zod schema (ChallengeState). minified write (한 줄)
     ├── journal.md                ← append-only progress log (read-only for humans)
+    ├── candidates/               ← vuln_candidates per-file detail storage (spec: state-split-vuln-candidates.md)
+    │   ├── vuln_1.json           ← VulnCandidateDetail (minified JSON). id 별 한 file.
+    │   ├── vuln_2.json
+    │   └── derived_vuln_4_vuln_16.json
     ├── artifacts/                ← agent-생성 산출물
     │   ├── libc.so.6             ← docker image에서 추출한 libc
     │   ├── ld-linux-x86-64.so.2  ← docker image에서 추출한 ld
@@ -46,6 +50,10 @@
     │   └── docker-build-*.log
     └── exploit/                  ← Exploiter pwntools scripts (병렬 시 candidate별 서브디렉토리)
 ```
+
+`state.json` 은 minified 한 줄로 박힘 (opencode read tool 의 byte cap +
+LLM context 영역 축소). `candidates/<id>.json` 도 같은 정책.
+`candidates/` 디렉토리는 첫 `omp_create_candidate` 호출 시점에 lazy 생성.
 
 각 서브디렉토리는 T02 `initializeOmpDir`가 load 시 자동으로 생성합니다.
 
@@ -121,19 +129,51 @@ Multi-NEEDED 챌린지 (libm/libz/libbz2/liblzma 등) 의 추가 라이브러리
 > Exploit pipeline redesign (2026-04-17) 반영.
 > Spec: `.omc/specs/deep-interview-exploit-pipeline.md`
 
-**VulnHunter output (T10):**
+**VulnHunter output (T10) — Summary/Detail split (state-split-vuln-candidates.md D2):**
+
+`vuln_candidates[]` 는 state.json 에 *summary array* 만 박힘. detail 은
+`.omp/candidates/<id>.json` 의 별개 file. 두 영역 합성은 `omp_read_candidate`
+또는 `VulnCandidateSchema = VulnCandidateSummary.merge(VulnCandidateDetail)`.
+
+*Summary fields* (state.json):
 
 | 필드 | 설명 |
 |---|---|
-| `vuln_candidates` | Candidate 배열. 각 항목: id, primitive, location, confidence, rationale, libc_range |
-| `vuln_candidates[].verified` | Exploiter가 검증 완료 여부 (boolean) |
-| `vuln_candidates[].verification_result` | "confirmed" / "disproved" / "inconclusive" |
-| `vuln_candidates[].poc_script_path` | **(parallel model)** verified primitive를 증명하는 PoC script 절대경로. Orchestrator가 COMBINE SA에게 지식 전달에 사용. |
-| `vuln_candidates[].gives` | **(parallel model)** 이 primitive가 제공하는 것 (예: `["libc_base", "rip_control"]`). COMBINE 가능성 판단에 사용. |
-| `vuln_candidates[].needs` | **(parallel model)** 이 primitive가 전제하는 것 (예: `["canary"]`). COMBINE 순서 결정에 사용. |
-| `vuln_candidates[].combined_from` | **(parallel model)** COMBINE으로 생성된 경우 원본 candidate ID 목록. |
+| `id` | Candidate 식별자 (e.g. `vuln_4` / `derived_vuln_4_vuln_16`). alphanumeric + `_` + `-` 만 허용. |
+| `primitive` | Exploitation primitive tag (e.g. `stack_bof`, `tcache_poison`). |
+| `verification_result` | "confirmed" / "failed" / "inconclusive" / undefined. Presence IS the verification flag. |
+| `agent` | Producing sub-agent (e.g. `VH-3` / `SA-04`). Trace of provenance. |
+| `combined_from` | Derived candidate 의 source ids. |
+| `description` | 2-3 줄 short claim of *what* (≤400 chars). 무엇이냐만 — 왜 는 `rationale` (detail). |
+| `gives_count` / `needs_count` | detail 의 array length — *진행 정도* 만 노출. |
+| `has_poc` | `detail.poc_script_path` 존재 여부 (boolean). |
+
+*Detail fields* (`.omp/candidates/<id>.json`):
+
+| 필드 | 설명 |
+|---|---|
+| `location` | Function name / offset / source line. |
+| `confidence` | 0.0–1.0 hunter confidence. |
+| `rationale` | Why the hunter thinks this candidate is viable (full reasoning). |
+| `libc_range` | Required libc range (e.g. `"2.31-2.35"`). |
+| `origin_type` | How this candidate was discovered (`initial` / `combine` / `incidental` / …). |
+| `derived_from` | Derived/incidental candidate 의 trigger candidate id. |
+| `poc_script_path` | PoC script 절대경로 — verified primitive 의 지식 단위. COMBINE SA 가 source 로 read. |
+| `gives` | This primitive provides (e.g. `["libc_base", "rip_control"]`). |
+| `needs` | This primitive requires (e.g. `["canary"]`). |
+| `verification_blockers` | SA verify 가 보고한 tool/method 영역 blocker (`cause` / `suggested_fix` / `retry_recommended`). 다음 SA spawn 시 auto-forward. |
+
+**기타 VulnHunter meta:**
+
+| 필드 | 설명 |
+|---|---|
 | `vulnhunter_analysis_path` | `vulnhunter-analysis.md` 절대경로 |
 | `vulnhunter_analyzed_at` | ISO timestamp |
+
+> **Loader strictness (D4):** `loadChallengeState` 가 old format (detail
+> field 가 state.json 의 `vuln_candidates[]` 에 박혀있는 경우) 감지 시
+> `ChallengeStateLoadError` 던짐. migration 은 OmP implementation 영역 밖
+> — 사용자가 외부 도구로 변환 후 재기동.
 
 **StrategyAgent plan (T14):**
 
@@ -358,18 +398,33 @@ timestamped 파일로 저장. 빌드 실패 시 사용자가 이 로그를 직�
 
 | 주체 | 쓸 수 있는 것 | 금지 |
 |---|---|---|
-| **library** (loader, envsetup) | `state.json` (`saveChallengeState`), `journal.md` (`appendJournalSection`), `artifacts/*` | 직접 사용자 입력 읽기 |
-| **agent (Orchestrator)** | `omp_patch_state` / `omp_append_journal` tool 경유. **병렬 환경의 sole writer** | `write` / `edit` tool로 state.json / journal.md 직접 수정 |
-| **agent (Reverser, VulnHunter)** | `omp_patch_state` / `omp_append_journal` tool 경유 (순차 실행 시) | state.json 직접 쓰기 |
-| **agent (SA, Exploiter — 병렬)** | `omp_read_state`로 읽기만. 결과는 session 출력으로 반환 | `omp_patch_state` / `omp_append_journal` 호출 금지 (sole writer 위반) |
-| **agent (Reverser)** | `write` tool로 `artifacts/reverser-*.md` 생성 | `state.json` / `journal.md` 직접 쓰기 |
+| **library** (loader, envsetup) | `state.json` (`saveChallengeState`), `journal.md` (`appendJournalSection`), `artifacts/*`, `candidates/<id>.json` (`saveCandidate`) | 직접 사용자 입력 읽기 |
+| **agent (Orchestrator)** | `omp_patch_state` / `omp_append_journal` / `omp_{create,patch,delete}_candidate` tool 경유. **병렬 환경의 sole writer** | `write` / `edit` tool로 state.json / journal.md / candidates 직접 수정 |
+| **agent (omp-setup)** | `omp_patch_state` / `omp_append_journal` tool 경유 (Phase 0-6 순차) — `etc` write 허용 | state.json 직접 쓰기. candidate tool 미사용 (omp-setup 영역 아님). |
+| **agent (Reverser)** | `omp_patch_state` (path / timestamp 만) / `omp_append_journal` 경유 + `write` tool로 `artifacts/reverser-*.md` 생성 | `etc` write / candidate write / state.json 직접 쓰기 |
+| **sub-agent (VulnHunter / Strategist / Exploiter)** | `omp_read_state` / `omp_read_candidate` 로 read 만. 결과는 task return value 로 반환. | `omp_patch_state` / `omp_append_journal` / `omp_{create,patch,delete}_candidate` 다 **ACL deny** (sole writer 위반). `etc` write 도 deny. |
 | **사용자** | prompt 채널로 agent에게 correction 지시 | 파일 직접 수정 |
-| **`omp_patch_state`** | `state.json` 부분 필드 (Zod validated) | `challenge_dir` / `schema_version` / `binary_path` — 핵심 identity |
+| **`omp_patch_state`** | `state.json` 부분 필드 (Zod validated). `vuln_candidates[]` 는 summary field 만 (detail 박힘 시 reject) | `challenge_dir` / `schema_version` (자동 strip) |
+| **`omp_{create,patch,delete}_candidate`** | `vuln_candidates[]` summary row + `candidates/<id>.json` detail (둘 다 atomic) | Orchestrator 외 sub-agent (ACL) |
 
 **protected fields:** `omp_patch_state`는 patch 객체에서 `challenge_dir`,
-`schema_version`, `binary_path` 를 자동으로 제거합니다. 이 세 필드는 loader
-초기 시점 외에는 변경 금지 (`binary_path`는 patchelf가 `binary_patched`
-flag와 `binary_original_path` 관리로 handle).
+`schema_version` 두 필드만 자동으로 제거합니다 (T05). 두 필드는 loader
+초기 시점 외에는 변경 금지. `binary_path` 등 그 외 필드는 patchable —
+omp-setup Phase 3 이 patchelf 결과를 `binary_path` 박음 (`binary_sha256`
+같이).
+
+**`vuln_candidates` channel split (state-split-vuln-candidates.md D2/D3):**
+
+| 데이터 | 채널 |
+|---|---|
+| Summary fields (id / verification_result / primitive / agent / combined_from / description / gives_count / needs_count / has_poc) | `omp_patch_state({vuln_candidates: [{...}]})` 가능 — summary-only |
+| Detail fields (rationale / verification_blockers / gives / needs / poc_script_path / location / libc_range / origin_type / derived_from / confidence) | `omp_patch_candidate({id, patch: {detail}})` — `omp_patch_state` 에 박힘 시 reject |
+| Summary + Detail 동시 갱신 | `omp_patch_candidate({id, patch: {summary, detail}})` 한 호출 (state.json row + detail file atomic) |
+| 신규 candidate | `omp_create_candidate({candidate: {summary + detail}})` (둘 다 atomic write) |
+| Candidate 폐기 | `omp_delete_candidate({id})` (state.json row + detail file 둘 다 제거) |
+
+ACL enforcement: `src/orchestration/agent-tool-restrictions.ts`. sub-agent
+가 candidate write tool 호출하면 tool 실행 전 reject.
 
 ---
 
