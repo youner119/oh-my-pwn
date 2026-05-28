@@ -102,7 +102,7 @@ opencode agent picker 에서 `omp-orchestrator` 선택 → prompt 로 "challenge
 
 ### 알려진 한계
 
-- 🚨 **Exploiter Mode 2 (pwno-mcp GDB inspection) 미해결** — pwncli framework 의 `/attach` payload 가 `session_id` 누락 → HTTP 422. Mode 1 (host pwntools, stdout-only) 만 안정. 상세: `.omc/research/pwno-mcp-debugging-investigation.md`.
+- ✅ **Exploiter Mode 2 (pwno-mcp GDB inspection) wedge resolved (2026-05-21)** — 진짜 원인은 pwndbg debuginfod default on + URL 미설정 → attach 시 build-id fetch 가 GDB MI timeout 초과. Fix = fork (`youner119/pwno-mcp`) commit `3794c4f` (debuginfod off by default) + `78219f7` (URL chain) + `bb7ebf9` (cache dir chown). opencode 가 stdio 로 자동 spawn (이전 HTTP remote 영역 폐기). 상세: `.omc/research/pwno-mcp-debugging-investigation.md`.
 - ❌ **Kernel CTF 미지원** — `omp-setup` 이 vmlinux / bzImage / `qemu-system-*` 감지 시 `unsupported` 로 stop. 사용자가 직접 셋업해야 함. 향후 pwno-mcp fork 에서 per-docker + kernel tool 추가 예정.
 - ❌ **Library-only / multi-binary / source-only / browser** 챌린지 미지원 — 동일하게 `unsupported`.
 - ⚠️ **다른 챌린지 실측 미진행** — Object_Object 외 회귀 안 됨. NEEDED set / static / 다양한 binary 형태에서 재현은 future work.

@@ -91,15 +91,9 @@ config: async (cfg) => {
     // env var 없거나 파일 부재 → stderr 경고 + MCP 등록 skip
   }
 
-  // 1-4. pwno-mcp 등록 (Docker HTTP remote — Exploiter의 gdb 관찰용)
-  const pwnoUrl = process.env["OMP_PWNO_MCP_URL"] || "http://127.0.0.1:5500/mcp"
-  if (process.env["OMP_PWNO_MCP_DISABLED"] !== "1") {
-    cfg.mcp["pwno"] = {
-      type: "remote",
-      url: pwnoUrl,
-      enabled: true,
-    }
-  }
+  // 1-4. pwno-mcp 는 plugin 이 주입하지 않음 — opencode.json 의 정적
+  //      mcp.pwno-mcp entry (stdio docker) 가 박혀있고 opencode 가 자동
+  //      spawn. setup-omp.sh 가 그 entry 를 박는다.
 }
 ```
 
@@ -112,11 +106,14 @@ config: async (cfg) => {
   (Node.js bridge subprocess — `node dist/index.js`). Reverser가 사용.
   `setup-omp.sh`가 `~/Tools/binary_ninja_mcp/` 경로에서 자동 탐지.
   BN HTTP plugin이 port 9009에서 실행 중이어야 연결됨 (`OMP_BN_PORT` 기본 9009).
-- **pwno-mcp:** `OMP_PWNO_MCP_URL` 환경변수로 override 가능 (기본
-  `http://127.0.0.1:5500/mcp`). HTTP remote 모드 (Docker container).
-  Exploiter가 gdb breakpoint/memory/register/heap 관찰에 사용.
-  `OMP_PWNO_MCP_DISABLED=1`로 opt-out. Exploiter agent가 Docker container를
-  직접 시작/종료.
+- **pwno-mcp:** **opencode-managed stdio docker container.** `~/.config/omp/opencode/opencode.json`
+  의 정적 `mcp.pwno-mcp` entry (`docker run --rm -i ... pwno-mcp:latest --stdio`) 가
+  박혀있고 opencode 가 첫 MCP tool 호출 시점에 자동 spawn, opencode 종료 시
+  `--rm` 으로 자동 정리. plugin code 는 pwno MCP 영역 안 박음. 사용자가
+  manual docker run 단계 없음. Exploiter Mode 2 가 gdb breakpoint /
+  memory / register / heap 관찰에 사용. 영역: 2026-05-21 stdio 전환
+  (이전 HTTP remote `http://127.0.0.1:5500/mcp` 영역 폐기) + debuginfod
+  wedge resolved (fork commit `3794c4f`).
 
 ### 2. `tool` map — OmP 전용 tool 14개 등록
 
@@ -272,22 +269,35 @@ Orchestrator (LLM)
 - Orchestrator가 결과를 수집하여 **순차적으로** state 기록
 - SA/Exploiter는 `omp_read_state`로 읽기만 가능
 
-### User-managed pwno-mcp Container + session_id (pwno 호환성 수정)
+### opencode-managed pwno-mcp stdio container + session_id
 
 모든 Exploiter 인스턴스가 **1개 Docker container를 공유**하며 session_id로 격리:
 ```
 Exploiter-1 → pwno-mcp container (session_id=verify-vuln_1-r1)   ┐
-Exploiter-2 → pwno-mcp container (session_id=verify-vuln_2-r1)   ├─ 동일 container, port 5500
+Exploiter-2 → pwno-mcp container (session_id=verify-vuln_2-r1)   ├─ 동일 container (stdio)
 Exploiter-3 → pwno-mcp container (session_id=combine-v1+v2-r2)   ┘
 ```
 pwno-mcp가 session_id별로 GDB 프로세스를 격리 관리 (네이티브 multi-session).
-port 분리 불필요.
+port 분리 불필요 (stdio 전환 후 HTTP port 5500 영역 자체 폐기).
 
-**Container lifecycle은 사용자 책임.** OmP는 docker run/stop 안 한다.
-사용자가 `omp` 실행 전에 직접 컨테이너를 띄움 — `scripts/setup-omp.sh`
-끝에 docker run 명령이 출력된다. workspace mount source는 **repo
-root의 `workspace/` 폴더로 고정** — challenge별로 mount path를 바꾸지
-않는다.
+**Container lifecycle은 opencode 책임.** 2026-05-21 stdio 전환 후:
+- `setup-omp.sh` 가 `~/.config/omp/opencode/opencode.json` 의
+  `mcp.pwno-mcp` entry 를 박는다 — `docker run --rm -i --cap-add=SYS_PTRACE
+  --cap-add=SYS_ADMIN --security-opt seccomp=unconfined --security-opt
+  apparmor=unconfined -v $REPO_ROOT/workspace:/workspace -v
+  omp-debuginfod-cache:/home/pwno/.cache/debuginfod_client pwno-mcp:latest --stdio`
+- opencode runtime 이 첫 MCP tool 호출 시점에 자동 spawn, opencode 종료
+  시 `--rm` 으로 자동 정리.
+- 사용자 manual docker run 단계 없음. setup-omp.sh 끝에 docker run 명령
+  출력 영역 폐기.
+- container-manager 코드 부재. plugin code 가 pwno-mcp 주입 안 함.
+
+`pwno-mcp:latest` 는 fork (`youner119/pwno-mcp` → `~/Tools/pwno-mcp/`) 의
+local build (`./docker-build.local.sh`). debuginfod default off + cache
+dir chown 영역 박혀 wedge resolved (CLAUDE.md 항목 11).
+
+workspace mount source는 **repo root 의 `workspace/` 폴더로 고정** —
+challenge별로 mount path를 바꾸지 않는다.
 
 **Challenge 파일은 omp-setup agent 가 workspace 로 stage 한다.** Phase 0
 에서 Orchestrator 가 omp-setup agent 를 launch 하면, agent Phase 5 가
@@ -305,11 +315,9 @@ patchelf 한다. 컨테이너 안에서는 `/workspace/<id>/...` 로 접근.
 Sub-agent (SA/Exploiter)는 받은 session_id를 그대로 forward, 생성/수정
 안 함.
 
-Container health 는 omp-setup agent 가 Phase 5 sanity 단계에서 bash
-(`docker ps` + `curl`) 로 직접 확인. 실패 시 setup agent 가 journal 에
-사유 기록 (단, `setup_unsupported_reason` 은 안 박음 — 컨테이너 lifecycle
-은 사용자 영역이라 setup 자체는 host 검증 통과만으로 valid). 사용자가
-직접 docker run 띄운 뒤 force re-setup 으로 재시도.
+Container health 는 omp-setup agent 가 Phase 5 sanity 단계에서 MCP tool
+호출 시점에 자연 spawn 으로 확인 (별도 health check 없음 — stdio container
+는 opencode 가 lifecycle 관리).
 
 ---
 
