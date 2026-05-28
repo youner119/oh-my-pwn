@@ -115,16 +115,21 @@ config: async (cfg) => {
   (이전 HTTP remote `http://127.0.0.1:5500/mcp` 영역 폐기) + debuginfod
   wedge resolved (fork commit `3794c4f`).
 
-### 2. `tool` map — OmP 전용 tool 14개 등록
+### 2. `tool` map — OmP 전용 tool 18개 등록
 
 ```ts
 tool: {
   omp_load_challenge: ompLoadChallengeTool,        // workspace_root 시드 포함
   omp_read_state: ompReadStateTool,
-  omp_patch_state: ompPatchStateTool,
+  omp_patch_state: ompPatchStateTool,              // vuln_candidates[] = summary-only
   omp_append_journal: ompAppendJournalTool,
   omp_get_template: ompGetTemplateTool,
   omp_verify_template_output: ompVerifyTemplateOutputTool,
+  // Candidate per-file (state split P3 2026-05-24):
+  omp_read_candidate: ompReadCandidateTool,        // all agents
+  omp_create_candidate: ompCreateCandidateTool,    // Orchestrator 전용 (ACL deny sub-agent)
+  omp_patch_candidate: ompPatchCandidateTool,      // Orchestrator 전용 (ACL deny sub-agent)
+  omp_delete_candidate: ompDeleteCandidateTool,    // Orchestrator 전용 (ACL deny sub-agent)
   // 4-tool 병렬 인프라 (2026-05-18 cutover):
   omp_task_launch: ompTaskLaunchTool,             // fire-and-forget sub-agent spawn → {task_id, session_id}
   omp_task_wait_all: ompTaskWaitAllTool,          // 모두 terminal까지 block, 입력 순서 results[]
@@ -201,10 +206,10 @@ opencode (omp alias, XDG_CONFIG_HOME=~/.config/omp)
   ↓ file:// 로 dist/plugin.js 로드
   ↓ OmpPlugin() 호출
   ↓
-  ├── config hook → cfg.agent에 5 agent 주입
-  │                 cfg.mcp에 bn + pwno-mcp 등록
+  ├── config hook → cfg.agent에 9 agent 주입 (orchestrator + setup + reverser + vulnhunter + strategist + exploiter-mode-{1,2,0,9})
+  │                 cfg.mcp에 binja MCP 등록 (pwno-mcp 는 opencode.json 정적 entry — opencode 가 stdio spawn)
   │
-  └── tool map → 10개 omp_* tool을 session 레벨로 노출
+  └── tool map → 18개 omp_* tool을 session 레벨로 노출 (state IO 6 + candidate 4 + task 4 + omp_setup_* 4)
   ↓
 TUI agent picker → 사용자가 omp-orchestrator 선택
   ↓
@@ -442,7 +447,7 @@ one-shot 스크립트입니다. Repo 위치가 바뀌었거나 새 머신에서 
 | `src/agents/definitions.ts` | Agent registry (`ompAgentConfigs`). |
 | `src/agents/omp-orchestrator.ts` | Orchestrator agent factory + prompt. |
 | `src/agents/omp-reverser.ts` | Reverser agent factory + prompt. |
-| `src/tools/*.ts` | 10개 OmP tool 구현. |
+| `src/tools/*.ts` | 18개 OmP tool 구현 (state IO 6 + candidate 4 + task 4 + omp_setup_* 4). |
 | `src/templates/*.ts` | Agent가 tool로 로드하는 템플릿 string. |
 | `scripts/setup-omp.sh` | 머신 세팅 one-shot 스크립트. |
 | `~/.config/omp/opencode/opencode.json` | 플러그인 등록 파일 (사용자 config). |

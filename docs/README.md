@@ -131,7 +131,7 @@ omp
    `state.json` (ChallengeState Zod schema), `journal.md` (append-only),
    `artifacts/` (reverser-analysis, research reports, libc/ld, patched
    binary). 상태 mutation 원칙.
-4. **[tools.md](tools.md)** — 현재 10개 `omp_*` tool의 역할과 시그니처.
+4. **[tools.md](tools.md)** — 현재 18개 `omp_*` tool의 역할과 시그니처.
    왜 tool로 뽑았는지 (deterministic ops는 LLM이 아닌 library).
 5. **[templates.md](templates.md)** — 템플릿 시스템. Reverser research
    report가 어떻게 template 파일 + tool을 통해 생성되는지. 향후
