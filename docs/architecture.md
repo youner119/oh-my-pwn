@@ -106,6 +106,12 @@ config: async (cfg) => {
   (Node.js bridge subprocess — `node dist/index.js`). Reverser가 사용.
   `setup-omp.sh`가 `~/Tools/binary_ninja_mcp/` 경로에서 자동 탐지.
   BN HTTP plugin이 port 9009에서 실행 중이어야 연결됨 (`OMP_BN_PORT` 기본 9009).
+  **v2.0.0 multi-session 모델 (2026-05-21~):** 모든 MCP tool 이 `view_id`
+  필수. Reverser 가 challenge 별 view (alias = `basename(state.challenge_dir)`)
+  를 `create_view` 로 박고 모든 호출에 forward. legacy `_current_view` 전역
+  영역 제거 — `get_binary_status` / `load_binary` / `list_binaries` /
+  `select_binary` 도 폐기 (`list_view` / `create_view` / `delete_view` 가
+  대체). Fork: `youner119/binary_ninja_mcp`.
 - **pwno-mcp:** **opencode-managed stdio docker container.** `~/.config/omp/opencode/opencode.json`
   의 정적 `mcp.pwno-mcp` entry (`docker run --rm -i ... pwno-mcp:latest --stdio`) 가
   박혀있고 opencode 가 첫 MCP tool 호출 시점에 자동 spawn, opencode 종료 시

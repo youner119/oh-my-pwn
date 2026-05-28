@@ -207,15 +207,24 @@ state, including \`binary_path\`, \`source_present\`, and any cached
 ## Available BN MCP tools
 
 Use these tools via the \`binja\` MCP. Before calling any analysis tool,
-run the **BN setup** sequence (step 0 of Analysis strategy).
+run the **BN setup** sequence (step 0 of Analysis strategy) to obtain a
+\`view_id\`.
 
-**Setup / navigation tools:**
+**Every tool below requires \`view_id\` as a parameter (v2.0.0 multi-session
+model).** Missing \`view_id\` → MCP error. Use the view_id established in
+step 0 for the entire run.
+
+**View lifecycle tools (use these in step 0 only):**
 
 | Tool | Purpose |
 |---|---|
-| \`get_binary_status\` | Check if a binary is loaded (returns loaded bool + filename) |
-| \`list_binaries\` | List all open binaries with ids |
-| \`select_binary\` | Switch active binary by id or filename |
+| \`create_view\` | Load a binary file into BN and register as a named view. Args: \`filepath\`, \`view_id\` (caller-chosen alias). 409 if view_id or filepath already loaded (response carries the existing view_id for the filepath case). |
+| \`list_view\` | List all registered views (view_id / filepath / arch / size). No view_id arg. |
+| \`delete_view\` | Unload a view from BN (closes the BV; unsaved analysis is lost). Args: \`view_id\`. |
+
+> Legacy \`get_binary_status\` / \`list_binaries\` / \`select_binary\` are
+> removed in binary_ninja_mcp v2.0.0 (Phase 3). Use \`list_view\` to check
+> what's loaded.
 
 **Read tools (information):**
 
@@ -269,23 +278,40 @@ corrects via the OmP prompt channel after the run, not by blocking you up front.
 ## Analysis strategy
 
 0. **BN setup (BEFORE any analysis).** Ensure the challenge binary is
-   loaded in Binary Ninja's MCP plugin.
+   loaded as a named view in Binary Ninja.
+
+   **view_id convention:** Use \`basename(state.challenge_dir)\` as the
+   view_id (e.g. challenge_dir \`/tmp/ctf/afterimage\` → view_id
+   \`"afterimage"\`). Stable across reruns; recognizable when multiple
+   challenges are open. Forward this view_id to **every** BN MCP call
+   below.
 
    Required setup sequence:
 
-   a. Call \`get_binary_status\` to check if any binary is loaded.
-   b. If a binary is already loaded and the filename matches
-      \`state.binary_path\`, proceed to step 1.
-   c. If no binary is loaded, or the loaded binary doesn't match:
-      call the BN HTTP API to load the binary. Use the
-      \`load\` tool or \`POST /load\` with \`filepath=<state.binary_path>\`.
-      Wait a moment for analysis to begin.
-   d. Call \`get_binary_status\` again to confirm. If still not loaded,
-      STOP. Emit \`omp_append_journal\` with heading \`"BN binary load
-      failed"\` and a short body. Do not proceed with analysis.
-   e. Emit a brief \`omp_append_journal\` entry \`"BN setup ready"\`.
+   a. Call \`list_view\` to enumerate currently loaded views.
+   b. If a view with \`view_id == basename(state.challenge_dir)\` is
+      present AND its \`filepath\` matches \`state.binary_path\`, proceed to
+      step 1 (reusing the existing view).
+   c. If no matching view, call \`create_view(filepath=state.binary_path,
+      view_id=basename(state.challenge_dir))\`. Wait a moment for analysis
+      to begin.
+
+      - 409 \`view_id already in use\` (unrelated view shares the name)
+        → retry once with \`<basename>-<sha8 of state.binary_input_sha256>\`
+        as the view_id.
+      - 409 \`file already loaded as view_id=<X>\` → reuse \`<X>\` as your
+        view_id for the rest of the run; journal the mismatch.
+   d. Call \`list_view\` again to confirm the view is registered. If
+      still missing, STOP. Emit \`omp_append_journal\` with heading
+      \`"BN view create failed"\` and a short body. Do not proceed.
+   e. Emit a brief \`omp_append_journal\` entry
+      \`"BN setup ready (view_id=<X>)"\`.
 
    On failure: stop immediately — BN is not ready.
+
+   **Cleanup:** Do NOT call \`delete_view\` at the end of the run. The
+   view stays loaded so (1) the user can inspect in BN GUI, (2) subsequent
+   reruns short-circuit on step b. User cleans up manually if needed.
 
 1. \`omp_read_state(challenge_dir)\` — handle cache/source-present checks.
 2. (BN setup above is already done by this point.)

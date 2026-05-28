@@ -171,20 +171,28 @@ BN MCP를 통해 함수/변수 rename, inline comment 주입, 타입 refinement
   judgments는 금지 (forbidden-words 규칙 유지).
 
 **BN 사전 설정 요구사항:** Reverser는 Binary Ninja에서 BN MCP HTTP server가
-port 9009에 실행 중이어야 동작. Step 0에서 `get_binary_status`가 실패하면
-`load_binary`로 binary 파일을 로드한 뒤 진행. BN은 `.bndb` database를 자동
-저장해서 사용자가 GUI에서 확인 가능.
+port 9009에 실행 중이어야 동작. binary_ninja_mcp v2.0.0 (multi-session 모델)
+이후 모든 MCP tool 이 **`view_id` 필수** — Reverser 가 step 0 에서
+`list_view` 박은 후 `create_view(filepath=state.binary_path,
+view_id=basename(state.challenge_dir))` 박음. 그 후 모든 호출에 같은
+view_id forward. BN 은 `.bndb` database 를 자동 저장해서 사용자가 GUI 에서
+확인 가능. delete_view 는 호출 안 함 — 재실행 시 기존 view 재사용 + 사용자
+GUI 검토 영역 위해 유지.
 
 **Tool 사용:**
 - `omp_read_state`, `omp_patch_state`, `omp_append_journal`
 - `omp_get_template` — research report 템플릿 로드
 - `omp_verify_template_output` — 템플릿 작성물 구조 검증
-- BN MCP tools: `get_binary_status`, `load_binary`, `list_methods`,
+- BN MCP view lifecycle: `create_view`, `list_view`, `delete_view`
+  (step 0 만 — Reverser 본 분석 중에는 호출 X)
+- BN MCP read/mutation (모두 view_id 박힘): `list_methods`,
   `decompile_function` (기본 HLIL, `lang=pseudoc` 옵션), `decompile_to_file`,
   `rename_function`, `rename_multi_variables`, `retype_variable`, `set_comment`,
   `set_function_comment`, `set_function_prototype`, `define_types`,
   `declare_c_type`, `get_stack_frame_vars`, `get_callers`, `get_callees`,
   `save_bndb`, 등
+- Legacy `get_binary_status` / `load_binary` / `list_binaries` /
+  `select_binary` 는 v2.0.0 Phase 3 에서 제거됨 — 사용 X.
 
 **파일:** `src/agents/omp-reverser.ts` (프롬프트 ~800줄, 가장 복잡한 agent)
 
