@@ -83,11 +83,19 @@ PoC code가 knowledge transfer 메커니즘.
 | C 소스 (`*.c`) | 선택 | 있으면 Reverser는 skip, VulnHunter가 소스 직접 분석 |
 | 원격 서버 | 사용 안 함 | Dockerfile로 로컬 reproduction만 사용 |
 
-### 지원 범위 (MVP)
+### 지원 범위
 
-- **대상:** Linux user-space pwnable, **ELF x86_64**
-- **glibc**: benchmark 문제가 쓰는 버전만 (예정: 2.27 ~ 2.35+)
-- **OUT of scope:** 32-bit, ARM, kernel pwn, browser pwn, web/crypto/misc CTF 장르
+- **Default scope (Mode 1/2):** Linux user-space pwnable, **ELF x86_64**.
+  Mode 1 = host pwntools (stdout-only evidence). Mode 2 = pwno-mcp + explicit
+  GDB attach (memory / register / heap 관찰).
+- **glibc:** benchmark 문제가 쓰는 버전만 (예정: 2.27 ~ 2.35+).
+- **Mode 0 best-effort fallback (2026-05-23~):** kernel-pwn / arm-userland /
+  multi-binary / browser / library-only / source-only 등은 omp-setup 이
+  `challenge_type:"unsupported"` 로 분류 → Orchestrator 가 Mode 0 Exploiter 자율
+  spawn. 자율 시도 영역이지만 sample challenge 회귀 미진행 (정합 보장 X).
+- **Mode 9 사용자 prompt forward:** 사용자가 mode 9 + prompt path 명시 시
+  Exploiter Mode 9 가 그 prompt 그대로 forward — 사용자 directive 직접 실행.
+- **여전히 OUT of scope:** web / crypto / misc CTF 장르 (Mode 0 도 영역 밖).
 
 ---
 
@@ -107,8 +115,9 @@ PoC code가 knowledge transfer 메커니즘.
 # 2. 새 쉘 시작
 source ~/.zshrc
 
-# 3. Binary Ninja 실행 + BN HTTP plugin 활성화 (port 9009)
-#    BN MCP bridge 시작: cd ~/Tools/binary_ninja_mcp && node dist/index.js
+# 3. Binary Ninja 실행 + BN MCP plugin 활성화 (port 9009)
+#    BN bridge 는 setup-omp.sh 가 자동 탐지 + opencode 가 spawn — 직접 명령 불필요.
+#    pwno-mcp (Mode 2 GDB inspection) 도 opencode 가 stdio 로 자동 spawn.
 
 # 4. OmP 전용 opencode TUI 시작
 omp
