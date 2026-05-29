@@ -147,6 +147,10 @@ omp
    VulnHunter/Exploiter도 같은 패턴 재사용 예정.
 6. **[development.md](development.md)** — 개발 환경 전제, 빌드,
    테스트, 코드 변경 후 workflow, 프로젝트 디렉토리 구조.
+7. **[database.md](database.md)** — Phase 1 DB 영역 (state/candidate →
+   SQLite + 별개 stdio MCP server + Drizzle ORM + 2 layer ACL).
+   현 `state-and-io.md` 영역의 미래 대체. Spec:
+   `.omc/specs/deep-interview-database-mcp.md`.
 
 ### 심화 자료
 
