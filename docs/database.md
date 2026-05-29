@@ -9,8 +9,8 @@
 
 ## 핵심 결정 (deep-interview, 2026-05-29)
 
-1. **DB = SQLite (WAL mode)** — embedded, per-challenge file, Orchestrator sole writer invariant 자연 fit.
-2. **Per-challenge file** — `<challenge>/.omp/state.db` (현 challenge-격리 모델 유지). Cross-challenge 2-tier 없음.
+1. **DB = SQLite (WAL mode)** — embedded, Orchestrator sole writer invariant 자연 fit.
+2. **글로벌 single DB at repo root** — `<repo-root>/state.db`. 모든 challenge 가 한 파일에 row 로 공존, `challenge_id` PK 로 격리. 초기 개발 단계는 git 추적 (multi-machine / 세션 간 schema + 첫 데이터 동기화 편의). WAL 사이드카 (`.db-wal` / `.db-shm`) 는 git 무시.
 3. **완전 교체** — file-based 영역 (`state.json` + `candidates/*.json`) 폐기. SQLite = sole source-of-truth.
 4. **별개 stdio MCP server** — `omp-db-mcp` (pwno-mcp / binja MCP 패턴). opencode 자동 spawn + tool discovery.
 5. **DB 영역 plugin tool 6개 폐기** — agent 가 `mcp__omp-db__*` 직접 호출. 비 DB plugin tool 12개 유지.
@@ -21,20 +21,21 @@
 
 ---
 
-## DB file 영역
+## DB file 위치
 
 ```
-<challenge-dir>/
-└── .omp/
-    └── state.db          ← SQLite, WAL mode, per-challenge sole source-of-truth
-    └── state.db-wal      ← WAL journal (자동)
-    └── state.db-shm      ← shared memory (자동)
+<repo-root>/
+├── state.db              ← SQLite, WAL mode, 글로벌 single DB (git 추적 — 초기 단계)
+├── state.db-wal          ← WAL journal (자동, git 무시)
+└── state.db-shm          ← shared memory (자동, git 무시)
 ```
 
-- **Path:** `<challenge>/.omp/state.db` (`state.json` + `candidates/*.json` 폐기).
+- **Path:** `<repo-root>/state.db` (기존 `<challenge>/.omp/state.json` + `candidates/*.json` 완전 폐기).
+- **단위:** 글로벌 single DB — 모든 challenge 가 한 파일에 row 로 공존. `challenge_id` PK 로 row-level 격리.
 - **Mode:** WAL (`PRAGMA journal_mode = WAL`) — reader-many writer-one.
 - **Foreign keys:** `PRAGMA foreign_keys = ON` (CASCADE 동작 보장).
-- **Atomic write:** POSIX rename 영역 안 박힘 → WAL transaction 영역. 다중 statement 박힌 영역 = explicit `BEGIN` / `COMMIT`.
+- **Atomic write:** WAL transaction — 다중 statement 는 explicit `BEGIN` / `COMMIT`.
+- **Git 정책:** `state.db` 자체는 초기 단계 git 추적 (multi-machine / 세션 간 schema + 첫 데이터 동기화). WAL 사이드카 (`.db-wal` / `.db-shm`) 는 `.gitignore`.
 
 ---
 
@@ -91,7 +92,7 @@
 
 ```
 opencode (TUI) ─stdio─ omp-db-mcp (bun process)
-                          ├─ bun:sqlite (per-challenge state.db open)
+                          ├─ bun:sqlite (글로벌 state.db open)
                           ├─ Drizzle ORM (relations + with preload)
                           └─ 6 typed tool 박힘
                               ├─ mcp__omp-db__read_state
@@ -166,37 +167,42 @@ Drizzle `relations + with` 영역 박힘 = **1 query LEFT JOIN preload** (N+1 �
 - 기존 challenge 의 `state.json` + `candidates/*.json` → SQLite migration script 박힌 후 file 영역 삭제.
 - 병행 운영 (dual-write) 안 함 — SQLite = sole source-of-truth.
 
-### Migration script 영역 (T3 plan)
+### Migration script (T3 plan)
+
+기존 file 영역이 여러 challenge dir 에 흩어져 있으므로 multi-challenge walk 필요:
 
 ```
-1. <challenge>/.omp/state.json 영역 → parse → ChallengeState zod validate
-2. <challenge>/.omp/state.db 영역 박힘 (Drizzle migration runner)
-3. state row insert (모든 column + array FK 영역)
-4. candidates/*.json walk → 각 candidate row insert (+ array FK 영역)
-5. 박힌 영역 검증 — re-read state via Drizzle → 영영 동등 박힘 확인
-6. file 영역 삭제 — state.json + candidates/ 디렉토리
+1. 모든 challenge dir walk (사용자가 명시한 challenge dir list 또는 자동 탐지)
+2. 각 challenge dir 의 .omp/state.json → parse → ChallengeState zod validate
+3. <repo-root>/state.db 열기 (Drizzle migration runner — 첫 호출 시 schema 생성)
+4. state row insert (모든 column + array FK), challenge_id = derive from challenge dir
+5. <challenge>/.omp/candidates/*.json walk → 각 candidate row insert (+ array FK)
+6. 검증 — re-read via Drizzle → 원본 zod 객체와 동등성 확인
+7. 모든 challenge 검증 통과 후 file 삭제 — 각 challenge 의 state.json + candidates/ 디렉토리
 ```
 
-박힌 실패 영역 — transaction rollback (`BEGIN` ~ `COMMIT` 안). file 영역 삭제 = transaction commit 박힌 *후* 박힘 (rollback 영영 보장).
+실패 시 transaction rollback (`BEGIN` ~ `COMMIT`). file 삭제는 transaction commit *후* 진행 (rollback 안전성 보장). 부분 실패 (일부 challenge 만 migration 성공) 처리 정책은 plan 단계 결정.
 
 ### Drizzle migration runner (T2 plan)
 
-- `drizzle-kit generate` → `src/db/migrations/0000_*.sql` 박힘 (10 table + index 영역).
-- Runtime — `migrate(db, { migrationsFolder: "src/db/migrations" })` from `drizzle-orm/bun-sqlite/migrator` 박힘.
-- 매 DB file 첫 open 시점 박힘 (idempotent).
+- `drizzle-kit generate` → `src/db/migrations/0000_*.sql` 생성 (10 table + index).
+- Runtime — `migrate(db, { migrationsFolder: "src/db/migrations" })` from `drizzle-orm/bun-sqlite/migrator`.
+- 글로벌 DB 첫 open 시점에 한 번 실행 (idempotent).
 
 ---
 
 ## 외부 read 채널
 
-박힌 invariant — SQLite file 자체 박힌 *외부 process 영역 read-only 접근 가능* (WAL reader-many 보장).
+SQLite file 자체를 외부 process 가 read-only 로 직접 열 수 있음 (WAL reader-many 보장).
 
 ```bash
-sqlite3 -readonly <challenge>/.omp/state.db
+sqlite3 -readonly <repo-root>/state.db
 sqlite> .schema
-sqlite> SELECT id, primitive, verification_result FROM candidates;
-sqlite> SELECT candidate_id FROM candidates_gives WHERE primitive_name = 'libc_base';
+sqlite> SELECT challenge_id, id, primitive, verification_result FROM candidates;
+sqlite> SELECT challenge_id, candidate_id FROM candidates_gives WHERE primitive_name = 'libc_base';
 ```
+
+글로벌 single DB 이므로 한 번에 모든 challenge 의 state / candidate 조회 가능 — 디버깅 / 통계 / 검토 자연.
 
 박힐 용도:
 - **사용자 검토** — challenge 상태 영역 직접 확인 (현 `cat state.json` 편의 영역의 대체)
