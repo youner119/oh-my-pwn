@@ -161,33 +161,32 @@ Drizzle `relations + with` 영역 박힘 = **1 query LEFT JOIN preload** (N+1 �
 
 ---
 
-## Migration 영역 (완전 교체)
+## Cutover 정책 (Fresh start, migration 없음)
 
-박힌 결정 — **완전 교체** (사용자 명시, deep-interview Round 1):
-- 기존 challenge 의 `state.json` + `candidates/*.json` → SQLite migration script 박힌 후 file 영역 삭제.
-- 병행 운영 (dual-write) 안 함 — SQLite = sole source-of-truth.
+사용자 결정 (2026-05-30): **기존 `state.json` + `candidates/*.json` 활용 안 함, 새 DB fresh start.**
 
-### Migration script (T3 plan)
+- 새 DB 시스템 가동 시점 = 빈 `<repo-root>/state.db` 에 Drizzle migrate 호출 → 10 table 생성.
+- 첫 `omp_load_challenge` 호출부터 row 박힘. 기존 challenge 의 진행 상태는 *DB 안으로 가져오지 않음*.
+- SQLite = sole source-of-truth, 병행 운영 / dual-write 없음.
 
-기존 file 영역이 여러 challenge dir 에 흩어져 있으므로 multi-challenge walk 필요:
+### 옛 challenge dir 의 file 처리
 
 ```
-1. 모든 challenge dir walk (사용자가 명시한 challenge dir list 또는 자동 탐지)
-2. 각 challenge dir 의 .omp/state.json → parse → ChallengeState zod validate
-3. <repo-root>/state.db 열기 (Drizzle migration runner — 첫 호출 시 schema 생성)
-4. state row insert (모든 column + array FK), challenge_id = derive from challenge dir
-5. <challenge>/.omp/candidates/*.json walk → 각 candidate row insert (+ array FK)
-6. 검증 — re-read via Drizzle → 원본 zod 객체와 동등성 확인
-7. 모든 challenge 검증 통과 후 file 삭제 — 각 challenge 의 state.json + candidates/ 디렉토리
+<challenge-dir>/.omp/
+├── state.json         ← 옛 데이터 (코드 path 가 안 읽음, 안 씀)
+└── candidates/        ← 옛 데이터 (자연 무시)
 ```
 
-실패 시 transaction rollback (`BEGIN` ~ `COMMIT`). file 삭제는 transaction commit *후* 진행 (rollback 안전성 보장). 부분 실패 (일부 challenge 만 migration 성공) 처리 정책은 plan 단계 결정.
+- **새 코드 path 가 이 file 들을 만지지 않음** → 자연 무시.
+- 사용자가 검토 / 백업 / 수동 정리 가능. cleanup script 자동 실행 없음.
+- 별도 cleanup 원하면 단순한 `rm -rf <challenge>/.omp/state.json <challenge>/.omp/candidates` 로 충분 (사용자 판단).
 
-### Drizzle migration runner (T2 plan)
+### Drizzle migration runner (T2)
 
-- `drizzle-kit generate` → `src/db/migrations/0000_*.sql` 생성 (10 table + index).
+- `drizzle-kit generate` → `src/db/migrations/0000_*.sql` 생성 (10 table + index + composite FK).
 - Runtime — `migrate(db, { migrationsFolder: "src/db/migrations" })` from `drizzle-orm/bun-sqlite/migrator`.
-- 글로벌 DB 첫 open 시점에 한 번 실행 (idempotent).
+- 글로벌 DB 첫 open 시점에 한 번 실행 (idempotent — 두 번째 호출 시 noop).
+- 향후 schema 변경 시 `drizzle-kit generate` 추가 호출 → 새 migration SQL 자동 생성 → runtime 에서 자동 적용.
 
 ---
 
