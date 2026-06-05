@@ -14,12 +14,27 @@ import {
   decomposeCandidate,
   decomposeState,
   deleteCandidateRow,
+  deriveCategory,
   insertCandidate,
   loadCandidate,
   loadState,
   upsertCandidateSummary,
   writeStateRow,
 } from "./mapper"
+
+describe("deriveCategory", () => {
+  test("user-mode-elf maps to itself", () => {
+    expect(deriveCategory("user-mode-elf", null)).toBe("user-mode-elf")
+  })
+  test("unsupported uses unsupported_kind, else 'unsupported'", () => {
+    expect(deriveCategory("unsupported", "kernel-pwn")).toBe("kernel-pwn")
+    expect(deriveCategory("unsupported", null)).toBe("unsupported")
+  })
+  test("not-yet-classified → 'unclassified'", () => {
+    expect(deriveCategory(null, null)).toBe("unclassified")
+    expect(deriveCategory(undefined, undefined)).toBe("unclassified")
+  })
+})
 
 const CID = "chalmapper_aaaa0001" // surrogate challenge_id (the key)
 const DIR = "/tmp/chal-mapper" // challenge_dir (lives in challenges.dir)

@@ -75,7 +75,7 @@ describe("omp-db MCP server (end-to-end via InMemoryTransport)", () => {
     if (existsSync(dir)) rmSync(dir, { recursive: true, force: true })
   })
 
-  test("lists all 6 tools", async () => {
+  test("lists all 9 tools", async () => {
     const { tools } = await client.listTools()
     expect(tools.map((t) => t.name).sort()).toEqual([
       "create_candidate",
@@ -83,8 +83,88 @@ describe("omp-db MCP server (end-to-end via InMemoryTransport)", () => {
       "patch_candidate",
       "patch_state",
       "read_candidate",
+      "read_challenge",
       "read_state",
+      "register_challenge",
+      "update_challenge",
     ])
+  })
+
+  test("register_challenge mints '<name>_<uuid8>' and is idempotent by dir", async () => {
+    const r1 = await call("register_challenge", {
+      dir: "/tmp/chal-reg",
+      name: "After Image!",
+      ...ORCH,
+    })
+    expect(r1.ok).toBe(true)
+    expect(r1.reused).toBe(false)
+    const id = r1.challenge_id as string
+    expect(id).toMatch(/^after-image_[0-9a-f]{8}$/)
+    expect((r1.challenge as { category: string }).category).toBe("unclassified")
+    expect((r1.challenge as { status: string }).status).toBe("unsolved")
+
+    // same dir → reuse, no new id
+    const r2 = await call("register_challenge", { dir: "/tmp/chal-reg", ...ORCH })
+    expect(r2.reused).toBe(true)
+    expect(r2.challenge_id).toBe(id)
+
+    // initial state row exists (read_state works on the minted id)
+    const st = await call("read_state", { challenge_id: id })
+    expect(st.ok).toBe(true)
+    expect((st.state as { challenge_dir: string }).challenge_dir).toBe("/tmp/chal-reg")
+  })
+
+  test("register_challenge is orchestrator-only", async () => {
+    const deny = await call("register_challenge", {
+      dir: "/tmp/chal-x",
+      agent_id: "vulnhunter",
+    })
+    expect(deny.error).toBe("acl_denied")
+  })
+
+  test("read_challenge returns catalog; category derives from state classification", async () => {
+    const reg = await call("register_challenge", { dir: "/tmp/chal-cat", ...ORCH })
+    const id = reg.challenge_id as string
+
+    const miss = await call("read_challenge", { challenge_id: "nope_00000000" })
+    expect(miss.error).toBe("challenge_not_found")
+
+    // classify via patch_state → category reflects it
+    await call("patch_state", {
+      challenge_id: id,
+      patch: { challenge_type: "unsupported", unsupported_kind: "kernel-pwn" },
+      ...ORCH,
+    })
+    const rc = await call("read_challenge", { challenge_id: id })
+    expect((rc.challenge as { category: string }).category).toBe("kernel-pwn")
+  })
+
+  test("update_challenge sets status/notes; orchestrator-only", async () => {
+    const reg = await call("register_challenge", { dir: "/tmp/chal-upd", ...ORCH })
+    const id = reg.challenge_id as string
+
+    const deny = await call("update_challenge", {
+      challenge_id: id,
+      patch: { status: "solved" },
+      agent_id: "exploiter",
+    })
+    expect(deny.error).toBe("acl_denied")
+
+    const upd = await call("update_challenge", {
+      challenge_id: id,
+      patch: { status: "solved", solved_at: "2026-06-05T12:00:00.000Z", notes: "fsop" },
+      ...ORCH,
+    })
+    expect((upd.challenge as { status: string }).status).toBe("solved")
+    expect((upd.challenge as { notes: string }).notes).toBe("fsop")
+    expect((upd.challenge as { solved_at: string }).solved_at).toBe("2026-06-05T12:00:00.000Z")
+
+    const gone = await call("update_challenge", {
+      challenge_id: "missing_00000000",
+      patch: { status: "solved" },
+      ...ORCH,
+    })
+    expect(gone.error).toBe("challenge_not_found")
   })
 
   test("read_state returns the seeded state; unknown → state_not_found", async () => {

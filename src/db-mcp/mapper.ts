@@ -29,13 +29,14 @@
  *   the file model produced.
  */
 
-import { and, eq } from "drizzle-orm"
+import { and, desc, eq } from "drizzle-orm"
 
 import {
   ChallengeStateSchema,
   VulnCandidateSchema,
   VulnCandidateSummarySchema,
   VulnCandidateDetailSchema,
+  createInitialChallengeState,
   type ChallengeState,
   type VulnCandidate,
   type VulnCandidateSummary,
@@ -46,12 +47,15 @@ import {
   candidatesGives,
   candidatesNeeds,
   candidatesVerificationBlockers,
+  challenges,
   state,
   stateCorrections,
   stateExtractedLibs,
   stateSetupBlockerCandidates,
   stateSourcePaths,
   type CandidatesInsert,
+  type ChallengesInsert,
+  type ChallengesRow,
   type OmpDatabase,
   type StateInsert,
 } from "../db"
@@ -774,6 +778,158 @@ export function deleteCandidateRow(
   if (existing.length === 0) return false
   tx.delete(candidates)
     .where(and(eq(candidates.challengeId, cid), eq(candidates.id, id)))
+    .run()
+  return true
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// Challenge catalog (CI2) — register / read / update
+// spec: challenge-identity-catalog.md (CI2)
+// ──────────────────────────────────────────────────────────────────────────
+
+/** Catalog view returned by register/read/update tools — challenges row + derived category. */
+export interface ChallengeView {
+  challenge_id: string
+  name: string
+  dir: string
+  source: string | null
+  status: string
+  solved_at: string | null
+  notes: string | null
+  created_at: string
+  updated_at: string
+  /** Derived from state.challenge_type / unsupported_kind — NOT a stored column. */
+  category: string
+}
+
+/**
+ * Flat human-facing category derived from the setup classification (the single
+ * source). `user-mode-elf` → itself; `unsupported` → the unsupported_kind (or
+ * "unsupported"); not-yet-classified (setup未) → "unclassified".
+ */
+export function deriveCategory(
+  challengeType: string | null | undefined,
+  unsupportedKind: string | null | undefined,
+): string {
+  if (challengeType === "user-mode-elf") return "user-mode-elf"
+  if (challengeType === "unsupported") return unsupportedKind ?? "unsupported"
+  return "unclassified"
+}
+
+function challengeView(row: ChallengesRow, category: string): ChallengeView {
+  return {
+    challenge_id: row.challengeId,
+    name: row.name,
+    dir: row.dir,
+    source: row.source ?? null,
+    status: row.status,
+    solved_at: row.solvedAt ?? null,
+    notes: row.notes ?? null,
+    created_at: row.createdAt,
+    updated_at: row.updatedAt,
+    category,
+  }
+}
+
+/** Idempotency (i): most-recently-registered challenge at `dir`, or null. */
+export async function findChallengeByDir(
+  db: OmpDatabase,
+  dir: string,
+): Promise<ChallengesRow | null> {
+  const rows = await db
+    .select()
+    .from(challenges)
+    .where(eq(challenges.dir, dir))
+    .orderBy(desc(challenges.createdAt))
+    .limit(1)
+  return rows[0] ?? null
+}
+
+/** Load a challenge's catalog view (challenges row + derived category). */
+export async function loadChallengeView(
+  db: OmpDatabase,
+  challengeId: string,
+): Promise<ChallengeView | null> {
+  const ch = await db.query.challenges.findFirst({
+    where: (c, { eq: e }) => e(c.challengeId, challengeId),
+    with: { state: true },
+  })
+  if (!ch) return null
+  const st = (ch as { state?: { challengeType: string | null; unsupportedKind: string | null } }).state
+  return challengeView(ch, deriveCategory(st?.challengeType, st?.unsupportedKind))
+}
+
+/**
+ * Register a new challenge: challenges row + an initial state row, atomically.
+ * Caller has already generated `challengeId`/`name` and checked dir idempotency.
+ */
+export function insertChallengeWithState(
+  db: OmpDatabase,
+  args: {
+    challengeId: string
+    name: string
+    dir: string
+    workspaceRoot?: string
+    now: Date
+  },
+): void {
+  const { challengeId, name, dir, workspaceRoot, now } = args
+  const iso = now.toISOString()
+  const initial = createInitialChallengeState(
+    {
+      challenge_dir: dir,
+      ...(workspaceRoot !== undefined ? { workspace_root: workspaceRoot } : {}),
+    },
+    now,
+  )
+  const decomp = decomposeState(challengeId, initial)
+  db.transaction((tx) => {
+    tx.insert(challenges)
+      .values({
+        challengeId,
+        name,
+        dir,
+        status: "unsolved",
+        createdAt: iso,
+        updatedAt: iso,
+      } satisfies ChallengesInsert)
+      .run()
+    writeStateRow(tx, decomp)
+  })
+}
+
+/**
+ * Update catalog fields (status / source / notes / solved_at). Only keys
+ * present in `patch` are written; `updated_at` is stamped. Returns whether the
+ * row existed.
+ */
+export function updateChallengeRow(
+  db: OmpDatabase,
+  challengeId: string,
+  patch: {
+    status?: string
+    source?: string | null
+    notes?: string | null
+    solvedAt?: string | null
+  },
+  now: Date,
+): boolean {
+  const existing = db
+    .select({ id: challenges.challengeId })
+    .from(challenges)
+    .where(eq(challenges.challengeId, challengeId))
+    .all()
+  if (existing.length === 0) return false
+
+  const set: Partial<ChallengesInsert> = { updatedAt: now.toISOString() }
+  if ("status" in patch) set.status = patch.status as ChallengesInsert["status"]
+  if ("source" in patch) set.source = patch.source ?? null
+  if ("notes" in patch) set.notes = patch.notes ?? null
+  if ("solvedAt" in patch) set.solvedAt = patch.solvedAt ?? null
+
+  db.update(challenges)
+    .set(set)
+    .where(eq(challenges.challengeId, challengeId))
     .run()
   return true
 }

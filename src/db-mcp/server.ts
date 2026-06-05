@@ -14,6 +14,8 @@
  * file-era tools returned, so the Orchestrator's parsing is unchanged.
  */
 
+import { basename } from "node:path"
+
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js"
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js"
 import { z } from "zod"
@@ -31,14 +33,34 @@ import {
   decomposeCandidate,
   decomposeState,
   deleteCandidateRow,
+  findChallengeByDir,
   insertCandidate,
+  insertChallengeWithState,
   loadCandidate,
+  loadChallengeView,
   loadState,
   stateExists,
+  updateChallengeRow,
   upsertCandidateSummary,
   writeCandidate,
   writeStateRow,
 } from "./mapper"
+
+/** Catalog status enum (challenges.status). */
+const CHALLENGE_STATUS = ["unsolved", "solving", "solved", "abandoned"] as const
+
+/**
+ * Sanitize a raw name into the `name` part of `<name>_<uuid8>`: lowercase,
+ * non-`[a-z0-9_-]` → `-`, collapse, trim, fallback "challenge".
+ */
+function sanitizeName(raw: string): string {
+  const s = raw
+    .toLowerCase()
+    .replace(/[^a-z0-9_-]+/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^[-_]+|[-_]+$/g, "")
+  return s.length > 0 ? s : "challenge"
+}
 
 /** Wrap any JSON-able value as an MCP text tool result. */
 function jsonResult(value: unknown): CallToolResult {
@@ -356,6 +378,143 @@ export function createDbMcpServer(db: OmpDatabase): McpServer {
             id,
           })
         return jsonResult({ ok: true, deleted: true, id })
+      } catch (err) {
+        return jsonResult({ error: "internal_error", message: String(err) })
+      }
+    },
+  )
+
+  // ── register_challenge ──────────────────────────────────────────────────
+  server.registerTool(
+    "register_challenge",
+    {
+      description:
+        "Register a challenge (identity + catalog) and seed its initial state " +
+        "row. Idempotent by dir: if a challenge already exists at `dir`, returns " +
+        "its existing challenge_id (reused:true) without writing. Otherwise mints " +
+        "challenge_id = '<name>_<uuid8>' (name = sanitized `name` or basename(dir)) " +
+        "and creates the challenges + initial state rows. Orchestrator-only. " +
+        "Returns {ok, reused, challenge_id, challenge}.",
+      inputSchema: {
+        dir: z.string().describe("Absolute challenge directory path."),
+        workspace_root: z
+          .string()
+          .optional()
+          .describe("Plugin workspace mount source, seeded into the state row."),
+        name: z
+          .string()
+          .optional()
+          .describe("Human label; defaults to basename(dir). Sanitized."),
+        agent_id: z.string().describe("Must be 'orchestrator' (ACL Layer 2)."),
+      },
+    },
+    async ({ dir, workspace_root, name, agent_id }): Promise<CallToolResult> => {
+      const denial = checkWriteAcl(agent_id)
+      if (denial) return jsonResult(denial)
+      try {
+        const existing = await findChallengeByDir(db, dir)
+        if (existing) {
+          const challenge = await loadChallengeView(db, existing.challengeId)
+          return jsonResult({
+            ok: true,
+            reused: true,
+            challenge_id: existing.challengeId,
+            challenge,
+          })
+        }
+        const base = sanitizeName(name ?? basename(dir))
+        const uuid8 = crypto.randomUUID().replace(/-/g, "").slice(0, 8)
+        const challengeId = `${base}_${uuid8}`
+        insertChallengeWithState(db, {
+          challengeId,
+          name: base,
+          dir,
+          workspaceRoot: workspace_root,
+          now: new Date(),
+        })
+        const challenge = await loadChallengeView(db, challengeId)
+        return jsonResult({ ok: true, reused: false, challenge_id: challengeId, challenge })
+      } catch (err) {
+        return jsonResult({ error: "internal_error", message: String(err) })
+      }
+    },
+  )
+
+  // ── read_challenge ──────────────────────────────────────────────────────
+  server.registerTool(
+    "read_challenge",
+    {
+      description:
+        "Read a challenge's catalog record (challenge_id / name / dir / source / " +
+        "status / solved_at / notes / timestamps) plus a derived `category` " +
+        "(from state.challenge_type / unsupported_kind). All agents may call. " +
+        "Returns {ok, challenge} or {error:'challenge_not_found'}.",
+      inputSchema: {
+        challenge_id: z.string().describe("Challenge identifier."),
+      },
+    },
+    async ({ challenge_id }): Promise<CallToolResult> => {
+      try {
+        const challenge = await loadChallengeView(db, challenge_id)
+        if (!challenge)
+          return jsonResult({
+            error: "challenge_not_found",
+            message: `No challenge ${JSON.stringify(challenge_id)}.`,
+            challenge_id,
+          })
+        return jsonResult({ ok: true, challenge })
+      } catch (err) {
+        return jsonResult({ error: "internal_error", message: String(err) })
+      }
+    },
+  )
+
+  // ── update_challenge ────────────────────────────────────────────────────
+  server.registerTool(
+    "update_challenge",
+    {
+      description:
+        "Update a challenge's catalog fields (status / source / notes / " +
+        "solved_at). Identity fields (challenge_id / name / dir / created_at) are " +
+        "immutable here. source/notes/solved_at accept null to clear. " +
+        "Orchestrator-only. Returns {ok, challenge} or {error:'challenge_not_found'}.",
+      inputSchema: {
+        challenge_id: z.string().describe("Challenge identifier."),
+        patch: z
+          .object({
+            status: z.enum(CHALLENGE_STATUS).optional(),
+            source: z.string().nullable().optional(),
+            notes: z.string().nullable().optional(),
+            solved_at: z.string().nullable().optional(),
+          })
+          .describe("Catalog fields to update (only present keys are written)."),
+        agent_id: z.string().describe("Must be 'orchestrator' (ACL Layer 2)."),
+      },
+    },
+    async ({ challenge_id, patch, agent_id }): Promise<CallToolResult> => {
+      const denial = checkWriteAcl(agent_id)
+      if (denial) return jsonResult(denial)
+      try {
+        const mapped: {
+          status?: string
+          source?: string | null
+          notes?: string | null
+          solvedAt?: string | null
+        } = {}
+        if (patch.status !== undefined) mapped.status = patch.status
+        if ("source" in patch) mapped.source = patch.source ?? null
+        if ("notes" in patch) mapped.notes = patch.notes ?? null
+        if ("solved_at" in patch) mapped.solvedAt = patch.solved_at ?? null
+
+        const existed = updateChallengeRow(db, challenge_id, mapped, new Date())
+        if (!existed)
+          return jsonResult({
+            error: "challenge_not_found",
+            message: `No challenge ${JSON.stringify(challenge_id)} to update.`,
+            challenge_id,
+          })
+        const challenge = await loadChallengeView(db, challenge_id)
+        return jsonResult({ ok: true, challenge })
       } catch (err) {
         return jsonResult({ error: "internal_error", message: String(err) })
       }
