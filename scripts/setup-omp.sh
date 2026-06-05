@@ -68,6 +68,10 @@ done
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 PLUGIN_PATH="$REPO_ROOT/dist/plugin.js"
+# omp-db: 별개 stdio MCP server (bun dist/db-mcp.js) + 글로벌 단일 DB at repo root.
+# spec: deep-interview-database-mcp.md (T7). OMP_DB_PATH env 로 경로 주입.
+DB_MCP_PATH="$REPO_ROOT/dist/db-mcp.js"
+DB_PATH="$REPO_ROOT/state.db"
 # TUI plugin 은 raw .tsx 직접 등록. opencode 가 ensureRuntimePluginSupport
 # 통해 load 시점 transform — @opentui/solid / solid-js import 를 internal
 # instance 로 redirect. 우리 dist 빌드 후 등록 시 *external opentui instance
@@ -93,6 +97,8 @@ run() {
 
 say "repo root:       $REPO_ROOT"
 say "plugin path:     $PLUGIN_PATH"
+say "db-mcp path:     $DB_MCP_PATH"
+say "db path:         $DB_PATH"
 say "plugin-tui path: $PLUGIN_TUI_PATH"
 
 # ── 1) install + build ────────────────────────────────────────────────────────
@@ -114,6 +120,8 @@ if [[ "$DO_BUILD" == "1" ]]; then
   if [[ "$HAS_SRC" == "1" ]]; then
     say "building plugin (bun run build:plugin)"
     run "cd '$REPO_ROOT' && bun run build:plugin"
+    say "building db-mcp (bun run build:db-mcp)"
+    run "cd '$REPO_ROOT' && bun run build:db-mcp"
   else
     say "release branch detected (no src/) — skipping build, using bundled dist/plugin.js"
   fi
@@ -124,6 +132,13 @@ fi
 if [[ ! -f "$PLUGIN_PATH" && "$DRY_RUN" == "0" ]]; then
   echo "ERROR: $PLUGIN_PATH not found after build step" >&2
   exit 1
+fi
+
+# db-mcp 는 soft check — release branch (no src/) 에 dist/db-mcp.js 가 아직
+# 동봉 안 됐을 수 있어 hard error 대신 warn. main 은 build:db-mcp 가 생성하므로
+# 정상 경로에선 안 뜸.
+if [[ ! -f "$DB_MCP_PATH" && "$DRY_RUN" == "0" ]]; then
+  warn "$DB_MCP_PATH not found — mcp.omp-db entry 는 박되 runtime spawn 실패 가능 (build:db-mcp 미실행 또는 release 미동봉)."
 fi
 
 # TUI plugin 은 옵션. raw .tsx 직접 등록이라 file 존재만 check.
@@ -202,6 +217,9 @@ run "mkdir -p '$CONFIG_DIR'"
 # fork local build from ~/Tools/pwno-mcp — see CLAUDE.md "pwno-mcp custom
 # fork" section. Workspace mount is the repo root's workspace/ (matches
 # omp-setup agent's path convention).
+# omp-db: opencode-managed stdio bun process (dist/db-mcp.js). state/candidate
+# 의 글로벌 SQLite DB (repo root state.db) 를 6 typed tool 로 노출. OMP_DB_PATH
+# env 로 DB 경로 주입. spec: deep-interview-database-mcp.md (T7, AC2).
 read -r -d '' OPENCODE_CONFIG_JSON <<EOF || true
 {
   "\$schema": "https://opencode.ai/config.json",
@@ -219,6 +237,12 @@ read -r -d '' OPENCODE_CONFIG_JSON <<EOF || true
         "pwno-mcp:latest",
         "--stdio"
       ],
+      "enabled": true
+    },
+    "omp-db": {
+      "type": "local",
+      "command": ["bun", "$DB_MCP_PATH"],
+      "environment": { "OMP_DB_PATH": "$DB_PATH" },
       "enabled": true
     }
   }
