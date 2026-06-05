@@ -21,12 +21,7 @@ export {
   type UserCorrection,
   type InitialChallengeStateInput,
 } from "./state/challenge-state"
-export {
-  initializeOmpDir,
-  saveChallengeState,
-  getStatePaths,
-  ChallengeStateLoadError,
-} from "./state/io"
+export { initializeOmpDir, getStatePaths } from "./state/io"
 export {
   appendJournalSection,
   appendUserCorrection,

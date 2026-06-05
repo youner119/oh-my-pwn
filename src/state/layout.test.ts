@@ -7,8 +7,6 @@ import {
   resolveExploitDir,
   resolveLogsDir,
   resolveArtifactsDir,
-  resolveCandidatesDir,
-  resolveCandidatePath,
   OMP_SUBDIRS,
 } from "./layout"
 import {
@@ -38,7 +36,7 @@ describe("omp state layout", () => {
     )
   })
 
-  test("resolveExploitDir / LogsDir / ArtifactsDir / CandidatesDir point at subdirs", () => {
+  test("resolveExploitDir / LogsDir / ArtifactsDir point at subdirs", () => {
     expect(resolveExploitDir(challengeDir)).toBe(
       join(challengeDir, OMP_DIR, EXPLOIT_DIR),
     )
@@ -47,15 +45,6 @@ describe("omp state layout", () => {
     )
     expect(resolveArtifactsDir(challengeDir)).toBe(
       join(challengeDir, OMP_DIR, ARTIFACTS_DIR),
-    )
-    expect(resolveCandidatesDir(challengeDir)).toBe(
-      join(challengeDir, OMP_DIR, CANDIDATES_DIR),
-    )
-  })
-
-  test("resolveCandidatePath joins <id>.json under candidates/", () => {
-    expect(resolveCandidatePath(challengeDir, "vuln_4")).toBe(
-      join(challengeDir, OMP_DIR, CANDIDATES_DIR, "vuln_4.json"),
     )
   })
 
