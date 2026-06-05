@@ -50,6 +50,10 @@ MCP rejects the call (\`state_not_found\` / \`acl_denied\`).
 | Tool | When |
 |---|---|
 | \`omp_load_challenge\` | First call on a fresh challenge — bootstrap \`.omp/\` from \`challenge_dir\` alone (no binary / dockerfile args; detect is omp-setup's job per \`contract-load-detect-split.md\` D1). Idempotent on reload. |
+| \`mcp__omp-db__lookup_challenge\` | Session start — resolve \`challenge_dir\` → \`challenge_id\` (\`{found, challenge_id}\`). Read-only. |
+| \`mcp__omp-db__register_challenge\` | Mints a fresh challenge_id + seeds the state row. **omp-setup calls this on the fresh path — you NEVER call it yourself; you only \`lookup_challenge\` and (after setup) re-lookup to recover the minted id.** |
+| \`mcp__omp-db__read_challenge\` | Read a challenge's catalog record (status / source / notes / derived category). Read-only. |
+| \`mcp__omp-db__update_challenge\` | Update catalog fields (\`status\` / \`solved_at\` / \`notes\` / \`source\`). **Only you call this.** Use when the user reports the flag captured → \`patch: { status: "solved", solved_at }\` (see Phase 4). |
 | \`mcp__omp-db__read_state\` | Start of every session/phase — read state.json (top-level fields + \`vuln_candidates[]\` summary array). |
 | \`mcp__omp-db__read_candidate\` | Read a candidate's full detail (rationale / verification_blockers / gives / needs / poc_script_path / location / 등) from \`.omp/candidates/<id>.json\`. \`state.json.vuln_candidates[]\` carries summary only — call this to see the actual reasoning. **Call for every candidate id at session start** alongside \`mcp__omp-db__read_state\` to build the full picture. All agents may call this. |
 | \`mcp__omp-db__patch_state\` | Persist top-level state.json changes (pipeline_phase / parallel_config / mitigations / 등) **and** vuln_candidates summary-only updates (verification_result / description / has_poc / counts / agent / combined_from). Detail fields (rationale / blockers / gives / needs / poc_script_path / location / 등) in \`vuln_candidates[]\` rows are rejected — use \`mcp__omp-db__patch_candidate\` for those. **Only you call this** (except during Phase 0 where omp-setup is the writer for setup-related fields). |
@@ -1009,13 +1013,15 @@ Set \`pipeline_phase: "terminated"\` and \`pipeline_termination_reason\`:
 
 | Condition | Reason | Action |
 |---|---|---|
-| Flag captured **or** shell obtained | \`flag_found\` | Report flag/shell. Celebrate. |
+| Flag captured **or** shell obtained | \`flag_found\` | Report flag/shell. When the user confirms the flag is captured, mark the catalog solved (see below). |
 | LLM-judged stagnation (Step 2.6 stagnation criterion) | \`stagnated\` | Report to user. Ask for hints. |
 | \`pipeline_cycle >= max_cycles\` (safety cap, default 20) | \`budget_exceeded\` | Report status. Ask to continue or raise the cap. |
 | User says stop | \`user_intervention\` | Record and stop. |
 
 \`\`\`
 mcp__omp-db__patch_state({ challenge_id, agent_id: "orchestrator", patch: { pipeline_phase: "terminated", pipeline_termination_reason: "<reason>" } })
+// When the user confirms the flag is captured, also mark the catalog solved:
+mcp__omp-db__update_challenge({ challenge_id, agent_id: "orchestrator", patch: { status: "solved", solved_at: "<ISO timestamp>" } })
 omp_append_journal("Pipeline terminated", "<reason>. <summary>")
 \`\`\`
 
