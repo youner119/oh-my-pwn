@@ -75,11 +75,12 @@ describe("omp-db MCP server (end-to-end via InMemoryTransport)", () => {
     if (existsSync(dir)) rmSync(dir, { recursive: true, force: true })
   })
 
-  test("lists all 9 tools", async () => {
+  test("lists all 10 tools", async () => {
     const { tools } = await client.listTools()
     expect(tools.map((t) => t.name).sort()).toEqual([
       "create_candidate",
       "delete_candidate",
+      "lookup_challenge",
       "patch_candidate",
       "patch_state",
       "read_candidate",
@@ -90,22 +91,21 @@ describe("omp-db MCP server (end-to-end via InMemoryTransport)", () => {
     ])
   })
 
-  test("register_challenge mints '<name>_<uuid8>' and is idempotent by dir", async () => {
+  test("register_challenge mints '<name>_<uuid8>'; duplicate dir → challenge_exists", async () => {
     const r1 = await call("register_challenge", {
       dir: "/tmp/chal-reg",
       name: "After Image!",
       ...ORCH,
     })
     expect(r1.ok).toBe(true)
-    expect(r1.reused).toBe(false)
     const id = r1.challenge_id as string
     expect(id).toMatch(/^after-image_[0-9a-f]{8}$/)
     expect((r1.challenge as { category: string }).category).toBe("unclassified")
     expect((r1.challenge as { status: string }).status).toBe("unsolved")
 
-    // same dir → reuse, no new id
+    // pure create: same dir → challenge_exists, no new row, original id returned
     const r2 = await call("register_challenge", { dir: "/tmp/chal-reg", ...ORCH })
-    expect(r2.reused).toBe(true)
+    expect(r2.error).toBe("challenge_exists")
     expect(r2.challenge_id).toBe(id)
 
     // initial state row exists (read_state works on the minted id)
@@ -114,12 +114,33 @@ describe("omp-db MCP server (end-to-end via InMemoryTransport)", () => {
     expect((st.state as { challenge_dir: string }).challenge_dir).toBe("/tmp/chal-reg")
   })
 
-  test("register_challenge is orchestrator-only", async () => {
+  test("lookup_challenge resolves dir→id; unknown dir → found:false", async () => {
+    const reg = await call("register_challenge", { dir: "/tmp/chal-look", ...ORCH })
+    const id = reg.challenge_id as string
+
+    const hit = await call("lookup_challenge", { dir: "/tmp/chal-look" })
+    expect(hit.ok).toBe(true)
+    expect(hit.found).toBe(true)
+    expect(hit.challenge_id).toBe(id)
+
+    const miss = await call("lookup_challenge", { dir: "/tmp/never-registered" })
+    expect(miss.ok).toBe(true)
+    expect(miss.found).toBe(false)
+  })
+
+  test("register_challenge allows orchestrator + setup; denies others", async () => {
     const deny = await call("register_challenge", {
       dir: "/tmp/chal-x",
       agent_id: "vulnhunter",
     })
     expect(deny.error).toBe("acl_denied")
+
+    const ok = await call("register_challenge", {
+      dir: "/tmp/chal-setup",
+      agent_id: "setup",
+    })
+    expect(ok.ok).toBe(true)
+    expect(ok.challenge_id).toMatch(/^chal-setup_[0-9a-f]{8}$/)
   })
 
   test("read_challenge returns catalog; category derives from state classification", async () => {

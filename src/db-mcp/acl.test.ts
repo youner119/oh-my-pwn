@@ -17,12 +17,11 @@ describe("checkWriteAcl (ACL Layer 2, per-tool)", () => {
     }
   })
 
-  test("candidate + challenge writes are orchestrator-only", () => {
+  test("candidate writes + update_challenge are orchestrator-only", () => {
     const tools = [
       "create_candidate",
       "patch_candidate",
       "delete_candidate",
-      "register_challenge",
       "update_challenge",
     ] as const
     for (const tool of tools) {
@@ -30,6 +29,15 @@ describe("checkWriteAcl (ACL Layer 2, per-tool)", () => {
       for (const id of ["setup", "reverser", "vulnhunter"]) {
         expect(checkWriteAcl(tool, id)?.error).toBe("acl_denied")
       }
+    }
+  })
+
+  test("register_challenge allows orchestrator + setup; denies others", () => {
+    for (const id of ["orchestrator", "setup"]) {
+      expect(checkWriteAcl("register_challenge", id)).toBeNull()
+    }
+    for (const id of ["reverser", "vulnhunter", "strategist", "exploiter"]) {
+      expect(checkWriteAcl("register_challenge", id)?.error).toBe("acl_denied")
     }
   })
 

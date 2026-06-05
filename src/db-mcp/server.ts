@@ -1,11 +1,14 @@
 /**
- * omp-db MCP server — 6 typed, schema-aware tools over the global SQLite DB.
+ * omp-db MCP server — 10 typed, schema-aware tools over the global SQLite DB.
  *
- * Spec: `.omc/specs/deep-interview-database-mcp.md` (T4/T5/T6).
+ * Spec: `.omc/specs/deep-interview-database-mcp.md` (T4/T5/T6) +
+ * `.omc/specs/challenge-identity-catalog.md` (CI2/CI2b — challenge identity tools).
  *
  * Tools (exposed to opencode as `mcp__omp-db__<name>`):
- *   read_state / patch_state / read_candidate /
- *   create_candidate / patch_candidate / delete_candidate
+ *   state/candidate: read_state / patch_state / read_candidate /
+ *     create_candidate / patch_candidate / delete_candidate
+ *   challenge identity/catalog: register_challenge / lookup_challenge /
+ *     read_challenge / update_challenge
  *
  * The tools speak the old nested `ChallengeState` / `VulnCandidate` JSON shape
  * (AC3 — call meaning unchanged from the file-era plugin tools). Write tools
@@ -389,12 +392,14 @@ export function createDbMcpServer(db: OmpDatabase): McpServer {
     "register_challenge",
     {
       description:
-        "Register a challenge (identity + catalog) and seed its initial state " +
-        "row. Idempotent by dir: if a challenge already exists at `dir`, returns " +
-        "its existing challenge_id (reused:true) without writing. Otherwise mints " +
-        "challenge_id = '<name>_<uuid8>' (name = sanitized `name` or basename(dir)) " +
-        "and creates the challenges + initial state rows. Orchestrator-only. " +
-        "Returns {ok, reused, challenge_id, challenge}.",
+        "Register a NEW challenge (identity + catalog) and seed its initial " +
+        "state row. Pure create: if a challenge already exists at `dir`, returns " +
+        "{error:'challenge_exists', challenge_id} WITHOUT writing — use " +
+        "lookup_challenge for the dir→id idempotency check before calling this. " +
+        "Otherwise mints challenge_id = '<name>_<uuid8>' (name = sanitized `name` " +
+        "or basename(dir)) and creates the challenges + initial state rows. " +
+        "Allowed agents: orchestrator, setup (fresh registration runs inside " +
+        "setup's Phase 0). Returns {ok, challenge_id, challenge}.",
       inputSchema: {
         dir: z.string().describe("Absolute challenge directory path."),
         workspace_root: z
@@ -405,7 +410,9 @@ export function createDbMcpServer(db: OmpDatabase): McpServer {
           .string()
           .optional()
           .describe("Human label; defaults to basename(dir). Sanitized."),
-        agent_id: z.string().describe("Must be 'orchestrator' (ACL Layer 2)."),
+        agent_id: z
+          .string()
+          .describe("Must be 'orchestrator' or 'setup' (ACL Layer 2)."),
       },
     },
     async ({ dir, workspace_root, name, agent_id }): Promise<CallToolResult> => {
@@ -414,12 +421,13 @@ export function createDbMcpServer(db: OmpDatabase): McpServer {
       try {
         const existing = await findChallengeByDir(db, dir)
         if (existing) {
-          const challenge = await loadChallengeView(db, existing.challengeId)
           return jsonResult({
-            ok: true,
-            reused: true,
+            error: "challenge_exists",
             challenge_id: existing.challengeId,
-            challenge,
+            message:
+              `A challenge is already registered at dir ${JSON.stringify(dir)} ` +
+              `(challenge_id ${existing.challengeId}). Use lookup_challenge to ` +
+              "resolve dir→id, or read_challenge for the full record.",
           })
         }
         const base = sanitizeName(name ?? basename(dir))
@@ -433,7 +441,34 @@ export function createDbMcpServer(db: OmpDatabase): McpServer {
           now: new Date(),
         })
         const challenge = await loadChallengeView(db, challengeId)
-        return jsonResult({ ok: true, reused: false, challenge_id: challengeId, challenge })
+        return jsonResult({ ok: true, challenge_id: challengeId, challenge })
+      } catch (err) {
+        return jsonResult({ error: "internal_error", message: String(err) })
+      }
+    },
+  )
+
+  // ── lookup_challenge ────────────────────────────────────────────────────
+  server.registerTool(
+    "lookup_challenge",
+    {
+      description:
+        "Resolve a challenge directory to its challenge_id — the dir→id " +
+        "idempotency lookup. Read-only, all agents may call (no agent_id). " +
+        "Returns {ok:true, found:true, challenge_id} when a challenge is " +
+        "registered at `dir`, else {ok:true, found:false}. Call this at session " +
+        "start to decide fresh (found:false → register_challenge) vs reload " +
+        "(found:true → reuse the id). If a dir holds multiple historical rows " +
+        "(after a move + re-register), the most recently created wins.",
+      inputSchema: {
+        dir: z.string().describe("Absolute challenge directory path."),
+      },
+    },
+    async ({ dir }): Promise<CallToolResult> => {
+      try {
+        const existing = await findChallengeByDir(db, dir)
+        if (!existing) return jsonResult({ ok: true, found: false })
+        return jsonResult({ ok: true, found: true, challenge_id: existing.challengeId })
       } catch (err) {
         return jsonResult({ error: "internal_error", message: String(err) })
       }

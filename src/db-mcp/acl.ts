@@ -14,8 +14,11 @@
  *
  * The "sole writer" is per-channel, not global: `patch_state` (state) has three
  * writers (orchestrator + setup in Phase 0 + reverser for its own artifacts
- * metadata; field-level split is prompt policy), while candidate and challenge
- * writes are orchestrator-only. Read tools take no `agent_id` — all agents read.
+ * metadata; field-level split is prompt policy). `register_challenge` has two
+ * (orchestrator + setup, since fresh registration happens inside setup's Phase 0),
+ * while candidate writes and `update_challenge` are orchestrator-only. Read tools
+ * (`read_state` / `read_candidate` / `read_challenge` / `lookup_challenge`) take no
+ * `agent_id` — all agents read.
  */
 
 /** Recognised agent identities (the value an agent passes as `agent_id`). */
@@ -48,7 +51,7 @@ export const WRITE_ALLOWLIST: Record<WriteTool, readonly AgentId[]> = {
   create_candidate: ["orchestrator"],
   patch_candidate: ["orchestrator"],
   delete_candidate: ["orchestrator"],
-  register_challenge: ["orchestrator"],
+  register_challenge: ["orchestrator", "setup"],
   update_challenge: ["orchestrator"],
 }
 
