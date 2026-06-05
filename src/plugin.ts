@@ -24,16 +24,10 @@ import {
   reorderAgentsByPriority,
 } from "./agents/agent-sort-shim"
 import {
-  ompReadStateTool,
-  ompPatchStateTool,
   ompAppendJournalTool,
   createOmpLoadChallengeTool,
   ompGetTemplateTool,
   ompVerifyTemplateOutputTool,
-  ompReadCandidateTool,
-  ompCreateCandidateTool,
-  ompPatchCandidateTool,
-  ompDeleteCandidateTool,
   createOmpSetupDockerBuildTool,
   createOmpSetupExtractFileTool,
   createOmpSetupPatchElfTool,
@@ -199,18 +193,12 @@ const OmpPlugin: Plugin = async (input) => {
     // 에이전트는 이 tool을 통해서만 state를 읽고 씀 (직접 file write 금지).
     tool: {
       omp_load_challenge: ompLoadChallengeTool,
-      omp_read_state: ompReadStateTool,
-      omp_patch_state: ompPatchStateTool,
       omp_append_journal: ompAppendJournalTool,
       omp_get_template: ompGetTemplateTool,
       omp_verify_template_output: ompVerifyTemplateOutputTool,
-      // Candidate per-file tools (state-split-vuln-candidates.md P3).
-      // ACL — read = all agents, create/patch/delete = orchestrator-only
-      // (enforced in agent-tool-restrictions.ts).
-      omp_read_candidate: ompReadCandidateTool,
-      omp_create_candidate: ompCreateCandidateTool,
-      omp_patch_candidate: ompPatchCandidateTool,
-      omp_delete_candidate: ompDeleteCandidateTool,
+      // DB state/candidate tools (read/patch_state + read/create/patch/delete_
+      // candidate) 폐기 — omp-db MCP server 의 mcp__omp-db__* 로 이전 (T8).
+      // spec: deep-interview-database-mcp.md.
       // omp_save_decompiled removed — use BN MCP tool `decompile_to_file` instead.
       // omp_run_envsetup / omp_stage_challenge / omp_pwno_status retired by
       // T12-T14 — omp-setup agent absorbs all three.

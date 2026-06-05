@@ -1,11 +1,6 @@
-export { ompReadStateTool } from "./omp-read-state"
-export { ompPatchStateTool } from "./omp-patch-state"
 export { ompAppendJournalTool } from "./omp-append-journal"
-// Candidate per-file tools (spec: state-split-vuln-candidates.md P3).
-export { ompReadCandidateTool } from "./omp-read-candidate"
-export { ompCreateCandidateTool } from "./omp-create-candidate"
-export { ompPatchCandidateTool } from "./omp-patch-candidate"
-export { ompDeleteCandidateTool } from "./omp-delete-candidate"
+// DB state/candidate tools 폐기 (T8) — omp-db MCP server (mcp__omp-db__*) 로 이전.
+// spec: deep-interview-database-mcp.md.
 export {
   createOmpLoadChallengeTool,
   ompLoadChallengeTool,
