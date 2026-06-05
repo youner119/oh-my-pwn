@@ -12,7 +12,8 @@
     "typecheck": "tsc --noEmit",
     "test": "bun test",
     "build:plugin": "bun build src/plugin.ts --outdir dist --target bun --format esm --minify --external @opencode-ai/plugin --external @opencode-ai/sdk --external @modelcontextprotocol/sdk --external @anthropic-ai/sdk --external zod",
-    "build": "bun run build:plugin && bun build src/cli/index.ts --outdir dist --target bun --format esm"
+    "build:db-mcp": "bun build src/db-mcp/index.ts --outfile dist/db-mcp.js --target bun --format esm --external @modelcontextprotocol/sdk --external drizzle-orm --external zod && rm -rf dist/migrations && cp -r src/db/migrations dist/migrations",
+    "build": "bun run build:plugin && bun run build:db-mcp && bun build src/cli/index.ts --outdir dist --target bun --format esm"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.52.0",
