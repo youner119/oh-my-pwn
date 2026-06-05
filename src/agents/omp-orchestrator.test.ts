@@ -44,7 +44,7 @@ describe("createOmpOrchestratorAgent", () => {
     expect(p).toContain("Setup gate")
     expect(p).toContain("Step 0.1 — Gate decision")
     expect(p).toContain("Step 0.2 — Launch omp-setup")
-    expect(p).toContain("Step 0.3 — Check setup result")
+    expect(p).toContain("Step 0.3 — Recover challenge_id")
     // Gate rules
     expect(p).toContain("setup_unsupported_reason")
     expect(p).toContain("setup_complete")
@@ -64,8 +64,8 @@ describe("createOmpOrchestratorAgent", () => {
     const p = agent.prompt ?? ""
     expect(p).toContain("omp_load_challenge({ challenge_dir })")
     expect(p).toContain("contract-load-detect-split.md")
-    expect(p).toContain("Do NOT scan")
-    expect(p).toContain("do NOT pass `binary` / `dockerfile` hints")
+    expect(p).toContain("scan the folder")
+    expect(p).toContain("directory path only")
   })
 
   test("Phase 0 — setup_blocker.kind ambiguous-binary handoff (contract-load-detect-split D5)", () => {
@@ -122,8 +122,8 @@ describe("createOmpOrchestratorAgent", () => {
     expect(p).toContain("<binary_in_ctr>")
     expect(p).toContain("<libc_in_ctr>")
     expect(p).toContain("<ld_in_ctr>")
-    // Derive rule explicit + extracted_libs forwarding for multi-NEEDED
-    expect(p).toContain('"omp-" + basename(state.challenge_dir) + "-" + state.binary_input_sha256.slice(0, 8)')
+    // workspace_id = the DB challenge_id (T21) + extracted_libs forwarding
+    expect(p).toContain('workspace_id    = challenge_id')
     expect(p).toContain("state.extracted_libs")
     expect(p).not.toContain("state.pwno-mcp_paths")
   })

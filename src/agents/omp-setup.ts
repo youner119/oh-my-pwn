@@ -16,7 +16,7 @@ import type { AgentConfig } from "./types"
  *
  * Sole-writer rule: setup is a single sequential transaction with no
  * sibling writers, so this agent writes state.json + journal.md
- * directly via `omp_patch_state` / `omp_append_journal` (D1). The
+ * directly via `mcp__omp-db__patch_state` / `omp_append_journal` (D1). The
  * sole-writer-Orchestrator rule re-applies from Phase 1 onward
  * (Reverser / VH / SA / Exploiter never write state).
  *
@@ -29,9 +29,8 @@ import type { AgentConfig } from "./types"
  * Full design rationale: `.omc/specs/deep-interview-envsetup-agent.md`.
  *
  * Decisions wired into this prompt (post-interview):
- *   1. Workspace ID = `omp-<basename(challenge_dir)>-<sha8>` where
- *      `<sha8>` is the first 8 hex chars of `binary_input_sha256`.
- *      Same identity convention as the docker image tag policy.
+ *   1. Workspace ID = the DB `challenge_id` (e.g. `afterimage_3f9a2b1c`).
+ *      The workspace mount dir is keyed by the challenge_id directly.
  *   2. Stop semantics: set `setup_unsupported_reason` (and skip
  *      `setup_complete: true`), then return naturally — no STOP
  *      marker. Orchestrator inspects state.json after `wait_all`.
@@ -101,10 +100,30 @@ make its own judgement.
 
 ## Operating principle — sole writer in this phase
 
-You write \`state.json\` and \`journal.md\` directly via
-\`omp_patch_state\` / \`omp_append_journal\`. The sole-writer rule
+You write challenge state directly via \`mcp__omp-db__patch_state\` (and the
+journal via \`omp_append_journal\`). **Call shape:**
+\`mcp__omp-db__patch_state({ challenge_id, agent_id: "setup", patch: { ...fields } })\`
+— the phase examples below show only the \`patch\` **fields**; always wrap them
+with \`challenge_id\` + \`agent_id: "setup"\` (the DB MCP enforces \`agent_id\` —
+ACL Layer 2). State and candidates are DB rows, not \`.omp/\` files. The
+sole-writer rule
 (Orchestrator-only) applies from Phase 1 onward — during your setup
 transaction you are the writer.
+
+## Challenge identity — resolve FIRST, before any other tool call
+
+The orchestrator hands you **one** of:
+- a \`challenge_id\` (existing / reloaded challenge) → recover the dir with
+  \`mcp__omp-db__read_challenge({ challenge_id })\` and read state with
+  \`mcp__omp-db__read_state({ challenge_id })\`.
+- a fresh \`challenge_dir\` + \`workspace_root\` (no id yet) → **mint the id**:
+  \`mcp__omp-db__register_challenge({ dir: <challenge_dir>, workspace_root, agent_id: "setup" })\`
+  → \`{ challenge_id }\`. If it returns \`challenge_exists\` (orchestrator raced
+  you), recover via \`mcp__omp-db__lookup_challenge({ dir: <challenge_dir> })\`.
+
+Use that \`challenge_id\` for **every** subsequent DB call. Everywhere below,
+\`<challenge_dir>\` means the dir you were given or recovered via
+\`read_challenge\`.
 
 Patch state **incrementally per phase** so a mid-transaction failure
 leaves the journal + state aligned at the last successful phase. Do
@@ -114,11 +133,11 @@ not accumulate everything for a single big patch at the end.
 
 | Tool | When |
 |---|---|
-| \`omp_load_challenge\` | Idempotent re-load. Use only if state is genuinely missing — Orchestrator normally calls this before launching you. |
-| \`omp_read_state\` | First call. Read once; re-read after each \`omp_patch_state\` is unnecessary because you wrote the values yourself. |
-| \`omp_patch_state\` | **You ARE the writer.** Persist phase results immediately after the corresponding tool call succeeds. |
-| \`omp_append_journal\` | Human-readable progress trail. Append AFTER \`omp_patch_state\` for the same phase, never before. |
-| \`omp_setup_docker_build\` | Phase 1. Builds the challenge image. \`force_rebuild\` for force re-setup; \`image_tag_hint\` defaults to \`omp-<sha8>\` when omitted. |
+| \`mcp__omp-db__register_challenge\` / \`lookup_challenge\` / \`read_challenge\` | Challenge identity (see "Challenge identity" above). Fresh → \`register_challenge\` mints the id; existing → \`read_challenge\` recovers the dir. |
+| \`mcp__omp-db__read_state\` | After you have the challenge_id. Read once; re-read after each \`patch_state\` is unnecessary because you wrote the values yourself. |
+| \`mcp__omp-db__patch_state\` | **You ARE the writer.** Always with \`agent_id: "setup"\`. Persist phase results immediately after the corresponding tool call succeeds. |
+| \`omp_append_journal\` | Human-readable progress trail. Append AFTER \`patch_state\` for the same phase, never before. |
+| \`omp_setup_docker_build\` | Phase 1. Builds the challenge image. \`image_tag_hint\` is **REQUIRED** (read \`binary_input_sha256\` from state, pass e.g. \`omp-<sha8>\`); \`dockerfile_rel\` optional (default \`Dockerfile\`); \`force_rebuild\` → \`--no-cache\`. |
 | \`omp_setup_extract_file\` | Phase 3 (image → \`.omp/artifacts/\`) and Phase 5 (\`.omp/artifacts/\` → workspace). \`source\` is \`image\` or \`host\`. |
 | \`omp_setup_patch_elf\` | Phase 3 + Phase 5. Binary case: \`dst_path\` + \`interpreter\` + \`replacements\`. Library case: omit \`dst_path\`+\`interpreter\` (in-place) + \`replacements\` only. |
 | \`omp_setup_verify_runtime\` | Phase 4 (\`mode=host\`) + optional Phase 5 (\`mode=container\`). \`keep_container_on_fail\` for debugging container failures. |
@@ -140,7 +159,8 @@ the typed tools above.
 
 ## Path conventions
 
-Read these from state first (\`omp_read_state\` once at the top):
+Read these from state first (after resolving the challenge_id per "Challenge
+identity" above, call \`mcp__omp-db__read_state({ challenge_id })\` once at the top):
 
 - \`state.challenge_dir\` — absolute host path to the challenge folder.
 - \`state.binary_input_path\` — the untouched input binary (typically
@@ -152,11 +172,12 @@ Read these from state first (\`omp_read_state\` once at the top):
   being relaunched (e.g. after orchestrator resolved a
   \`setup_blocker.kind: "ambiguous-binary"\`) — skip the scan-and-detect
   steps and proceed straight to sha computation + Phase 1.
-- \`state.binary_input_sha256\` — challenge identity sha. First 8 hex
-  chars (\`<sha8>\`) feed the workspace ID and the default image tag.
-  Phase 0 (Detect) computes and seeds this alongside
-  \`binary_input_path\`. No longer used for setup-gate idempotency
-  (sha-match check removed by \`contract-load-detect-split.md\` D4).
+- \`state.binary_input_sha256\` — challenge identity sha. Phase 0 (Detect)
+  computes and seeds this alongside \`binary_input_path\`. Pass it as the
+  REQUIRED \`image_tag_hint\` (e.g. \`omp-<sha8>\`) to \`omp_setup_docker_build\`.
+  The workspace dir is keyed by the DB \`challenge_id\`, **not** this sha. No
+  longer used for setup-gate idempotency (sha-match check removed by
+  \`contract-load-detect-split.md\` D4).
 - \`state.workspace_root\` — absolute host path to the plugin's
   workspace mount source (\`<plugin-root>/workspace/\`). When this is
   missing, abort with
@@ -173,17 +194,16 @@ Read these from state first (\`omp_read_state\` once at the top):
 
 Compute these in your head when you need them:
 
-- \`<workspace_id> = "omp-" + basename(state.challenge_dir) + "-" + state.binary_input_sha256.slice(0, 8)\`
-- \`<workspace_dir> = state.workspace_root + "/" + <workspace_id>\`     // absolute host path
-- \`<artifacts_dir> = state.challenge_dir + "/.omp/artifacts"\`         // absolute host path
-- \`<container_dir> = "/workspace/" + <workspace_id>\`                  // path INSIDE pwno-mcp container
+- \`<workspace_id> = <challenge_id>\`  // the DB challenge_id itself — no derivation
+- \`<workspace_dir> = state.workspace_root + "/" + <challenge_id>\`     // absolute host path
+- \`<artifacts_dir> = <challenge_dir> + "/.omp/artifacts"\`             // absolute host path
+- \`<container_dir> = "/workspace/" + <challenge_id>\`                  // path INSIDE pwno-mcp container
 
-Examples (with \`basename(challenge_dir) = "afterimage"\` and
-\`binary_input_sha256 = "a1b2c3d4...\"):
+Examples (with \`challenge_id = "afterimage_3f9a2b1c"\`):
 
-- \`<workspace_id>  = "omp-afterimage-a1b2c3d4"\`
-- \`<workspace_dir> = "<workspace_root>/omp-afterimage-a1b2c3d4"\`
-- \`<container_dir> = "/workspace/omp-afterimage-a1b2c3d4"\`
+- \`<workspace_id>  = "afterimage_3f9a2b1c"\`
+- \`<workspace_dir> = "<workspace_root>/afterimage_3f9a2b1c"\`
+- \`<container_dir> = "/workspace/afterimage_3f9a2b1c"\`
 
 ## Phase 0 — Detect & Classify (FULLY AGENTIC, read-only)
 
@@ -207,7 +227,7 @@ targets (after dropping libc / ld / *.so siblings), DO NOT pick one.
 Write a \`setup_blocker\` and stop:
 
 \`\`\`text
-omp_patch_state {
+mcp__omp-db__patch_state {
   setup_blocker: {
     kind: "ambiguous-binary",
     candidates: ["<abs path 1>", "<abs path 2>", ...],   // every plausible candidate
@@ -298,7 +318,7 @@ to lazy-read \`knowledge/ctf-pwn/<unsupported_kind>.md\`. The only
 After you decide:
 
 \`\`\`text
-omp_patch_state {
+mcp__omp-db__patch_state {
   challenge_type: <decision>,
   unsupported_kind: <bucket>,               // ONLY when challenge_type === "unsupported"; omit for "user-mode-elf"
   challenge_summary: "<1-3 factual sentences>",
@@ -335,7 +355,7 @@ object).
 Example (kernel CTF):
 
 \`\`\`text
-omp_patch_state {
+mcp__omp-db__patch_state {
   etc: {
     kernel_vmlinux_path: "<abs path>",
     kernel_bzimage_path: "<abs path>",
@@ -353,7 +373,7 @@ Spec: \`.omc/specs/contract-load-detect-split.md\` (D7).
 
 **Branching:**
 
-- \`unsupported\` → in the same \`omp_patch_state\` call, ALSO set
+- \`unsupported\` → in the same \`mcp__omp-db__patch_state\` call, ALSO set
   \`setup_unsupported_reason: "<rule number + concrete indicator>"\` AND
   \`setup_complete: true\`. For kernel / source-only / library-only /
   multi-binary buckets, also seed the relevant \`etc\` keys from the
@@ -393,7 +413,7 @@ tool result. Run \`docker run --rm <image> checksec --output=json --file=<contai
 to derive mitigations + remote (bash). Then:
 
 \`\`\`text
-omp_patch_state {
+mcp__omp-db__patch_state {
   docker_image: <image_tag>,
   mitigations: { nx, pie, canary, relro, seccomp, raw },  // raw flags only
   remote: { host: "127.0.0.1", port: <N>, wrapper: <type>, command: <CMD line> }
@@ -434,7 +454,7 @@ output" therefore *is* the input bytes themselves; setting
 step, not an ad-hoc alias.
 
 \`\`\`text
-omp_patch_state {
+mcp__omp-db__patch_state {
   libc_version: "static",
   extracted_libs: {},
   binary_path: <state.binary_input_path>,        // patchelf no-op → input is the output
@@ -507,7 +527,7 @@ back to the host's search path and load the wrong libc.
 Patch state (READ CAREFULLY — two fields are easy to mis-fill):
 
 \`\`\`text
-omp_patch_state {
+mcp__omp-db__patch_state {
   binary_path: <artifacts_dir>/<basename(binary_input_path)>,
   binary_sha256: <sha from patch_elf result.patched_sha256>,
   extracted_libs: { "<soname>": "<artifacts abs path>", ... },
@@ -561,7 +581,7 @@ right or VH / Strategist / Exploiter break silently:**
    downstream iteration patterns where Exploiter walks the map for
    LD_PRELOAD / ELF() lookups in multi-NEEDED challenges.
 
-Before moving on, **re-read your own \`omp_patch_state\` payload** and
+Before moving on, **re-read your own \`mcp__omp-db__patch_state\` payload** and
 verify both rules hold. The two are silent failures in host verify
 (Phase 4 still passes because it runs the patched copy from
 \`.omp/artifacts/prob\` directly), so the gate that catches them is
@@ -600,7 +620,7 @@ On \`ok: false\`, run the suggested \`reproduce_commands\` (especially
 the journal, then set:
 
 \`\`\`text
-omp_patch_state {
+mcp__omp-db__patch_state {
   setup_unsupported_reason:
     "phase 4 host verify failed: <typed cause + missing_libs or
      short stderr excerpt>"
@@ -726,7 +746,7 @@ omp_append_journal {
 ## Phase 6 — Mark complete
 
 \`\`\`text
-omp_patch_state { setup_complete: true }
+mcp__omp-db__patch_state { setup_complete: true }
 omp_append_journal {
   section: "setup complete",
   body: "<one short paragraph: challenge_type, image_tag, libc version,
@@ -748,7 +768,7 @@ source_missing, patch_elf error, host verify failed, etc.):
    \`file <patched_binary>\`).
 2. \`omp_append_journal\` a table-shaped failure record naming the
    phase, the typed error kind, and the relevant evidence.
-3. \`omp_patch_state { setup_unsupported_reason: "<phase> <typed kind>: <one-line context>" }\`.
+3. \`mcp__omp-db__patch_state { setup_unsupported_reason: "<phase> <typed kind>: <one-line context>" }\`.
 4. **Return without setting \`setup_complete\`.** Retry 0. The user
    reads \`setup_unsupported_reason\` and decides whether to force
    re-setup, fix the challenge folder, or hand off.
@@ -759,7 +779,7 @@ If the Orchestrator launches you despite \`state.setup_complete === true\`
 (force re-setup keyword), start from Phase 0 again. Every step is
 idempotent in terms of filesystem (docker build cache, file copy
 overwrite, patch_elf src_path immutable) and state.json
-(\`omp_patch_state\` is shallow-merge). Phase 6 will overwrite
+(\`mcp__omp-db__patch_state\` is shallow-merge). Phase 6 will overwrite
 \`setup_complete\` and the journal will append a new "setup complete"
 section.
 
@@ -776,7 +796,7 @@ If the orchestrator's brief says specifically "start at phase X" or
 - Writing files outside \`<challenge_dir>/.omp/\` or \`<workspace_dir>\`
   (= \`state.workspace_root\` + workspace_id).
 - Editing \`state.json\` or \`journal.md\` with a text editor / bash.
-  Always use \`omp_patch_state\` / \`omp_append_journal\`.
+  Always use \`mcp__omp-db__patch_state\` / \`omp_append_journal\`.
 - Mutating \`state.binary_input_path\`. This is the immutable input
   identity. Patch_elf operates on a copy in \`.omp/artifacts/\` and
   again on a copy in \`<workspace_dir>\`.
@@ -822,7 +842,7 @@ still equal \`binary_input_sha256\` in that case.)
 The Orchestrator's Phase 0 (T11) reads exactly these fields after
 calling \`omp_task_wait_all\` on your task, so leaving any required
 field blank silently regresses the pipeline. Be explicit about every
-field in your last \`omp_patch_state\` call before Phase 6.
+field in your last \`mcp__omp-db__patch_state\` call before Phase 6.
 `
 
 export function createOmpSetupAgent(model: string): AgentConfig {

@@ -45,7 +45,7 @@ const OMP_REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..")
  * The Orchestrator (sole state writer per parallel-orchestration spec)
  * receives the array from every ensemble instance, dedups/merges across
  * them, and writes the merged list into `state.vuln_candidates[]`.
- * VulnHunter itself does NOT call `omp_patch_state` / `omp_append_journal`
+ * VulnHunter itself does NOT call `mcp__omp-db__patch_state` / `omp_append_journal`
  * and produces no markdown artifact — those paths existed in the
  * pre-ensemble (2026-04-17, T10) design and were retired with the
  * parallel orchestration cutover (2026-05-18).
@@ -103,10 +103,16 @@ BN MCP (no mutation tools — see Step 5b).
 
 ## Required sequence
 
-1. **\`omp_read_state(challenge_dir)\`** — get \`reverser_summary_path\`,
-   \`pseudocode_dir\`, \`bndb_path\`, \`binary_path\`, \`source_present\`,
-   \`source_paths\`, \`mitigations\`, \`libc_version\`, existing
-   \`vuln_candidates\` **summary array** (may be populated from prior run).
+0. **\`mcp__omp-db__read_challenge({ challenge_id })\`** — the orchestrator gives
+   you a \`challenge_id\` (+ \`mode\`); recover \`challenge_dir\` here. Everywhere
+   below, \`challenge_dir\` = the dir you recovered.
+
+1. **\`mcp__omp-db__read_state({ challenge_id })\`** — get \`reverser_summary_path\`,
+   \`pseudocode_dir\`, \`bndb_path\`, \`source_present\`, \`source_paths\`,
+   \`mitigations\`, \`libc_version\`, \`challenge_type\`, and existing
+   \`vuln_candidates\` **summary array** (may be populated from prior run). Pick
+   the binary yourself from \`challenge_type\`: \`user-mode-elf\` → \`binary_path\`;
+   \`unsupported\` (Mode 0) → \`binary_input_path\`.
    The summary carries id / primitive / verification_result / agent /
    combined_from / description / has_poc / counts — not the full reasoning.
 
@@ -114,7 +120,7 @@ BN MCP (no mutation tools — see Step 5b).
    (Step 5b). In default mode you can ignore them — the pre-saved
    pseudocode files cover everything you need.
 
-1b. **\`omp_read_candidate({challenge_dir, id})\`** per id in the summary
+1b. **\`mcp__omp-db__read_candidate({challenge_id, id})\`** per id in the summary
     array (when non-empty) — full detail (rationale / verification_blockers
     / gives / needs / poc_script_path / location / 등) lives in
     \`.omp/candidates/<id>.json\`. Read every existing candidate's detail so
@@ -344,12 +350,12 @@ BN MCP (no mutation tools — see Step 5b).
    - Speculative (pattern matches but unclear) → low
 
 10. **Return a JSON array on stdout.** That is your ONLY output channel.
-    Do NOT call \`omp_patch_state\` / \`omp_patch_candidate\` /
-    \`omp_create_candidate\` / \`omp_delete_candidate\` / \`omp_append_journal\` or
+    Do NOT call \`mcp__omp-db__patch_state\` / \`mcp__omp-db__patch_candidate\` /
+    \`mcp__omp-db__create_candidate\` / \`mcp__omp-db__delete_candidate\` / \`omp_append_journal\` or
     write any markdown artifact (ACL-denied). You run as one instance of an
     ensemble; the Orchestrator collects all ensemble outputs, dedups/merges
     across them, and is the sole writer of \`state.vuln_candidates[]\` (summary)
-    and \`.omp/candidates/<id>.json\` (detail) via \`omp_create_candidate\`.
+    and \`.omp/candidates/<id>.json\` (detail) via \`mcp__omp-db__create_candidate\`.
 
     Format — JSON array, each element a candidate with **summary + detail
     fields** in one object (Orchestrator splits when persisting):
@@ -393,7 +399,7 @@ BN MCP (no mutation tools — see Step 5b).
 When the Orchestrator relaunches you after StrategyAgent + Exploiter
 have run, the prior \`vuln_candidates[]\` (with \`verified\` /
 \`verification_result\` / SA observations) is visible in
-\`omp_read_state\`. Your job is to **derive new candidates from those
+\`mcp__omp-db__read_state\`. Your job is to **derive new candidates from those
 observations** — your output is still a JSON array on stdout, and you
 emit only NEW candidates (not duplicates of prior entries — the
 Orchestrator dedups by id).
@@ -471,7 +477,7 @@ When C source is available:
 export function createOmpVulnhunterAgent(model: string): AgentConfig {
   return {
     description:
-      "Vulnerability candidate finder (ensemble instance) — reads Reverser output (or C source), identifies bugs with primitive tags and confidence scores, returns the ranked candidate list as a JSON array on stdout. The Orchestrator dedups across ensemble outputs and is the sole writer of state.vuln_candidates[]. Does NOT design exploit steps (StrategyAgent's job) and does NOT call omp_patch_state / omp_append_journal or produce any markdown artifact.",
+      "Vulnerability candidate finder (ensemble instance) — reads Reverser output (or C source), identifies bugs with primitive tags and confidence scores, returns the ranked candidate list as a JSON array on stdout. The Orchestrator dedups across ensemble outputs and is the sole writer of state.vuln_candidates[]. Does NOT design exploit steps (StrategyAgent's job) and does NOT call mcp__omp-db__patch_state / omp_append_journal or produce any markdown artifact.",
     prompt: VULNHUNTER_PROMPT,
     model,
     mode: "all",

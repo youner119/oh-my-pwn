@@ -35,7 +35,7 @@ describe("createOmpStrategistAgent", () => {
   test("prompt reads state as shared blackboard", () => {
     const agent = createOmpStrategistAgent("test-model")
     const p = agent.prompt ?? ""
-    expect(p).toContain("omp_read_state")
+    expect(p).toContain("mcp__omp-db__read_state")
     expect(p).toContain("shared blackboard")
     expect(p).toContain("vuln_candidates")
     expect(p).toContain("poc_script_path")
@@ -161,7 +161,7 @@ describe("createOmpStrategistAgent", () => {
   test("prompt does not write state", () => {
     const agent = createOmpStrategistAgent("test-model")
     const p = agent.prompt ?? ""
-    expect(p).toContain("DO NOT: call `omp_patch_state`")
+    expect(p).toContain("DO NOT: call `mcp__omp-db__patch_state`")
   })
 
   test("prompt has explicit path forwarding section (host vs container)", () => {
@@ -262,9 +262,9 @@ describe("createOmpStrategistAgent", () => {
     const agent = createOmpStrategistAgent("test-model")
     const p = agent.prompt ?? ""
     expect(p).toContain("extracted_libs")
-    // workspace_id derive rule embedded in path forwarding rules
-    expect(p).toContain('omp-<basename(challenge_dir)>-<sha8>')
-    expect(p).toContain('state.binary_input_sha256.slice(0, 8)')
+    // workspace mount = the DB challenge_id (T21 unification — no derivation)
+    expect(p).toContain('/workspace/<challenge_id>/')
+    expect(p).toContain('DB challenge_id')
   })
 
   test("Key principles include Path forwarding rule", () => {

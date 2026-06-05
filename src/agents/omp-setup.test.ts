@@ -46,14 +46,14 @@ describe("createOmpSetupAgent", () => {
     expect(p).toContain("Phase 6 — Mark complete")
   })
 
-  test("prompt embeds the workspace-id derivation rule (omp-<basename>-<sha8>)", () => {
+  test("prompt keys the workspace dir by the DB challenge_id (no omp-<sha8> derivation)", () => {
     const agent = createOmpSetupAgent("test-model")
     const p = agent.prompt ?? ""
-    expect(p).toContain('"omp-" + basename(state.challenge_dir) + "-" + state.binary_input_sha256.slice(0, 8)')
+    expect(p).toContain("<workspace_id> = <challenge_id>")
     expect(p).toContain("state.workspace_root")
-    // Concrete example with afterimage/a1b2c3d4 — catches accidental
+    // Concrete example with the DB challenge_id — catches accidental
     // re-templating to a different placeholder.
-    expect(p).toContain("omp-afterimage-a1b2c3d4")
+    expect(p).toContain("afterimage_3f9a2b1c")
   })
 
   test("prompt requires explicit --replace-needed (not --set-rpath) per D3", () => {
@@ -76,7 +76,7 @@ describe("createOmpSetupAgent", () => {
     const agent = createOmpSetupAgent("test-model")
     const p = agent.prompt ?? ""
     // Setup IS the writer for state + journal during its transaction.
-    expect(p).toContain("omp_patch_state")
+    expect(p).toContain("mcp__omp-db__patch_state")
     expect(p).toContain("omp_append_journal")
     expect(p).toContain("sole writer")
   })
@@ -134,7 +134,7 @@ describe("createOmpSetupAgent", () => {
     // Self-check + concrete counter-example
     expect(p).toContain("binary_path` MUST point at the patched copy")
     expect(p).toContain("NOT at `binary_input_path")
-    expect(p).toContain("re-read your own `omp_patch_state` payload")
+    expect(p).toContain("re-read your own `mcp__omp-db__patch_state` payload")
     // Success criterion makes the inequality explicit
     expect(p).toContain("state.binary_path !== state.binary_input_path")
   })

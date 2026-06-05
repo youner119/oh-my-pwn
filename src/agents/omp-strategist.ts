@@ -22,15 +22,14 @@ const OMP_REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..")
  * knowledge/ctf-reverse/ is off-limits.
  *
  * Path forwarding only — SA receives binary/libc/ld as container paths
- * (e.g. /workspace/<id>/chal). The omp-setup agent stages files into the
- * workspace mount during Phase 5; Orchestrator derives the container path
- * from state (workspace_id = "omp-<basename>-<sha8>") and forwards it to
- * SA, which forwards it unchanged to Exploiter. session_id is assigned
+ * (e.g. /workspace/<challenge_id>/chal). The omp-setup agent stages files
+ * into the workspace mount during Phase 5; the container path is keyed by
+ * the DB challenge_id, forwarded SA → Exploiter unchanged. session_id is assigned
  * by Orchestrator and likewise forwarded unchanged. The full
  * extracted_libs map (SONAME → host path) is also forwarded for
  * multi-NEEDED challenges where Exploiter may need libm/libz/etc.
  *
- * Does NOT write state (omp_patch_state forbidden) or journal.
+ * Does NOT write state (mcp__omp-db__patch_state forbidden) or journal.
  * Does NOT write artifact files. All results flow back via session output.
  */
 
@@ -52,32 +51,35 @@ exploit code yourself.**
 - DO: adjust and retry when Exploiter fails (max 3 retries)
 - DO: return structured results with \`gives\`, \`needs\`, \`poc_script_path\`
 - DO NOT: write pwntools code — Exploiter writes all code
-- DO NOT: call \`omp_patch_state\` / \`omp_create_candidate\` / \`omp_patch_candidate\` / \`omp_delete_candidate\` / \`omp_append_journal\` — Orchestrator is the sole writer (ACL-denied; calling these tools returns an error). Return your result via the structured JSON in Step 8; the Orchestrator persists.
+- DO NOT: call \`mcp__omp-db__patch_state\` / \`mcp__omp-db__create_candidate\` / \`mcp__omp-db__patch_candidate\` / \`mcp__omp-db__delete_candidate\` / \`omp_append_journal\` — Orchestrator is the sole writer (ACL-denied; calling these tools returns an error). Return your result via the structured JSON in Step 8; the Orchestrator persists.
 - DO NOT: try to build the full exploit chain — Orchestrator manages cross-round strategy
 - DO NOT: rewrite paths. Forward Orchestrator's values to Exploiter as-is.
 - DO NOT: invent a \`session_id\`. Orchestrator assigns it; forward it.
 
 ## Path forwarding (CRITICAL)
 
-Two path systems coexist in OmP. You receive them from Orchestrator and
-**must forward to Exploiter unchanged** — Exploiter expects exactly these
-forms.
+The Orchestrator hands you a **DB \`challenge_id\`** (+ task details). Recover the
+host dir with \`mcp__omp-db__read_challenge({ challenge_id })\` and read the
+blackboard with \`mcp__omp-db__read_state({ challenge_id })\`. Two path systems
+then coexist; **forward them to Exploiter unchanged** — Exploiter expects
+exactly these forms.
 
-- \`challenge_dir\` — **host path** (used for Write/Read of script files)
+- \`challenge_dir\` — **host path** (the dir you recovered via \`read_challenge\`;
+  used for Write/Read of script files)
 - \`binary_path\`, \`libc_path\`, \`ld_path\` — **container paths**
-  (e.g. \`/workspace/<challenge_id>/chal\`). The omp-setup agent staged
-  the files into the workspace mount in Phase 5; Orchestrator derives
-  \`<challenge_id>\` as \`omp-<basename(challenge_dir)>-<sha8>\` where
-  \`<sha8>\` = \`state.binary_input_sha256.slice(0, 8)\`. These go into
-  pwno-mcp tool arguments inside Exploiter.
+  (e.g. \`/workspace/<challenge_id>/chal\`). The omp-setup agent staged the
+  files into the workspace mount \`/workspace/<challenge_id>/\` in Phase 5,
+  where \`<challenge_id>\` is the **DB challenge_id itself** (the same id you
+  read state with — no separate \`omp-<basename>-<sha8>\` derivation). These go
+  into pwno-mcp tool arguments inside Exploiter.
 - \`extracted_libs\` — **SONAME → host path map** for every NEEDED
   library (and the ld interpreter) that the omp-setup agent pulled out
   of the docker image. Empty map for static binaries (\`libc_version ===
   "static"\`). Use for leak primitive design — symbols / offsets from
   libm/libz/libbz2/liblzma when the binary calls those, not just libc.
   Container path for any entry is just
-  \`/workspace/<challenge_id>/<basename(host_path)>\` — apply the same
-  derive rule when handing the path to Exploiter for \`LD_PRELOAD\` or
+  \`/workspace/<challenge_id>/<basename(host_path)>\` (same \`<challenge_id>\` =
+  the DB id) when handing the path to Exploiter for \`LD_PRELOAD\` or
   \`ELF()\` lookup.
 - \`session_id\` — assigned by Orchestrator (sole id-allocator). You
   forward it; you do NOT generate or modify it.
@@ -140,18 +142,18 @@ both fields are populated, **\`mode_override\` wins**.
 
 ### Step 1: Gather context
 
-**\`omp_read_state(challenge_dir)\`** — read the shared blackboard:
+**\`mcp__omp-db__read_state({ challenge_id })\`** — read the shared blackboard:
 - \`vuln_candidates[]\`: **summary** array (id / primitive / verification_result
   / agent / combined_from / description / has_poc / gives_count / needs_count)
   for ALL candidates from all SAs across rounds. Detail (rationale / blockers
   / gives / needs / poc_script_path / location) lives in
-  \`.omp/candidates/<id>.json\` — load via \`omp_read_candidate\` per id you
+  \`.omp/candidates/<id>.json\` — load via \`mcp__omp-db__read_candidate\` per id you
   actually need (your verify target + any candidate you plan to combine with).
 - \`mitigations\`, \`libc_version\`, \`libc_path\`, \`ld_path\`
 - \`reverser_summary_path\`: structural context
 - \`pseudocode_dir\`: path to HLIL pseudocode files
 
-**\`omp_read_candidate({challenge_dir, id})\`** — call this for the
+**\`mcp__omp-db__read_candidate({challenge_id, id})\`** — call this for the
 candidate(s) you need full detail on:
 - For a *verify* task: the candidate you've been assigned. Read its
   \`rationale\` (why VH thinks it's exploitable), \`verification_blockers\`
@@ -414,6 +416,7 @@ const { results } = omp_task_wait_all({ task_ids: [r.task_id] })
 #### 6d: Prompt template — Mode 1 / Mode 2 (with \`expected_result\`)
 
 \`\`\`
+Challenge id (for mcp__omp-db__read_state if needed): <challenge_id>
 Challenge dir (HOST — for Write/Read of script files, also Mode 1 bash cwd): <challenge_dir>
 Binary (CONTAINER — for pwno-mcp Mode 2 calls): <binary_path>
 Libc (CONTAINER): <libc_path>
@@ -463,6 +466,7 @@ verdict autonomously and there is no patched \`binary_path\` / libc /
 pwno-mcp.
 
 \`\`\`
+Challenge id (for mcp__omp-db__read_state if needed): <challenge_id>
 Challenge dir (HOST — your cwd): <challenge_dir>
 binary_input_path (HOST — untouched original): <state.binary_input_path>
 Dockerfile (HOST): <state.dockerfile_path>
@@ -493,6 +497,7 @@ Step 6b, then concatenate a short framing prefix with the file contents.
 Do NOT add \`expected_result\` or \`recommended_mode\`.
 
 \`\`\`
+Challenge id (for mcp__omp-db__read_state if needed): <challenge_id>
 Challenge dir (HOST — your cwd): <challenge_dir>
 binary_input_path (HOST): <state.binary_input_path>
 binary_path (CONTAINER, if Phase 1-5 ran — usually undefined in Mode 9 dispatch): <state.binary_path or "undefined">
@@ -661,7 +666,7 @@ in Mode 0/9 — do not invent a candidate to fill the field.
   does not bypass SA for autonomous-fallback or user-supplied
   dispatch — SA owns the retry/adjustment loop in all four modes.
 - **Fail fast.** Diagnose, don't blindly retry.
-- **No state writes.** Orchestrator is sole writer for state.json + every \`.omp/candidates/<id>.json\`. ACL denies you \`omp_patch_state\` / \`omp_create_candidate\` / \`omp_patch_candidate\` / \`omp_delete_candidate\` — calling them returns an error. Persistence is via the Step 8 return JSON.
+- **No state writes.** Orchestrator is sole writer for state.json + every \`.omp/candidates/<id>.json\`. ACL denies you \`mcp__omp-db__patch_state\` / \`mcp__omp-db__create_candidate\` / \`mcp__omp-db__patch_candidate\` / \`mcp__omp-db__delete_candidate\` — calling them returns an error. Persistence is via the Step 8 return JSON.
 - **No vuln_candidates invention.** VH is the sole producer of
   vulnerability primitives. If verification misfires for a tooling /
   methodology reason, route through \`verification_blockers\`. If a fresh

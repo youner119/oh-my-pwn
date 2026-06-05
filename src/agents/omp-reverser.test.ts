@@ -178,10 +178,10 @@ describe("createOmpReverserAgent", () => {
   test("prompt uses state tools and forbids direct writes to state.json / journal.md", () => {
     const agent = createOmpReverserAgent("test-model")
     const p = agent.prompt ?? ""
-    expect(p).toContain("omp_read_state")
-    expect(p).toContain("omp_patch_state")
+    expect(p).toContain("mcp__omp-db__read_state")
+    expect(p).toContain("mcp__omp-db__patch_state")
     expect(p).toContain("omp_append_journal")
-    expect(p).toContain("Never write state.json")
+    expect(p).toContain("Never write state or candidate rows")
   })
 
   test("prompt specifies batch_decompile_to_file and save_bndb", () => {

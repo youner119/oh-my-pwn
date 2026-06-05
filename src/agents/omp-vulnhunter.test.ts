@@ -30,14 +30,14 @@ describe("createOmpVulnhunterAgent", () => {
     expect(p).toContain("ROP")
   })
 
-  test("prompt reads via omp_read_state but does NOT write state or journal (ensemble paradigm)", () => {
+  test("prompt reads via mcp__omp-db__read_state but does NOT write state or journal (ensemble paradigm)", () => {
     const agent = createOmpVulnhunterAgent("test-model")
     const p = agent.prompt ?? ""
     // Read-only state access.
-    expect(p).toContain("omp_read_state")
+    expect(p).toContain("mcp__omp-db__read_state")
     // Explicit prohibition on writes — Orchestrator is sole writer.
     expect(p).toContain("Do NOT call")
-    expect(p).toContain("omp_patch_state")
+    expect(p).toContain("mcp__omp-db__patch_state")
     expect(p).toContain("omp_append_journal")
     expect(p).toContain("sole writer")
   })
@@ -171,7 +171,7 @@ describe("createOmpVulnhunterAgent", () => {
     const p = agent.prompt ?? ""
     expect(p).toContain("Required sequence")
     // Key steps — ensemble paradigm: read + analyze + return JSON.
-    expect(p).toContain("omp_read_state")
+    expect(p).toContain("mcp__omp-db__read_state")
     expect(p).toContain("Read the ctf-pwn catalog index")
     expect(p).toContain("Analyze ALL functions")
     expect(p).toContain("Cross-reference mitigations")

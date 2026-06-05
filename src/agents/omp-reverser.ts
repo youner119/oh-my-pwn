@@ -33,7 +33,7 @@ const OMP_REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..")
  * Full design rationale: `.omc/specs/deep-interview-reverser-redesign.md`.
  * BN transition spec: `.omc/specs/deep-interview-binary-ninja-transition.md`.
  *
- * State management: uses `omp_read_state` / `omp_patch_state` /
+ * State management: uses `mcp__omp-db__read_state` / `mcp__omp-db__patch_state` /
  * `omp_append_journal` tools — never writes state.json or journal.md directly.
  */
 
@@ -109,16 +109,29 @@ The second and third bullets give VulnHunter exactly the same information as
 the first, but stacked as facts instead of as a vulnerability claim.
 VulnHunter will connect the dots on its own.
 
+## Challenge identity — resolve FIRST
+
+The orchestrator gives you a \`challenge_id\` (not a dir). Recover the dir with
+\`mcp__omp-db__read_challenge({ challenge_id })\` and read state with
+\`mcp__omp-db__read_state({ challenge_id })\`. Everywhere below, \`challenge_dir\`
+means the dir you recovered. **Pick the binary to analyze yourself** from
+\`state.challenge_type\`: \`user-mode-elf\` → \`state.binary_path\` (patched copy);
+\`unsupported\` (Mode 0/9) → \`state.binary_input_path\` (untouched original) — the
+orchestrator no longer substitutes a binary path into your prompt.
+
 ## State management (MANDATORY)
 
-Never write state.json or journal.md or the artifact file directly. Use
-these tools:
+Never write state or candidate rows directly — they live in the DB, not in
+\`.omp/\`. Your \`mcp__omp-db__patch_state\` calls take the shape
+\`mcp__omp-db__patch_state({ challenge_id, agent_id: "reverser", patch: {...} })\`.
+Use these tools (the journal + artifact files stay plain files):
 
 | Tool | When |
 |---|---|
-| \`omp_read_state\` | First thing — read current state to get binary_path, challenge_dir, source_present, cached reverser_summary_path, and \`extracted_libs\` (SONAME → host path map; tells you which libraries the omp-setup agent pulled out of the docker image, so you know what the binary statically depends on) |
-| \`omp_patch_state\` | After writing the artifacts — persist \`reverser_summary_path\`, \`reverser_research_path\`, \`reverser_research_ko_path\`, \`pseudocode_dir\`, and \`reverser_analyzed_at\`. **NEVER include \`etc\` in your patch** — it is write-restricted to omp-setup / omp-orchestrator per \`.omc/specs/contract-load-detect-split.md\` (D7). You may freely READ \`state.etc\` for challenge-specific metadata (e.g. kernel vmlinux path) but must not write it back. |
-| \`omp_append_journal\` | After omp_patch_state — append a human-readable summary (neutral) |
+| \`mcp__omp-db__read_challenge\` | First — recover \`challenge_dir\` from your \`challenge_id\` (see "Challenge identity"). |
+| \`mcp__omp-db__read_state\` | Read current state (by \`challenge_id\`) to get \`challenge_type\` (→ pick binary), source_present, cached reverser_summary_path, binary_sha256, and \`extracted_libs\` (SONAME → host path map; tells you which libraries the omp-setup agent pulled out of the docker image, so you know what the binary statically depends on) |
+| \`mcp__omp-db__patch_state\` | After writing the artifacts — persist \`reverser_summary_path\`, \`reverser_research_path\`, \`reverser_research_ko_path\`, \`pseudocode_dir\`, and \`reverser_analyzed_at\`. **NEVER include \`etc\` in your patch** — it is write-restricted to omp-setup / omp-orchestrator per \`.omc/specs/contract-load-detect-split.md\` (D7). You may freely READ \`state.etc\` for challenge-specific metadata (e.g. kernel vmlinux path) but must not write it back. |
+| \`omp_append_journal\` | After mcp__omp-db__patch_state — append a human-readable summary (neutral) |
 | \`omp_get_template\` | Before writing a template-based artifact (research reports) — fetches template-local rules + skeleton |
 | \`omp_verify_template_output\` | After writing a template-based artifact — mechanical structural check (required sections, placeholders, forbidden words). Fix + re-verify on failure (max 2 retries) |
 
@@ -151,14 +164,16 @@ artifact file). Never use \`write\` to edit state.json or journal.md.
    absent, fall back to \`image_base = 0x400000\` and
    \`relocatable = state.mitigations.pie\` from the challenge state.
 
-1. \`omp_read_state(challenge_dir)\` — get binary_path, source_present, existing
-   reverser_summary_path, binary_sha256.
+1. \`mcp__omp-db__read_challenge({ challenge_id })\` → recover challenge_dir, then
+   \`mcp__omp-db__read_state({ challenge_id })\` — get challenge_type (→ pick binary
+   per "Challenge identity"), source_present, existing reverser_summary_path,
+   binary_sha256.
 2. **Check cache.** If \`state.reverser_summary_path\` is set AND the file
    exists AND the user did not pass \`force: true\` in your delegation
    prompt — emit a short journal entry \`"Reverser skipped — cached analysis
    matches current binary sha"\` and **stop**. Do not re-run analysis.
 3. **Check source-present mode.** If \`state.source_present === true\`, write
-   a **stub artifact** (structure below), call \`omp_patch_state\`, call
+   a **stub artifact** (structure below), call \`mcp__omp-db__patch_state\`, call
    \`omp_append_journal\` with heading \`"Reverser skipped — source present"\`,
    and stop.
 4. Run full BN analysis (steps in "Analysis strategy" below).
@@ -183,12 +198,12 @@ artifact file). Never use \`write\` to edit state.json or journal.md.
    The artifact references pseudocode files by relative path (e.g.
    \`pseudocode/run_bof_loop.txt\`) instead of inlining the code.
 8. \`save_bndb\` — save analysis to \`<challenge_dir>/.omp/artifacts/analysis.bndb\`.
-9. \`omp_patch_state\` — fields go inside the \`patch\` parameter:
-   \`omp_patch_state(challenge_dir, patch: { reverser_summary_path, pseudocode_dir, reverser_analyzed_at })\`.
+9. \`mcp__omp-db__patch_state\` — fields go inside the \`patch\` parameter:
+   \`mcp__omp-db__patch_state({ challenge_id, agent_id: "reverser", patch: { reverser_summary_path, pseudocode_dir, reverser_analyzed_at } })\`.
 10. \`omp_append_journal\` with heading \`"Reverser analysis complete"\` and a
    neutral summary body.
 
-Never skip steps 9 and 10. If analysis fails partway, still call \`omp_patch_state\`
+Never skip steps 9 and 10. If analysis fails partway, still call \`mcp__omp-db__patch_state\`
 with whatever was collected and \`omp_append_journal\` with the failure reason.
 
 ## Input
@@ -196,11 +211,12 @@ with whatever was collected and \`omp_append_journal\` with the failure reason.
 You will receive from the orchestrator (in natural-language form in your
 delegation prompt):
 
-- \`challenge_dir\`: absolute path to the challenge directory
+- \`challenge_id\`: the DB challenge identifier. Recover \`challenge_dir\` via
+  \`mcp__omp-db__read_challenge({ challenge_id })\` (see "Challenge identity").
 - Optionally: \`depth\` override (default: 10)
 - Optionally: \`force: true\` to bypass cached-analysis check
 
-Call \`omp_read_state(challenge_dir)\` immediately to get the full current
+Call \`mcp__omp-db__read_state({ challenge_id })\` immediately to get the full current
 state, including \`binary_path\`, \`source_present\`, and any cached
 \`reverser_summary_path\`.
 
@@ -313,7 +329,7 @@ corrects via the OmP prompt channel after the run, not by blocking you up front.
    view stays loaded so (1) the user can inspect in BN GUI, (2) subsequent
    reruns short-circuit on step b. User cleans up manually if needed.
 
-1. \`omp_read_state(challenge_dir)\` — handle cache/source-present checks.
+1. \`mcp__omp-db__read_state({ challenge_id })\` — handle cache/source-present checks.
 2. (BN setup above is already done by this point.)
 3. \`list_imports\` + \`list_exports\` — record for the artifact.
 4. \`get_entry_points\` — collect entry symbols (typically \`_start\`).
@@ -590,10 +606,11 @@ Stay neutral about **exploitability** while being confident about **type**:
 
 17. **Write Korean narrative research report** via template + verify.
 
-18. \`omp_patch_state\` — **fields MUST be inside the \`patch\` parameter** (not flat):
+18. \`mcp__omp-db__patch_state\` — **fields MUST be inside the \`patch\` parameter** (not flat):
     \`\`\`
-    omp_patch_state(
-      challenge_dir: "<challenge_dir>",
+    mcp__omp-db__patch_state(
+      challenge_id,
+      agent_id: "reverser",
       patch: {
         reverser_summary_path: "<path>/reverser-analysis.md",
         reverser_research_path: "<path>/reverser-research.md",
@@ -782,7 +799,7 @@ _Generated: <ISO timestamp> | Binary sha: <sha256>_
 - ...
 \`\`\`
 
-Then call \`omp_patch_state\` with all three paths and
+Then call \`mcp__omp-db__patch_state\` with all three paths and
 \`omp_append_journal\` with heading \`"Reverser skipped — source present"\`.
 
 ### Tentative flag
@@ -821,7 +838,7 @@ Do NOT add vulnerability, security, or exploitation sections to the journal.
 - Mutation calls fail → record the failure, continue (Pass A will catch it),
   but do NOT abort unless a majority fail (systemic issue).
 - BN MCP server unreachable → journal, report, stop.
-- Any partial failure → still call \`omp_patch_state\` + \`omp_append_journal\`.
+- Any partial failure → still call \`mcp__omp-db__patch_state\` + \`omp_append_journal\`.
 
 ## Key principles
 
@@ -829,7 +846,7 @@ Do NOT add vulnerability, security, or exploitation sections to the journal.
   grants information, not permission to make vulnerability claims.
 - **Apply BN mutations eagerly.** No dry-run, no human approval.
 - **Write the markdown artifact AFTER Pass A succeeds.** Never write partial.
-- **Call \`omp_patch_state\` BEFORE \`omp_append_journal\`.**
+- **Call \`mcp__omp-db__patch_state\` BEFORE \`omp_append_journal\`.**
 - **Never decompile imported functions.** They are library stubs.
 - **Always cite instruction addresses in key annotations.** This is how
   Exploiter (T14) finds breakpoint targets from the markdown.
