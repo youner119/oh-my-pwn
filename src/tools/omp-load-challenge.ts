@@ -52,9 +52,9 @@ export function createOmpLoadChallengeTool(
       "scan the folder contents. Binary / Dockerfile / source identification is the " +
       "omp-setup agent's responsibility (Phase 0 Detect populates " +
       "binary_input_path / dockerfile_path / source_paths via omp_patch_state). " +
-      "On success creates <challenge-dir>/.omp/{state.json, journal.md, artifacts/, logs/, exploit/} " +
-      "and returns the initial ChallengeState. Idempotent: calling again on an already-loaded " +
-      "folder reloads state without mutating any file. " +
+      "On success bootstraps <challenge-dir>/.omp/{journal.md, artifacts/, logs/, exploit/} " +
+      "layout and returns workspace_root. Idempotent: calling again on an already-loaded " +
+      "folder leaves existing files untouched. " +
       "Errors: 'missing-dir' (path does not exist) or 'not-a-directory' (path is a file). " +
       "Empty folders are valid — omp-setup will classify them as challenge_type='unsupported'. " +
       "Always call this BEFORE dispatching the omp-setup subagent.",
@@ -83,7 +83,7 @@ export function createOmpLoadChallengeTool(
         }
         return JSON.stringify({
           ok: true,
-          state: result.state,
+          workspace_root: result.workspace_root,
           freshlyInitialized: result.freshlyInitialized,
         })
       } catch (err) {

@@ -35,7 +35,7 @@ export {
 export {
   dockerBuildImage,
   type DockerBuildResult,
-  type DockerBuildOptions,
+  type DockerBuildInput,
 } from "./docker-build"
 
 export {

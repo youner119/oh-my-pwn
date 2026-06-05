@@ -5,10 +5,11 @@
  * relative) path to a CTF challenge folder, this function:
  *
  *   1. Validates that the path exists and is a directory.
- *   2. Bootstraps `<challenge-dir>/.omp/{state.json, journal.md, exploit/,
- *      logs/, artifacts/}` via {@link initializeOmpDir}, which is itself
- *      idempotent and load-or-init.
- *   3. Optionally seeds `state.workspace_root` (the plugin's host workspace
+ *   2. Bootstraps `<challenge-dir>/.omp/{journal.md, exploit/, logs/,
+ *      artifacts/, candidates/}` via {@link initializeOmpDir}, which is
+ *      itself idempotent. State now lives in the db-mcp SQLite store, so the
+ *      loader no longer seeds `state.json`.
+ *   3. Optionally returns `workspace_root` (the plugin's host workspace
  *      mount source) so downstream agents can derive per-challenge container
  *      paths without inferring the plugin root.
  *
@@ -26,7 +27,6 @@ import { existsSync, statSync } from "node:fs"
 import { resolve } from "node:path"
 import { initializeOmpDir, getStatePaths } from "../state/io"
 import { appendJournalSection } from "../state/journal"
-import type { ChallengeState } from "../state/challenge-state"
 import { ChallengeLoadError } from "./challenge-load-error"
 
 export interface LoadChallengeFolderOptions {
@@ -41,10 +41,13 @@ export interface LoadChallengeFolderOptions {
 }
 
 export interface LoadChallengeFolderResult {
-  /** The persisted ChallengeState after loading or initializing. */
-  state: ChallengeState
   /**
-   * True if `state.json` did not exist before this call (i.e. the loader
+   * The plugin's host workspace mount source, echoed back from
+   * `opts.workspaceRoot` when supplied. Undefined when not provided.
+   */
+  workspace_root?: string
+  /**
+   * True if `journal.md` did not exist before this call (i.e. the loader
    * just bootstrapped a new challenge). False on reload.
    */
   freshlyInitialized: boolean
@@ -79,18 +82,10 @@ export function loadChallengeFolder(
     })
   }
 
-  const { statePath } = getStatePaths(challengeDir)
-  const freshlyInitialized = !existsSync(statePath)
+  const { journalPath } = getStatePaths(challengeDir)
+  const freshlyInitialized = !existsSync(journalPath)
 
-  const state = initializeOmpDir(
-    {
-      challenge_dir: challengeDir,
-      ...(opts.workspaceRoot !== undefined
-        ? { workspace_root: opts.workspaceRoot }
-        : {}),
-    },
-    now,
-  )
+  initializeOmpDir(challengeDir, now)
 
   if (freshlyInitialized) {
     appendJournalSection(
@@ -101,7 +96,12 @@ export function loadChallengeFolder(
     )
   }
 
-  return { state, freshlyInitialized }
+  return {
+    ...(opts.workspaceRoot !== undefined
+      ? { workspace_root: opts.workspaceRoot }
+      : {}),
+    freshlyInitialized,
+  }
 }
 
 interface LoadedBody {

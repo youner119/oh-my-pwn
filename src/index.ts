@@ -23,7 +23,6 @@ export {
 } from "./state/challenge-state"
 export {
   initializeOmpDir,
-  loadChallengeState,
   saveChallengeState,
   getStatePaths,
   ChallengeStateLoadError,
@@ -81,7 +80,7 @@ export {
   type DockerRunOptions,
   dockerBuildImage,
   type DockerBuildResult,
-  type DockerBuildOptions,
+  type DockerBuildInput,
 } from "./envsetup"
 
 // Ghidra-MCP (T06) — removed in feat/binary-ninja branch.

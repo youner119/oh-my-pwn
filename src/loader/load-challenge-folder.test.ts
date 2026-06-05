@@ -10,7 +10,7 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { loadChallengeFolder } from "./load-challenge-folder"
 import { ChallengeLoadError } from "./challenge-load-error"
-import { getStatePaths, loadChallengeState } from "../state/io"
+import { getStatePaths } from "../state/io"
 
 function makeChallengeDir(label: string): string {
   const dir = join(
@@ -39,30 +39,25 @@ describe("loadChallengeFolder (contract-load-detect-split D1)", () => {
       const result = loadChallengeFolder(dir)
 
       expect(result.freshlyInitialized).toBe(true)
-      // Loader no longer touches binary / dockerfile / source — those stay
-      // undefined until omp-setup Phase 0 (Detect) writes them.
-      expect(result.state.binary_input_path).toBeUndefined()
-      expect(result.state.binary_input_sha256).toBeUndefined()
-      expect(result.state.dockerfile_path).toBeUndefined()
-      expect(result.state.source_present).toBe(false)
-      expect(result.state.source_paths).toEqual([])
-      expect(result.state.challenge_dir).toBe(dir)
+      expect(result.workspace_root).toBeUndefined()
 
+      // State now lives in db-mcp; the loader only seeds the .omp/ layout +
+      // journal.md and never writes state.json.
       const { ompDir, statePath, journalPath } = getStatePaths(dir)
       expect(existsSync(ompDir)).toBe(true)
-      expect(existsSync(statePath)).toBe(true)
+      expect(existsSync(statePath)).toBe(false)
       expect(existsSync(journalPath)).toBe(true)
     })
 
-    test("seeds workspace_root when provided", () => {
+    test("returns workspace_root when provided", () => {
       const workspace = "/host/plugin/workspace"
       const result = loadChallengeFolder(dir, { workspaceRoot: workspace })
-      expect(result.state.workspace_root).toBe(workspace)
+      expect(result.workspace_root).toBe(workspace)
     })
 
     test("omits workspace_root when not provided", () => {
       const result = loadChallengeFolder(dir)
-      expect(result.state.workspace_root).toBeUndefined()
+      expect(result.workspace_root).toBeUndefined()
     })
 
     test("bootstraps regardless of folder contents (no binary, no dockerfile)", () => {
@@ -73,8 +68,6 @@ describe("loadChallengeFolder (contract-load-detect-split D1)", () => {
       const result = loadChallengeFolder(dir)
 
       expect(result.freshlyInitialized).toBe(true)
-      expect(result.state.binary_input_path).toBeUndefined()
-      expect(result.state.dockerfile_path).toBeUndefined()
     })
 
     test("writes a 'challenge loaded' journal section on fresh init", () => {
@@ -88,13 +81,13 @@ describe("loadChallengeFolder (contract-load-detect-split D1)", () => {
   })
 
   describe("idempotency", () => {
-    test("calling twice on the same directory reuses state and clears freshlyInitialized", () => {
+    test("calling twice on the same directory clears freshlyInitialized", () => {
       const first = loadChallengeFolder(dir)
       const second = loadChallengeFolder(dir)
 
       expect(first.freshlyInitialized).toBe(true)
+      // journal.md now exists → no longer fresh.
       expect(second.freshlyInitialized).toBe(false)
-      expect(second.state.created_at).toBe(first.state.created_at)
     })
 
     test("reload does not rewrite the journal 'challenge loaded' section", () => {
@@ -106,29 +99,6 @@ describe("loadChallengeFolder (contract-load-detect-split D1)", () => {
       const journalAfter = readFileSync(journalPath, "utf-8")
 
       expect(journalAfter).toBe(journalBefore)
-    })
-
-    test("reload preserves agent-written state fields", () => {
-      const first = loadChallengeFolder(dir)
-
-      // Simulate omp-setup Phase 0 detect — write binary_input_path et al.
-      const { statePath } = getStatePaths(dir)
-      const state = loadChallengeState(dir)!
-      const mutated = {
-        ...state,
-        binary_input_path: "/tmp/some/binary",
-        binary_input_sha256: "deadbeef",
-        dockerfile_path: "/tmp/some/Dockerfile",
-        updated_at: state.updated_at,
-      }
-      writeFileSync(statePath, JSON.stringify(mutated, null, 2))
-
-      const reloaded = loadChallengeFolder(dir)
-      expect(reloaded.freshlyInitialized).toBe(false)
-      expect(reloaded.state.binary_input_path).toBe("/tmp/some/binary")
-      expect(reloaded.state.binary_input_sha256).toBe("deadbeef")
-      expect(reloaded.state.dockerfile_path).toBe("/tmp/some/Dockerfile")
-      expect(first.state.created_at).toBe(reloaded.state.created_at)
     })
   })
 
