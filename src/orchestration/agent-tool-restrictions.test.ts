@@ -64,3 +64,40 @@ describe("getAgentToolRestrictions", () => {
     expect(r).toEqual({})
   })
 })
+
+describe("DB write ACL Layer 1 (corrected 2026-06-05)", () => {
+  const PS = "mcp__omp-db__patch_state"
+  const CANDIDATE_CHALLENGE = [
+    "mcp__omp-db__create_candidate",
+    "mcp__omp-db__patch_candidate",
+    "mcp__omp-db__delete_candidate",
+    "mcp__omp-db__register_challenge",
+    "mcp__omp-db__update_challenge",
+  ]
+
+  test("setup / reverser are state writers — patch_state allowed, candidate/challenge denied", () => {
+    for (const agent of ["omp-setup", "omp-reverser"]) {
+      const r = getAgentToolRestrictions(agent)
+      expect(r[PS]).toBeUndefined() // not denied → allowed
+      for (const t of CANDIDATE_CHALLENGE) expect(r[t]).toBe(false)
+    }
+  })
+
+  test("VH / SA / Exploiter are read-only — all DB writes denied", () => {
+    for (const agent of [
+      "omp-vulnhunter",
+      "omp-strategist",
+      "omp-exploiter-mode-0",
+      "omp-exploiter-mode-9",
+    ]) {
+      const r = getAgentToolRestrictions(agent)
+      expect(r[PS]).toBe(false)
+      for (const t of CANDIDATE_CHALLENGE) expect(r[t]).toBe(false)
+    }
+  })
+
+  test("orchestrator (not in map) keeps full access — no DB writes denied", () => {
+    const r = getAgentToolRestrictions("omp-orchestrator")
+    expect(r).toEqual({})
+  })
+})

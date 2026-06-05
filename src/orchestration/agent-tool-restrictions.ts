@@ -13,49 +13,69 @@
  */
 
 /**
- * State write tools — Orchestrator sole writer per
- * `.omc/specs/state-split-vuln-candidates.md` D6 + the original
- * parallel-orchestration spec. Sub-agents return changes in their task
- * result; the Orchestrator persists via these tools. `omp_read_*` and
- * `omp_append_journal` stay allowed (read + journal append).
+ * DB write tools — ACL Layer 1 (spec: deep-interview-database-mcp.md, AC4,
+ * 2026-06-05 정정). State/candidate access moved to the omp-db MCP server
+ * (`mcp__omp-db__*`); the file-era `omp_*` plugin tools were removed in T8.
+ *
+ * The write surface is per-channel, not a blanket sole-writer:
+ *
+ * - `patch_state` (state) has THREE writers — orchestrator + setup(Phase 0
+ *   detect/env) + reverser(its own artifacts metadata). So the setup/reverser
+ *   deny set keeps `patch_state` ALLOWED and denies only candidate/challenge
+ *   writes.
+ * - candidate writes (`create/patch/delete_candidate`) + challenge writes
+ *   (`register/update_challenge`) are orchestrator-only.
+ * - VH / SA / Exploiter are read-only → deny ALL DB writes.
+ *
+ * Reads (`read_state` / `read_candidate` / `read_challenge`) stay allowed for
+ * everyone. Layer 2 (server-side `agent_id` allowlist) is the real enforcement;
+ * this layer just minimises surface exposure.
  */
-const STATE_WRITE_DENY = {
-  omp_patch_state: false,
-  omp_create_candidate: false,
-  omp_patch_candidate: false,
-  omp_delete_candidate: false,
+const DB_WRITE_DENY_CANDIDATE_CHALLENGE = {
+  "mcp__omp-db__create_candidate": false,
+  "mcp__omp-db__patch_candidate": false,
+  "mcp__omp-db__delete_candidate": false,
+  "mcp__omp-db__register_challenge": false,
+  "mcp__omp-db__update_challenge": false,
+  // patch_state intentionally NOT denied — setup / reverser are state writers.
+} as const
+
+const DB_WRITE_DENY_ALL = {
+  "mcp__omp-db__patch_state": false,
+  ...DB_WRITE_DENY_CANDIDATE_CHALLENGE,
 } as const
 
 const AGENT_RESTRICTIONS: Record<string, Record<string, boolean>> = {
   "omp-setup": {
     // Leaf agent — single-transaction Phase 0 ground-work. No
-    // child spawning.
+    // child spawning. State writer (Phase 0) → patch_state allowed.
     omp_task_launch: false,
     omp_task_wait_all: false,
     omp_task_wait_any: false,
     omp_task_cancel: false,
-    ...STATE_WRITE_DENY,
+    ...DB_WRITE_DENY_CANDIDATE_CHALLENGE,
   },
   "omp-reverser": {
+    // Leaf agent. State writer (own artifacts metadata) → patch_state allowed.
     omp_task_launch: false,
     omp_task_wait_all: false,
     omp_task_wait_any: false,
     omp_task_cancel: false,
-    ...STATE_WRITE_DENY,
+    ...DB_WRITE_DENY_CANDIDATE_CHALLENGE,
   },
   "omp-vulnhunter": {
     omp_task_launch: false,
     omp_task_wait_all: false,
     omp_task_wait_any: false,
     omp_task_cancel: false,
-    ...STATE_WRITE_DENY,
+    ...DB_WRITE_DENY_ALL,
   },
   "omp-strategist": {
     omp_task_launch: true,
     omp_task_wait_all: true,
     omp_task_wait_any: true,
     omp_task_cancel: true,
-    ...STATE_WRITE_DENY,
+    ...DB_WRITE_DENY_ALL,
   },
   // Exploiter — 4 mode agents (post `mode-0-9-setup` T8 cutover). All
   // four are leaf agents with the same restriction shape (cannot spawn
@@ -66,28 +86,28 @@ const AGENT_RESTRICTIONS: Record<string, Record<string, boolean>> = {
     omp_task_wait_all: false,
     omp_task_wait_any: false,
     omp_task_cancel: false,
-    ...STATE_WRITE_DENY,
+    ...DB_WRITE_DENY_ALL,
   },
   "omp-exploiter-mode-2": {
     omp_task_launch: false,
     omp_task_wait_all: false,
     omp_task_wait_any: false,
     omp_task_cancel: false,
-    ...STATE_WRITE_DENY,
+    ...DB_WRITE_DENY_ALL,
   },
   "omp-exploiter-mode-0": {
     omp_task_launch: false,
     omp_task_wait_all: false,
     omp_task_wait_any: false,
     omp_task_cancel: false,
-    ...STATE_WRITE_DENY,
+    ...DB_WRITE_DENY_ALL,
   },
   "omp-exploiter-mode-9": {
     omp_task_launch: false,
     omp_task_wait_all: false,
     omp_task_wait_any: false,
     omp_task_cancel: false,
-    ...STATE_WRITE_DENY,
+    ...DB_WRITE_DENY_ALL,
   },
 }
 
