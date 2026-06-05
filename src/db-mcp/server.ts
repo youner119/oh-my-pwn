@@ -129,7 +129,7 @@ export function createDbMcpServer(db: OmpDatabase): McpServer {
       },
     },
     async ({ challenge_id, patch, agent_id }): Promise<CallToolResult> => {
-      const denial = checkWriteAcl(agent_id)
+      const denial = checkWriteAcl("patch_state", agent_id)
       if (denial) return jsonResult(denial)
       try {
         const current = await loadState(db, challenge_id)
@@ -259,7 +259,7 @@ export function createDbMcpServer(db: OmpDatabase): McpServer {
       },
     },
     async ({ challenge_id, candidate, agent_id }): Promise<CallToolResult> => {
-      const denial = checkWriteAcl(agent_id)
+      const denial = checkWriteAcl("create_candidate", agent_id)
       if (denial) return jsonResult(denial)
       try {
         const parsed = VulnCandidateSchema.safeParse(candidate)
@@ -314,7 +314,7 @@ export function createDbMcpServer(db: OmpDatabase): McpServer {
       },
     },
     async ({ challenge_id, id, patch, agent_id }): Promise<CallToolResult> => {
-      const denial = checkWriteAcl(agent_id)
+      const denial = checkWriteAcl("patch_candidate", agent_id)
       if (denial) return jsonResult(denial)
       try {
         const existing = await loadCandidate(db, challenge_id, id)
@@ -365,7 +365,7 @@ export function createDbMcpServer(db: OmpDatabase): McpServer {
       },
     },
     async ({ challenge_id, id, agent_id }): Promise<CallToolResult> => {
-      const denial = checkWriteAcl(agent_id)
+      const denial = checkWriteAcl("delete_candidate", agent_id)
       if (denial) return jsonResult(denial)
       try {
         const deleted = db.transaction((tx) =>
@@ -409,7 +409,7 @@ export function createDbMcpServer(db: OmpDatabase): McpServer {
       },
     },
     async ({ dir, workspace_root, name, agent_id }): Promise<CallToolResult> => {
-      const denial = checkWriteAcl(agent_id)
+      const denial = checkWriteAcl("register_challenge", agent_id)
       if (denial) return jsonResult(denial)
       try {
         const existing = await findChallengeByDir(db, dir)
@@ -492,7 +492,7 @@ export function createDbMcpServer(db: OmpDatabase): McpServer {
       },
     },
     async ({ challenge_id, patch, agent_id }): Promise<CallToolResult> => {
-      const denial = checkWriteAcl(agent_id)
+      const denial = checkWriteAcl("update_challenge", agent_id)
       if (denial) return jsonResult(denial)
       try {
         const mapped: {

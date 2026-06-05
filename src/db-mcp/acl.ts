@@ -1,33 +1,56 @@
 /**
  * ACL Layer 2 for the omp-db MCP server.
  *
- * Spec: `.omc/specs/deep-interview-database-mcp.md` (T6, AC4).
+ * Spec: `.omc/specs/deep-interview-database-mcp.md` (T6, AC4 — 2026-06-05 정정).
  *
- * Two-layer defence keeps the Orchestrator the sole state writer:
+ * Two-layer defence governs DB writes:
  *
- * - **Layer 1** (T9, plugin-side): sub-agent `tools` config never lists the DB
- *   write tools, so opencode does not even expose the call surface.
- * - **Layer 2** (here): the MCP server independently validates the `agent_id`
- *   parameter on every *write* tool and rejects anything but `"orchestrator"`.
- *   This catches a forged / mis-wired call that slips past Layer 1.
+ * - **Layer 1** (T9, plugin-side): each agent's `tools` config lists only the
+ *   DB tools it may call — VH/SA/Exploiter get no write tools; setup/reverser
+ *   get `patch_state` only; orchestrator gets all.
+ * - **Layer 2** (here): the MCP server independently validates `agent_id`
+ *   against a **per-tool allowlist** and rejects anything outside it, catching
+ *   a forged / mis-wired call that slips past Layer 1.
  *
- * Read tools (`read_state` / `read_candidate`) take no `agent_id` — all agents
- * may read.
+ * The "sole writer" is per-channel, not global: `patch_state` (state) has three
+ * writers (orchestrator + setup in Phase 0 + reverser for its own artifacts
+ * metadata; field-level split is prompt policy), while candidate and challenge
+ * writes are orchestrator-only. Read tools take no `agent_id` — all agents read.
  */
 
 /** Recognised agent identities (the value an agent passes as `agent_id`). */
 export const KNOWN_AGENT_IDS = [
   "orchestrator",
+  "setup",
+  "reverser",
   "vulnhunter",
   "strategist",
   "exploiter",
-  "reverser",
 ] as const
 
 export type AgentId = (typeof KNOWN_AGENT_IDS)[number]
 
-/** The sole identity permitted to write state/candidate rows. */
-export const SOLE_WRITER: AgentId = "orchestrator"
+/** Write tools subject to ACL Layer 2. */
+export type WriteTool =
+  | "patch_state"
+  | "create_candidate"
+  | "patch_candidate"
+  | "delete_candidate"
+  | "register_challenge"
+  | "update_challenge"
+
+/**
+ * Per-tool `agent_id` allowlist. `patch_state` is the only multi-writer
+ * channel; everything else is orchestrator-only.
+ */
+export const WRITE_ALLOWLIST: Record<WriteTool, readonly AgentId[]> = {
+  patch_state: ["orchestrator", "setup", "reverser"],
+  create_candidate: ["orchestrator"],
+  patch_candidate: ["orchestrator"],
+  delete_candidate: ["orchestrator"],
+  register_challenge: ["orchestrator"],
+  update_challenge: ["orchestrator"],
+}
 
 export interface AclDenial {
   error: "acl_denied"
@@ -36,21 +59,17 @@ export interface AclDenial {
 }
 
 /**
- * Validate a write tool's `agent_id`. Returns `null` when the call is allowed,
- * or an {@link AclDenial} object (serialise into the tool result) when denied.
- *
- * Denied cases: unknown identity, or a known-but-non-orchestrator agent. Both
- * collapse to `acl_denied` — the server does not leak which check failed.
+ * Validate a write tool's `agent_id` against its allowlist. Returns `null` when
+ * allowed, or an {@link AclDenial} (serialise into the tool result) when denied.
  */
-export function checkWriteAcl(agentId: string): AclDenial | null {
-  if (agentId === SOLE_WRITER) return null
-  const known = (KNOWN_AGENT_IDS as readonly string[]).includes(agentId)
+export function checkWriteAcl(tool: WriteTool, agentId: string): AclDenial | null {
+  const allowed = WRITE_ALLOWLIST[tool]
+  if ((allowed as readonly string[]).includes(agentId)) return null
   return {
     error: "acl_denied",
-    message: known
-      ? `Agent '${agentId}' is not permitted to write state/candidate rows. ` +
-        `Only '${SOLE_WRITER}' may write (sole-writer invariant, ACL Layer 2).`
-      : `Unknown agent_id '${agentId}'. Write tools require agent_id='${SOLE_WRITER}'.`,
+    message:
+      `Agent '${agentId}' is not permitted to call ${tool}. ` +
+      `Allowed: ${allowed.join(", ")} (ACL Layer 2).`,
     agent_id: agentId,
   }
 }

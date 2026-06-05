@@ -205,6 +205,24 @@ describe("omp-db MCP server (end-to-end via InMemoryTransport)", () => {
     expect(denyCreate.error).toBe("acl_denied")
   })
 
+  test("ACL Layer 2 — patch_state allows setup + reverser; candidate writes don't", async () => {
+    for (const id of ["setup", "reverser"]) {
+      const ok = await call("patch_state", {
+        challenge_id: CID,
+        patch: { pipeline_phase: "idle" },
+        agent_id: id,
+      })
+      expect(ok.ok).toBe(true)
+    }
+    // but they may NOT create candidates
+    const deny = await call("create_candidate", {
+      challenge_id: CID,
+      candidate: { id: "c1", primitive: "p" },
+      agent_id: "setup",
+    })
+    expect(deny.error).toBe("acl_denied")
+  })
+
   test("patch_state vuln_candidates summary upsert surfaces in read_state", async () => {
     const res = await call("patch_state", {
       challenge_id: CID,

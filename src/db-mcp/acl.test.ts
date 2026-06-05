@@ -2,22 +2,40 @@ import { describe, expect, test } from "bun:test"
 
 import { checkWriteAcl } from "./acl"
 
-describe("checkWriteAcl (ACL Layer 2)", () => {
-  test("allows the sole writer (orchestrator)", () => {
-    expect(checkWriteAcl("orchestrator")).toBeNull()
+describe("checkWriteAcl (ACL Layer 2, per-tool)", () => {
+  test("patch_state allows orchestrator + setup + reverser", () => {
+    for (const id of ["orchestrator", "setup", "reverser"]) {
+      expect(checkWriteAcl("patch_state", id)).toBeNull()
+    }
   })
 
-  test("denies a known non-orchestrator agent", () => {
-    for (const id of ["vulnhunter", "strategist", "exploiter", "reverser"]) {
-      const d = checkWriteAcl(id)
+  test("patch_state denies VH / SA / Exploiter", () => {
+    for (const id of ["vulnhunter", "strategist", "exploiter"]) {
+      const d = checkWriteAcl("patch_state", id)
       expect(d?.error).toBe("acl_denied")
       expect(d?.agent_id).toBe(id)
     }
   })
 
-  test("denies an unknown agent_id", () => {
-    const d = checkWriteAcl("attacker")
+  test("candidate + challenge writes are orchestrator-only", () => {
+    const tools = [
+      "create_candidate",
+      "patch_candidate",
+      "delete_candidate",
+      "register_challenge",
+      "update_challenge",
+    ] as const
+    for (const tool of tools) {
+      expect(checkWriteAcl(tool, "orchestrator")).toBeNull()
+      for (const id of ["setup", "reverser", "vulnhunter"]) {
+        expect(checkWriteAcl(tool, id)?.error).toBe("acl_denied")
+      }
+    }
+  })
+
+  test("unknown agent_id is denied", () => {
+    const d = checkWriteAcl("patch_state", "attacker")
     expect(d?.error).toBe("acl_denied")
-    expect(d?.message).toContain("Unknown agent_id")
+    expect(d?.agent_id).toBe("attacker")
   })
 })
