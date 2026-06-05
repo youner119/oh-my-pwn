@@ -7,12 +7,13 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js"
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js"
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js"
 
-import { closeDb, openDb, type OmpDatabase } from "../db"
+import { challenges, closeDb, openDb, type OmpDatabase } from "../db"
 import { ChallengeStateSchema } from "../state/challenge-state"
 import { decomposeState, writeStateRow } from "./mapper"
 import { createDbMcpServer } from "./server"
 
-const CID = "/tmp/chal-server"
+const CID = "chalserver_bbbb0001" // surrogate challenge_id (the key)
+const DIR = "/tmp/chal-server" // challenge_dir (lives in challenges.dir)
 const TS = "2026-06-05T00:00:00.000Z"
 const ORCH = { agent_id: "orchestrator" }
 
@@ -49,11 +50,14 @@ describe("omp-db MCP server (end-to-end via InMemoryTransport)", () => {
     // Seed an initial state row out-of-band (no create_state tool by design).
     const seed = ChallengeStateSchema.parse({
       schema_version: "1",
-      challenge_dir: CID,
+      challenge_dir: DIR,
       created_at: TS,
       updated_at: TS,
     })
-    db.transaction((tx) => writeStateRow(tx, decomposeState(seed)))
+    db.insert(challenges)
+      .values({ challengeId: CID, name: "s", dir: DIR, createdAt: TS, updatedAt: TS })
+      .run()
+    db.transaction((tx) => writeStateRow(tx, decomposeState(CID, seed)))
 
     const server = createDbMcpServer(db)
     const [clientTransport, serverTransport] =
@@ -86,7 +90,7 @@ describe("omp-db MCP server (end-to-end via InMemoryTransport)", () => {
   test("read_state returns the seeded state; unknown → state_not_found", async () => {
     const ok = await call("read_state", { challenge_id: CID })
     expect(ok.ok).toBe(true)
-    expect((ok.state as { challenge_dir: string }).challenge_dir).toBe(CID)
+    expect((ok.state as { challenge_dir: string }).challenge_dir).toBe(DIR)
 
     const miss = await call("read_state", { challenge_id: "/nope" })
     expect(miss.error).toBe("state_not_found")

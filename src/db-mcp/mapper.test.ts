@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 
-import { closeDb, openDb, type OmpDatabase } from "../db"
+import { challenges, closeDb, openDb, type OmpDatabase } from "../db"
 import {
   ChallengeStateSchema,
   VulnCandidateSchema,
@@ -21,7 +21,8 @@ import {
   writeStateRow,
 } from "./mapper"
 
-const CID = "/tmp/chal-mapper"
+const CID = "chalmapper_aaaa0001" // surrogate challenge_id (the key)
+const DIR = "/tmp/chal-mapper" // challenge_dir (lives in challenges.dir)
 const TS = "2026-06-05T00:00:00.000Z"
 
 function tmpDbPath(label: string): { dir: string; dbPath: string } {
@@ -34,7 +35,17 @@ function tmpDbPath(label: string): { dir: string; dbPath: string } {
 }
 
 function seedState(db: OmpDatabase, state: ChallengeState): void {
-  const decomp = decomposeState(state)
+  db.insert(challenges)
+    .values({
+      challengeId: CID,
+      name: "m",
+      dir: state.challenge_dir,
+      createdAt: TS,
+      updatedAt: TS,
+    })
+    .onConflictDoNothing()
+    .run()
+  const decomp = decomposeState(CID, state)
   db.transaction((tx) => writeStateRow(tx, decomp))
 }
 
@@ -60,7 +71,7 @@ describe("mapper round-trips", () => {
   test("state decompose → write → reassemble preserves a rich ChallengeState", async () => {
     const state = ChallengeStateSchema.parse({
       schema_version: "1",
-      challenge_dir: CID,
+      challenge_dir: DIR,
       binary_input_path: "/tmp/chal-mapper/prob",
       source_present: true,
       source_paths: ["/tmp/chal-mapper/a.c", "/tmp/chal-mapper/b.c"],
@@ -96,7 +107,7 @@ describe("mapper round-trips", () => {
   test("candidate decompose → insert → reassemble preserves full VulnCandidate", async () => {
     const minimal = ChallengeStateSchema.parse({
       schema_version: "1",
-      challenge_dir: CID,
+      challenge_dir: DIR,
       created_at: TS,
       updated_at: TS,
     })
@@ -134,7 +145,7 @@ describe("mapper round-trips", () => {
   test("read_state projects candidate rows down to vuln_candidates summaries", async () => {
     const minimal = ChallengeStateSchema.parse({
       schema_version: "1",
-      challenge_dir: CID,
+      challenge_dir: DIR,
       created_at: TS,
       updated_at: TS,
     })
@@ -178,7 +189,7 @@ describe("patch_state vuln_candidates = (a) semantics", () => {
       db,
       ChallengeStateSchema.parse({
         schema_version: "1",
-        challenge_dir: CID,
+        challenge_dir: DIR,
         created_at: TS,
         updated_at: TS,
       }),

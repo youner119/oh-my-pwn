@@ -176,7 +176,7 @@ export function createDbMcpServer(db: OmpDatabase): McpServer {
             issues: result.error.issues,
           })
 
-        const decomp = decomposeState(result.data)
+        const decomp = decomposeState(challenge_id, result.data)
         db.transaction((tx) => {
           writeStateRow(tx, decomp)
           for (const summary of summaries) {

@@ -92,11 +92,16 @@ export interface StateDecomposition {
  * array FK tables. `vuln_candidates` is intentionally ignored — candidate rows
  * are owned by the candidates table and managed via the candidate channel.
  *
- * `challenge_id` == `challenge_dir` (the absolute path) under fresh-start: the
- * orchestrator already holds the dir, so the row key is the dir verbatim.
+ * `challengeId` is the surrogate `"<name>_<uuid8>"` (spec:
+ * challenge-identity-catalog.md), passed explicitly — it is NOT
+ * `s.challenge_dir` anymore (the dir lives in the `challenges` table and is
+ * NOT written to the state row here).
  */
-export function decomposeState(s: ChallengeState): StateDecomposition {
-  const cid = s.challenge_dir
+export function decomposeState(
+  challengeId: string,
+  s: ChallengeState,
+): StateDecomposition {
+  const cid = challengeId
   const m = s.mitigations
   const r = s.remote
   const pc = s.parallel_config
@@ -105,7 +110,6 @@ export function decomposeState(s: ChallengeState): StateDecomposition {
   const row: StateInsert = {
     challengeId: cid,
     schemaVersion: s.schema_version,
-    challengeDir: s.challenge_dir,
     createdAt: s.created_at,
     updatedAt: s.updated_at,
     binaryPath: s.binary_path ?? null,
@@ -184,7 +188,8 @@ export function decomposeState(s: ChallengeState): StateDecomposition {
 export interface StateRelationalRow {
   challengeId: string
   schemaVersion: string
-  challengeDir: string
+  /** Parent challenges row (preloaded via relation) — source of challenge_dir. */
+  challenge: { dir: string }
   createdAt: string
   updatedAt: string
   binaryPath: string | null
@@ -247,7 +252,7 @@ const byOrd = (a: { ord: number }, b: { ord: number }): number => a.ord - b.ord
 export function reassembleState(row: StateRelationalRow): ChallengeState {
   const obj: Record<string, unknown> = {
     schema_version: row.schemaVersion,
-    challenge_dir: row.challengeDir,
+    challenge_dir: row.challenge.dir,
     created_at: row.createdAt,
     updated_at: row.updatedAt,
     source_present: row.sourcePresent ?? false,
@@ -529,6 +534,7 @@ export function candidateSummaryFromRow(
 // ──────────────────────────────────────────────────────────────────────────
 
 const STATE_WITH = {
+  challenge: true,
   sourcePaths: true,
   setupBlockerCandidates: true,
   corrections: true,

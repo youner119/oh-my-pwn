@@ -38,6 +38,7 @@
 import { relations } from "drizzle-orm"
 import {
   foreignKey,
+  index,
   integer,
   primaryKey,
   real,
@@ -46,17 +47,50 @@ import {
 } from "drizzle-orm/sqlite-core"
 
 // ──────────────────────────────────────────────────────────────────────────
-// State table — 메인 row per challenge (PK = challenge_id)
+// Challenges table — identity + catalog root (PK = challenge_id surrogate)
+// spec: challenge-identity-catalog.md. challenge_id = "<name>_<uuid8>" — dir 과
+// 독립한 안정 정체. dir 은 현재 위치(mutable). state/candidates 가 이 뿌리에 FK.
+// ──────────────────────────────────────────────────────────────────────────
+
+export const challenges = sqliteTable(
+  "challenges",
+  {
+    /** Surrogate identity — `"<name>_<uuid8>"`. dir 이동에도 불변. */
+    challengeId: text("challenge_id").primaryKey(),
+    /** 사람이 읽기용 — sanitize(basename(dir)) 또는 사용자 지정. */
+    name: text("name").notNull(),
+    /** 현재 위치 (mutable). 재로드 idempotency 조회 키 — index. */
+    dir: text("dir").notNull(),
+    /** 출처 / CTF 이름 (free text). */
+    source: text("source"),
+    /** 사람이 관리하는 영속 진행 기록 (pipeline state 와 별개, 자동 동기 안 함). */
+    status: text("status", {
+      enum: ["unsolved", "solving", "solved", "abandoned"],
+    })
+      .notNull()
+      .default("unsolved"),
+    solvedAt: text("solved_at"),
+    notes: text("notes"),
+    createdAt: text("created_at").notNull(),
+    updatedAt: text("updated_at").notNull(),
+    // category 컬럼 없음 — state.challenge_type / unsupported_kind 에서 derive.
+  },
+  (table) => [index("challenges_dir_idx").on(table.dir)],
+)
+
+// ──────────────────────────────────────────────────────────────────────────
+// State table — 메인 row per challenge (PK = challenge_id, FK → challenges)
 // ──────────────────────────────────────────────────────────────────────────
 
 export const state = sqliteTable("state", {
-  /** PK — `<challenge>/.omp/state.db` 영역에서 보통 한 row, future global DB
-   *  ready 영역에서 multi-row + isolation. */
-  challengeId: text("challenge_id").primaryKey(),
+  /** PK + FK → challenges.challenge_id (surrogate). challenge_dir 는 더는
+   *  여기 없음 — challenges.dir 가 정본 (reassemble 시 JOIN). */
+  challengeId: text("challenge_id")
+    .primaryKey()
+    .references(() => challenges.challengeId, { onDelete: "cascade" }),
 
   // ── Meta ──────────────────────────────────────────────────────────────
   schemaVersion: text("schema_version").notNull(),
-  challengeDir: text("challenge_dir").notNull(),
   createdAt: text("created_at").notNull(),
   updatedAt: text("updated_at").notNull(),
 
@@ -333,7 +367,18 @@ export const candidatesVerificationBlockers = sqliteTable(
 // (1 query LEFT JOIN, N+1 회피).
 // ──────────────────────────────────────────────────────────────────────────
 
-export const stateRelations = relations(state, ({ many }) => ({
+export const challengesRelations = relations(challenges, ({ one }) => ({
+  state: one(state, {
+    fields: [challenges.challengeId],
+    references: [state.challengeId],
+  }),
+}))
+
+export const stateRelations = relations(state, ({ one, many }) => ({
+  challenge: one(challenges, {
+    fields: [state.challengeId],
+    references: [challenges.challengeId],
+  }),
   sourcePaths: many(stateSourcePaths),
   setupBlockerCandidates: many(stateSetupBlockerCandidates),
   corrections: many(stateCorrections),
@@ -443,6 +488,8 @@ export const candidatesVerificationBlockersRelations = relations(
 // (T2+ 박힐 영역에서 사용 — MCP handler 가 zod schema 박은 객체 박힌 후 변환)
 // ──────────────────────────────────────────────────────────────────────────
 
+export type ChallengesRow = typeof challenges.$inferSelect
+export type ChallengesInsert = typeof challenges.$inferInsert
 export type StateRow = typeof state.$inferSelect
 export type StateInsert = typeof state.$inferInsert
 export type CandidatesRow = typeof candidates.$inferSelect

@@ -4,7 +4,14 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { sql } from "drizzle-orm"
 
-import { closeDb, openDb, state, candidates, candidatesGives } from "./index"
+import {
+  closeDb,
+  openDb,
+  challenges,
+  state,
+  candidates,
+  candidatesGives,
+} from "./index"
 
 function makeTmpDbPath(label: string): { dir: string; dbPath: string } {
   const dir = join(
@@ -31,7 +38,7 @@ describe("openDb", () => {
     }
   })
 
-  test("creates all 10 tables on first open", () => {
+  test("creates all 11 tables on first open", () => {
     const db = openDb({ dbPath })
 
     // Query SQLite's catalog for the user-defined tables.
@@ -46,6 +53,7 @@ describe("openDb", () => {
       "candidates_gives",
       "candidates_needs",
       "candidates_verification_blockers",
+      "challenges",
       "state",
       "state_corrections",
       "state_extracted_libs",
@@ -93,10 +101,16 @@ describe("openDb", () => {
     const db = openDb({ dbPath })
 
     const now = new Date().toISOString()
+    await db.insert(challenges).values({
+      challengeId: "test-1",
+      name: "test-1",
+      dir: "/tmp/test-1",
+      createdAt: now,
+      updatedAt: now,
+    })
     await db.insert(state).values({
       challengeId: "test-1",
       schemaVersion: "1",
-      challengeDir: "/tmp/test-1",
       createdAt: now,
       updatedAt: now,
     })
@@ -133,10 +147,16 @@ describe("openDb", () => {
     const db = openDb({ dbPath })
 
     const now = new Date().toISOString()
+    await db.insert(challenges).values({
+      challengeId: "test-2",
+      name: "test-2",
+      dir: "/tmp/test-2",
+      createdAt: now,
+      updatedAt: now,
+    })
     await db.insert(state).values({
       challengeId: "test-2",
       schemaVersion: "1",
-      challengeDir: "/tmp/test-2",
       createdAt: now,
       updatedAt: now,
     })

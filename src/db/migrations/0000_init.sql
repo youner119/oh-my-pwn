@@ -57,10 +57,22 @@ CREATE TABLE `candidates_verification_blockers` (
 	FOREIGN KEY (`challenge_id`,`candidate_id`) REFERENCES `candidates`(`challenge_id`,`id`) ON UPDATE no action ON DELETE cascade
 );
 --> statement-breakpoint
+CREATE TABLE `challenges` (
+	`challenge_id` text PRIMARY KEY NOT NULL,
+	`name` text NOT NULL,
+	`dir` text NOT NULL,
+	`source` text,
+	`status` text DEFAULT 'unsolved' NOT NULL,
+	`solved_at` text,
+	`notes` text,
+	`created_at` text NOT NULL,
+	`updated_at` text NOT NULL
+);
+--> statement-breakpoint
+CREATE INDEX `challenges_dir_idx` ON `challenges` (`dir`);--> statement-breakpoint
 CREATE TABLE `state` (
 	`challenge_id` text PRIMARY KEY NOT NULL,
 	`schema_version` text NOT NULL,
-	`challenge_dir` text NOT NULL,
 	`created_at` text NOT NULL,
 	`updated_at` text NOT NULL,
 	`binary_path` text,
@@ -104,7 +116,8 @@ CREATE TABLE `state` (
 	`pipeline_phase` text,
 	`pipeline_cycle` integer,
 	`pipeline_termination_reason` text,
-	`etc_json` text
+	`etc_json` text,
+	FOREIGN KEY (`challenge_id`) REFERENCES `challenges`(`challenge_id`) ON UPDATE no action ON DELETE cascade
 );
 --> statement-breakpoint
 CREATE TABLE `state_corrections` (
