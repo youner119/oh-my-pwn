@@ -88,7 +88,7 @@ export function createDbMcpServer(db: OmpDatabase): McpServer {
       inputSchema: {
         challenge_id: z
           .string()
-          .describe("Challenge identifier (the absolute challenge directory path)."),
+          .describe("Challenge identifier (surrogate id — NOT a directory path)."),
       },
     },
     async ({ challenge_id }): Promise<CallToolResult> => {
