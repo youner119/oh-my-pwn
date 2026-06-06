@@ -70,8 +70,7 @@ exactly these forms.
   (e.g. \`/workspace/<challenge_id>/chal\`). The omp-setup agent staged the
   files into the workspace mount \`/workspace/<challenge_id>/\` in Phase 5,
   where \`<challenge_id>\` is the **DB challenge_id itself** (the same id you
-  read state with — no separate \`omp-<basename>-<sha8>\` derivation). These go
-  into pwno-mcp tool arguments inside Exploiter.
+  read state with). These go into pwno-mcp tool arguments inside Exploiter.
 - \`extracted_libs\` — **SONAME → host path map** for every NEEDED
   library (and the ld interpreter) that the omp-setup agent pulled out
   of the docker image. Empty map for static binaries (\`libc_version ===

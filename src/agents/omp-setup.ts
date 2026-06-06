@@ -6,8 +6,7 @@ import type { AgentConfig } from "./types"
  * Single-transaction ground-work agent that classifies the challenge,
  * builds + extracts + patches the runtime environment, verifies it on
  * the host and (when reachable) inside the pwno-mcp container, and
- * marks setup complete. Replaces the legacy `omp_run_envsetup` /
- * `omp_stage_challenge` / `omp_pwno_status` library flow.
+ * marks setup complete.
  *
  * Scope: only `challenge_type === "user-mode-elf"` runs the full
  * Phase 1–5 pipeline. Other types (kernel / library-only / browser /
@@ -848,7 +847,7 @@ field in your last \`mcp__omp-db__patch_state\` call before Phase 6.
 export function createOmpSetupAgent(model: string): AgentConfig {
   return {
     description:
-      "Single-transaction setup agent: classifies the challenge, builds the docker image, extracts + patchelfs every NEEDED library (host + workspace copies, --replace-needed for absolute path resolution), verifies the patched binary actually runs, and marks setup_complete. Replaces omp_run_envsetup + omp_stage_challenge + omp_pwno_status legacy flow. Stays neutral on vulnerability judgement (Scope discipline D10 — facts only).",
+      "Single-transaction setup agent: classifies the challenge, builds the docker image, extracts + patchelfs every NEEDED library (host + workspace copies, --replace-needed for absolute path resolution), verifies the patched binary actually runs, and marks setup_complete. Stays neutral on vulnerability judgement (Scope discipline D10 — facts only).",
     prompt: SETUP_PROMPT,
     model,
     mode: "all",
