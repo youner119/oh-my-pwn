@@ -321,44 +321,47 @@ Exploiter may override with a concrete reason.
 and Mode 9 enter through \`mode_override\` (Orchestrator's channel),
 never through SA's own recommendation.
 
-Two modes, picked by what kind of evidence is required:
+Two modes, picked by whether success hinges on a **precise memory write**:
 
-| Evidence needed                    | recommended_mode |
-| ---------------------------------- | ---------------- |
-| stdout-only (read/leak/shell)      | **1** (host)     |
-| memory/register state (with or     | **2** (pwncli +  |
-| without input)                     |  GDB attach)     |
+| Evidence needed                          | recommended_mode |
+| ---------------------------------------- | ---------------- |
+| stdout-only, NO precise-address write    | **1** (host)     |
+| precise memory landing / register / heap | **2** (pwncli +  |
+| / **any combine / full chain**           |  GDB attach)     |
 
 Concrete classifier:
 
-- **\`recommended_mode: 1\`** — output evidence is enough.
-  - Read/leak primitives (\`fmt_string_read\`, \`*_leak\`, \`bof_leak\`)
-  - \`ret2win\` / rip-control where success = banner/shell prompt
-  - Any step whose \`expected_result\` is something to grep from stdout
-- **\`recommended_mode: 2\`** — the **proof** needs reading memory/registers
-  at a breakpoint, not just stdout. pwncli's debug driver spawns the binary
-  under GDB; you break at the decision point and read \`pwno-mcp_get_context\`
-  / \`pwno-mcp_get_memory\` there. **Mode 2 is a point-inspection tool, NOT a
-  full-chain runner** — if the step's success is observable from stdout
-  (shell / flag / leak), it is Mode 1 even when the primitive exercised is a
-  write.
-  - Write-side primitives where the proof IS the changed memory:
-    \`fmt_string_write\`, \`tcache_poison\`, \`fastbin_dup\`, \`house_of_*\`,
-    \`got_overwrite\`, AAW — verified by reading the target address at a
-    breakpoint.
-  - Heap-layout verification (chunk headers, bin contents, freelist
-    pointers).
-  - Pure inspection: function offset confirmation, .got entry, register
-    state at a fixed breakpoint, ELF mitigation bytes.
+- **\`recommended_mode: 1\`** — stdout-only, and success does NOT hinge on a byte
+  landing at an exact address. A quick host check.
+  - Read/leak primitives (\`fmt_string_read\`, \`*_leak\`, \`bof_leak\`) — success is
+    the leaked value appearing in stdout.
+  - A step whose \`expected_result\` is purely something to grep from stdout and
+    involves no exact-address write.
+- **\`recommended_mode: 2\`** — success hinges on memory/register state: a precise
+  write landing at an exact address, register state at a breakpoint, or heap
+  layout. pwncli's debug driver spawns the binary under GDB; you break at the
+  decision point and read \`pwno-mcp_get_context\` / \`pwno-mcp_get_memory\` there.
+  **Mode 2 also captures stdout** (the driver \`recv\`s the shell/flag), so for
+  anything that writes memory it is a strict superset of Mode 1.
+  - Write-side primitives — the proof IS the changed memory: \`fmt_string_write\`,
+    \`tcache_poison\`, \`fastbin_dup\`, \`house_of_*\`, \`got_overwrite\`, AAW.
+  - \`ret2win\` / rip-control / ROP — a precise write to a saved return slot or
+    function pointer. **Failure is usually SILENT** (wrong slot → the original
+    return runs and the process exits cleanly: no shell, no crash). Mode 1 is
+    blind to that; Mode 2 verifies the bytes landed at the ret and checks stack
+    alignment before continuing.
+  - Heap-layout verification; pure inspection (offsets, .got, mitigation bytes).
 
-For COMBINE / full-chain tasks: classify by the **evidence form**, not by
-what the chained sources used in isolation. If the combined chain's success
-is observable from stdout (shell / flag / leak / crash) — the usual case —
-it is **Mode 1**, even if a constituent write primitive was verified in
-Mode 2. Route to Mode 2 only when the combine's own proof genuinely requires
-reading memory/registers at a point (rare). "This primitive needed
-inspection to *prove*" and "this full chain needs GDB to *run*" are separate
-judgments — do not carry the former into the latter.
+**COMBINE / full-chain tasks default to Mode 2.** A combine assembles verified
+primitives into a working exploit — almost always landing a precise memory write
+(ROP chain on the saved return slot, GOT/hook overwrite, fake vtable) whose
+correctness is a memory fact and whose failure is silent in stdout. Mode 2 lets
+you verify the chain landed (\`x/Ngx <slot>\`), check alignment before the \`ret\`,
+AND still capture the resulting shell/flag — one session (multi-round driver I/O
+is safe via \`sendlineafter\`; see Exploiter Mode 2). Trust the Reverser frame
+offsets for the slot (e.g. saved RIP at \`input_buf + 0x158\`) — do NOT heuristic-
+search the stack for it. Route a combine to Mode 1 only when it is purely
+stdout-stepwise with no precise-address write (rare).
 
 The hint is the default — Exploiter may override with a concrete reason
 (noted in their result). The hint biases mode selection but does not
