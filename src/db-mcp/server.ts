@@ -36,6 +36,7 @@ import {
   decomposeCandidate,
   decomposeState,
   deleteCandidateRow,
+  deleteChallengeRow,
   findChallengeByDir,
   insertCandidate,
   insertChallengeWithState,
@@ -550,6 +551,44 @@ export function createDbMcpServer(db: OmpDatabase): McpServer {
           })
         const challenge = await loadChallengeView(db, challenge_id)
         return jsonResult({ ok: true, challenge })
+      } catch (err) {
+        return jsonResult({ error: "internal_error", message: String(err) })
+      }
+    },
+  )
+
+  // ── delete_challenge ────────────────────────────────────────────────────
+  server.registerTool(
+    "delete_challenge",
+    {
+      description:
+        "Permanently delete a challenge and ALL its data — the catalog record, " +
+        "the state row, every candidate, and all dependent FK rows (cascade). " +
+        "Use for a same-challenge fresh restart: delete, then re-register via " +
+        "setup. **Irreversible.** Orchestrator-only. Returns {ok, deleted:" +
+        "{challenge_id, candidates_removed}} or {error:'challenge_not_found'}.",
+      inputSchema: {
+        challenge_id: z
+          .string()
+          .describe("Challenge identifier (surrogate id — NOT a directory path)."),
+        agent_id: z.string().describe("Must be 'orchestrator' (ACL Layer 2)."),
+      },
+    },
+    async ({ challenge_id, agent_id }): Promise<CallToolResult> => {
+      const denial = checkWriteAcl("delete_challenge", agent_id)
+      if (denial) return jsonResult(denial)
+      try {
+        const { existed, candidatesRemoved } = deleteChallengeRow(db, challenge_id)
+        if (!existed)
+          return jsonResult({
+            error: "challenge_not_found",
+            message: `No challenge ${JSON.stringify(challenge_id)} to delete.`,
+            challenge_id,
+          })
+        return jsonResult({
+          ok: true,
+          deleted: { challenge_id, candidates_removed: candidatesRemoved },
+        })
       } catch (err) {
         return jsonResult({ error: "internal_error", message: String(err) })
       }

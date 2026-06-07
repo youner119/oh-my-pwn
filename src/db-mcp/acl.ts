@@ -41,6 +41,7 @@ export type WriteTool =
   | "delete_candidate"
   | "register_challenge"
   | "update_challenge"
+  | "delete_challenge"
 
 /**
  * Per-tool `agent_id` allowlist. `patch_state` is the only multi-writer
@@ -53,6 +54,7 @@ export const WRITE_ALLOWLIST: Record<WriteTool, readonly AgentId[]> = {
   delete_candidate: ["orchestrator"],
   register_challenge: ["orchestrator", "setup"],
   update_challenge: ["orchestrator"],
+  delete_challenge: ["orchestrator"],
 }
 
 export interface AclDenial {

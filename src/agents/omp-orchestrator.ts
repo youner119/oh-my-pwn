@@ -54,6 +54,7 @@ MCP rejects the call (\`state_not_found\` / \`acl_denied\`).
 | \`mcp__omp-db__register_challenge\` | Mints a fresh challenge_id + seeds the state row. **omp-setup calls this on the fresh path — you NEVER call it yourself; you only \`lookup_challenge\` and (after setup) re-lookup to recover the minted id.** |
 | \`mcp__omp-db__read_challenge\` | Read a challenge's catalog record (status / source / notes / derived category). Read-only. |
 | \`mcp__omp-db__update_challenge\` | Update catalog fields (\`status\` / \`solved_at\` / \`notes\` / \`source\`). **Only you call this.** Use when the user reports the flag captured → \`patch: { status: "solved", solved_at }\` (see Phase 4). |
+| \`mcp__omp-db__delete_challenge\` | **Irreversibly** delete a challenge and ALL its data (catalog + state + every candidate + dependent rows, by cascade). **Only you call this.** Use ONLY for a user-requested same-challenge fresh restart — see "Same-challenge fresh restart" below. Returns \`{deleted:{challenge_id, candidates_removed}}\`. |
 | \`mcp__omp-db__read_state\` | Start of every session/phase — read state.json (top-level fields + \`vuln_candidates[]\` summary array). |
 | \`mcp__omp-db__read_candidate\` | Read a candidate's full detail (rationale / verification_blockers / gives / needs / poc_script_path / location / 등) from \`.omp/candidates/<id>.json\`. \`state.json.vuln_candidates[]\` carries summary only — call this to see the actual reasoning. **Call for every candidate id at session start** alongside \`mcp__omp-db__read_state\` to build the full picture. All agents may call this. |
 | \`mcp__omp-db__patch_state\` | Persist top-level state.json changes (pipeline_phase / parallel_config / mitigations / 등) **and** vuln_candidates summary-only updates (verification_result / description / has_poc / counts / agent / combined_from). Detail fields (rationale / blockers / gives / needs / poc_script_path / location / 등) in \`vuln_candidates[]\` rows are rejected — use \`mcp__omp-db__patch_candidate\` for those. **Only you call this** (except during Phase 0 where omp-setup is the writer for setup-related fields). |
@@ -331,6 +332,34 @@ and goes to Step 0.2 (rule 6), where omp-setup registers it and runs Phase 0:
     by design — Mode 0 dispatch handles it"; rule 5b is "setup
     machinery itself failed mid-pipeline".)
 6. **Otherwise** → goto Step 0.2.
+
+### Same-challenge fresh restart (user-requested)
+
+When the user explicitly asks to **wipe the challenge and start over from
+scratch** (Korean: "처음부터 다시", "완전 초기화", "challenge 삭제하고 다시",
+"DB 비우고 재시작"; English: "fresh restart", "wipe and redo", "delete the
+challenge and start over") — NOT just "re-setup" (rule 3) or a single bad
+candidate (\`delete_candidate\`) — do this:
+
+1. **Confirm first** — \`delete_challenge\` is **irreversible**: it removes the
+   catalog row, the state row, and every candidate (cascade). Verify the user
+   means a full wipe, not a partial reset.
+2. \`\`\`
+   mcp__omp-db__delete_challenge { challenge_id, agent_id: "orchestrator" }
+   \`\`\`
+   → \`{deleted:{challenge_id, candidates_removed}}\`. Journal it.
+3. **Re-run the fresh path**: \`omp_load_challenge(challenge_dir)\` →
+   \`lookup_challenge(challenge_dir)\` (now \`found: false\` — the row is gone) →
+   Step 0.2, where omp-setup mints a **new** challenge_id via
+   \`register_challenge\` and runs Phase 0 from scratch. The new id differs from
+   the deleted one.
+
+This is **DB-only** — \`delete_challenge\` does NOT touch the filesystem
+\`.omp/\` (artifacts / exploit scripts / journal). If the user also wants the
+on-disk workspace cleared (e.g. stale patched binary or artifacts), that is a
+separate \`rm -rf <challenge_dir>/.omp/\` the user runs, after which
+\`omp_load_challenge\` re-seeds a clean \`.omp/\`. Prefer this full wipe over the
+old manual "delete every candidate + reset \`pipeline_phase\` to idle" dance.
 
 Never skip the bootstrap (\`omp_load_challenge\` → \`lookup_challenge\` →
 \`mcp__omp-db__read_state\`) at session start even if you "remember" state from a

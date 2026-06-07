@@ -37,6 +37,7 @@ const DB_WRITE_DENY_CANDIDATE_CHALLENGE = {
   "mcp__omp-db__delete_candidate": false,
   "mcp__omp-db__register_challenge": false,
   "mcp__omp-db__update_challenge": false,
+  "mcp__omp-db__delete_challenge": false,
   // patch_state intentionally NOT denied — setup / reverser are state writers.
 } as const
 

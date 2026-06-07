@@ -75,11 +75,12 @@ describe("omp-db MCP server (end-to-end via InMemoryTransport)", () => {
     if (existsSync(dir)) rmSync(dir, { recursive: true, force: true })
   })
 
-  test("lists all 10 tools", async () => {
+  test("lists all 11 tools", async () => {
     const { tools } = await client.listTools()
     expect(tools.map((t) => t.name).sort()).toEqual([
       "create_candidate",
       "delete_candidate",
+      "delete_challenge",
       "lookup_challenge",
       "patch_candidate",
       "patch_state",
@@ -186,6 +187,40 @@ describe("omp-db MCP server (end-to-end via InMemoryTransport)", () => {
       ...ORCH,
     })
     expect(gone.error).toBe("challenge_not_found")
+  })
+
+  test("delete_challenge cascades state + candidates; orchestrator-only", async () => {
+    const reg = await call("register_challenge", { dir: "/tmp/chal-del", ...ORCH })
+    const id = reg.challenge_id as string
+
+    // seed a candidate so the cascade count is observable
+    const c = await call("create_candidate", {
+      challenge_id: id,
+      candidate: { id: "v1", primitive: "fmt_string_write", gives: ["aaw"] },
+      ...ORCH,
+    })
+    expect(c.ok).toBe(true)
+
+    // ACL: stricter than register — even setup is denied (orchestrator-only)
+    const deny = await call("delete_challenge", { challenge_id: id, agent_id: "setup" })
+    expect(deny.error).toBe("acl_denied")
+
+    // delete cascades: catalog + state + candidate all gone
+    const del = await call("delete_challenge", { challenge_id: id, ...ORCH })
+    expect(del.ok).toBe(true)
+    expect((del.deleted as { candidates_removed: number }).candidates_removed).toBe(1)
+
+    expect((await call("read_challenge", { challenge_id: id })).error).toBe(
+      "challenge_not_found",
+    )
+    expect((await call("read_state", { challenge_id: id })).error).toBe("state_not_found")
+
+    // not found → challenge_not_found
+    const missing = await call("delete_challenge", {
+      challenge_id: "missing_00000000",
+      ...ORCH,
+    })
+    expect(missing.error).toBe("challenge_not_found")
   })
 
   test("read_state returns the seeded state; unknown → state_not_found", async () => {

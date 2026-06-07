@@ -933,3 +933,31 @@ export function updateChallengeRow(
     .run()
   return true
 }
+
+/**
+ * Permanently delete a challenge. Removing the parent `challenges` row cascades
+ * (ON DELETE CASCADE; the `foreign_keys` pragma is set in openDb) to the `state`
+ * row, every `candidates` row, and all dependent FK-array tables. Returns
+ * `{existed:false}` when no such challenge, else `{existed:true}` with the
+ * candidate count removed (read before the delete).
+ */
+export function deleteChallengeRow(
+  db: OmpDatabase,
+  challengeId: string,
+): { existed: boolean; candidatesRemoved: number } {
+  const existing = db
+    .select({ id: challenges.challengeId })
+    .from(challenges)
+    .where(eq(challenges.challengeId, challengeId))
+    .all()
+  if (existing.length === 0) return { existed: false, candidatesRemoved: 0 }
+
+  const candidatesRemoved = db
+    .select({ id: candidates.id })
+    .from(candidates)
+    .where(eq(candidates.challengeId, challengeId))
+    .all().length
+
+  db.delete(challenges).where(eq(challenges.challengeId, challengeId)).run()
+  return { existed: true, candidatesRemoved }
+}
