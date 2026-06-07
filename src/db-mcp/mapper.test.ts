@@ -98,7 +98,7 @@ describe("mapper round-trips", () => {
       ld_path: "/x/ld.so",
       extracted_libs: { "libc.so.6": "/x/libc.so.6", "ld-linux-x86-64.so.2": "/x/ld.so" },
       docker_image: "img:1",
-      mitigations: { nx: true, pie: true, canary: false, relro: "full", seccomp: false, raw: "RELRO" },
+      mitigations: { nx: true, pie: true, canary: false, relro: "full", seccomp: false, cet: { ibt_marked: true, shstk_marked: true, enforced: false } },
       remote: { host: "1.2.3.4", port: 1337, wrapper: "ynetd", command: "./prob" },
       parallel_config: { vh_instance_count: 8, sa_instance_count: 6, max_cycles: 12, max_retries_per_candidate: 2 },
       pipeline_phase: "vh_ensemble",
@@ -117,6 +117,24 @@ describe("mapper round-trips", () => {
     seedState(db, state)
     const loaded = await loadState(db, CID)
     expect(loaded).toEqual(state)
+  })
+
+  test("cet marked-but-unmeasured (enforced:null) round-trips", async () => {
+    const state = ChallengeStateSchema.parse({
+      schema_version: "1",
+      challenge_dir: DIR,
+      // Phase 1 records the marking; enforced stays null until Phase 5 measures it.
+      mitigations: { nx: true, cet: { ibt_marked: true, shstk_marked: true, enforced: null } },
+      created_at: TS,
+      updated_at: TS,
+    })
+    seedState(db, state)
+    const loaded = await loadState(db, CID)
+    expect(loaded?.mitigations?.cet).toEqual({
+      ibt_marked: true,
+      shstk_marked: true,
+      enforced: null,
+    })
   })
 
   test("candidate decompose → insert → reassemble preserves full VulnCandidate", async () => {

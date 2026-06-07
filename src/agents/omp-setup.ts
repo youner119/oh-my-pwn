@@ -83,9 +83,10 @@ contains ANY of the following, rewrite it before patching state:
 - ELF metadata raw: NEEDED / RUNPATH / RPATH / SONAME / interpreter /
   machine / endian / class — exactly as \`readelf -d\` / \`readelf -h\`
   prints them.
-- Mitigations as raw checksec flags (e.g.
-  \`NX=on PIE=on Canary=on RELRO=full seccomp=false\`). No
-  interpretation.
+- Mitigations as the **structured** \`MitigationsSchema\` (nx / pie / canary /
+  relro / seccomp + \`cet\` marking & measured enforcement) — NOT a raw checksec
+  string. Facts only, no interpretation (D10): record what is, including the
+  measured \`cet.enforced\`, but never judge exploitability.
 - glibc / libc version strings (\`2.31\`, \`2.35\`, \`2.39\`).
 - Dockerfile FROM / EXPOSE / CMD / ENTRYPOINT facts.
 - Remote wrapper type (\`xinetd\` / \`socat\` / \`ynetd\` / \`bare\`).
@@ -409,20 +410,34 @@ omp_setup_docker_build {
 On success: read \`image_tag\` / \`cached\` / \`build_log_path\` from the
 tool result. Run \`docker run --rm <image> checksec --output=json --file=<container path of the binary>\`
 (or \`checksec --file=\` if json is unavailable) and \`grep -E 'EXPOSE|CMD|ENTRYPOINT' <dockerfile>\`
-to derive mitigations + remote (bash). Then:
+to derive mitigations + remote (bash). Build the **structured** mitigations
+object — NOT a raw checksec string:
 
 \`\`\`text
 mcp__omp-db__patch_state {
   docker_image: <image_tag>,
-  mitigations: { nx, pie, canary, relro, seccomp, raw },  // raw flags only
+  mitigations: {
+    nx, pie, canary,                       // booleans from checksec
+    relro: "full" | "partial" | "none",
+    seccomp,                               // from Dockerfile/runtime
+    // CET: MARKING only here. checksec's SHSTK/IBT are static ELF notes
+    // (.note.gnu.property) — a marking, NOT runtime enforcement. Leave
+    // enforced: null; Phase 5 container verify measures it.
+    cet: { ibt_marked, shstk_marked, enforced: null }
+  },
   remote: { host: "127.0.0.1", port: <N>, wrapper: <type>, command: <CMD line> }
 }
 omp_append_journal {
   section: "phase 1 docker build",
-  body: "<build outcome (cached vs fresh), image_tag, mitigations raw
-         line, remote facts>"
+  body: "<build outcome (cached vs fresh), image_tag, structured mitigations
+         (cet marking only; enforcement measured in Phase 5), remote facts>"
 }
 \`\`\`
+
+Omit \`cet\` entirely when checksec reports no SHSTK/IBT marking. **Never record
+SHSTK/IBT as a bare \"Enabled\" flag** — marking is not enforcement (it is
+environment-dependent and often OFF even when marked); enforcement is measured
+in Phase 5.
 
 **Failure (any cause — docker not available, Dockerfile syntax,
 network, image too large):** set
@@ -732,6 +747,36 @@ passed and pwno-mcp issues are diagnosed separately. (You may set
 \`keep_container_on_fail: true\` if the user explicitly asked for
 manual container debugging in the prompt.)
 
+**CET enforcement measurement** (ONLY if \`mitigations.cet\` was set in
+Phase 1 — i.e. the binary is SHSTK/IBT-marked). The marking is static; whether
+CET is actually enforced is environment-dependent and must be measured by
+running the binary in the deployment image. One self-cleaning probe:
+
+\`\`\`bash
+docker run --rm --log-driver none <state.docker_image> sh -c '
+  (<container interp> <container binary> </dev/null >/dev/null 2>&1 &)
+  sleep 1
+  p=$(pgrep -f "<basename(binary)>" | head -1)
+  awk -F: "/x86_Thread_features:/{print \"FEAT=[\" \$2 \"]\"}" /proc/$p/status
+  kill $p 2>/dev/null'
+\`\`\`
+
+\`--rm\` + \`--log-driver none\` + the inner \`kill\` keep it bounded (no orphan, no
+log growth). Interpret \`x86_Thread_features\`: **empty (\`FEAT=[]\`) → not
+enforced** (SHSTK/IBT marked but OFF at runtime — the common case); a value
+like \`shstk\`/\`wrss\` → enforced. Then persist the measured fact:
+
+\`\`\`text
+mcp__omp-db__patch_state {
+  mitigations: { ...<existing>, cet: { ...<existing marking>, enforced: <true|false> } }
+}
+\`\`\`
+
+(\`patch_state\` merges the full \`mitigations\` object — re-send nx/pie/canary/
+relro/seccomp + the cet marking, only \`cet.enforced\` changes from null.) If the
+probe can't determine it (PID not found, status field absent), leave
+\`enforced: null\` and journal the reason — never guess \`true\` from the marking.
+
 Journal:
 
 \`\`\`text
@@ -829,7 +874,7 @@ state.binary_sha256          patched sha (differs from binary_input_sha256)
 state.extracted_libs         non-empty (or {} for static); includes the ld entry
                              (e.g. "ld-linux-x86-64.so.2" key) — NOT just libs
 state.libc_path / ld_path    alias of extracted_libs entries (same path values)
-state.mitigations            raw flags populated
+state.mitigations            structured (nx/pie/canary/relro/seccomp + cet marking & measured enforced)
 state.remote                 populated when the Dockerfile exposes a port
 \`\`\`
 

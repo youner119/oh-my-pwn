@@ -139,7 +139,9 @@ export function decomposeState(
     mitigationCanary: m?.canary ?? null,
     mitigationRelro: m?.relro ?? null,
     mitigationSeccomp: m?.seccomp ?? null,
-    mitigationRaw: m?.raw ?? null,
+    mitigationCetIbtMarked: m?.cet?.ibt_marked ?? null,
+    mitigationCetShstkMarked: m?.cet?.shstk_marked ?? null,
+    mitigationCetEnforced: m?.cet?.enforced ?? null,
     remoteHost: r?.host ?? null,
     remotePort: r?.port ?? null,
     remoteWrapper: r?.wrapper ?? null,
@@ -219,7 +221,9 @@ export interface StateRelationalRow {
   mitigationCanary: boolean | null
   mitigationRelro: string | null
   mitigationSeccomp: boolean | null
-  mitigationRaw: string | null
+  mitigationCetIbtMarked: boolean | null
+  mitigationCetShstkMarked: boolean | null
+  mitigationCetEnforced: boolean | null
   remoteHost: string | null
   remotePort: number | null
   remoteWrapper: string | null
@@ -308,7 +312,14 @@ export function reassembleState(row: StateRelationalRow): ChallengeState {
   if (row.mitigationCanary != null) mit.canary = row.mitigationCanary
   if (row.mitigationRelro != null) mit.relro = row.mitigationRelro
   if (row.mitigationSeccomp != null) mit.seccomp = row.mitigationSeccomp
-  if (row.mitigationRaw != null) mit.raw = row.mitigationRaw
+  // cet present iff the marking columns were written (enforced may be null)
+  if (row.mitigationCetIbtMarked != null || row.mitigationCetShstkMarked != null) {
+    mit.cet = {
+      ibt_marked: row.mitigationCetIbtMarked ?? false,
+      shstk_marked: row.mitigationCetShstkMarked ?? false,
+      enforced: row.mitigationCetEnforced,
+    }
+  }
   if (Object.keys(mit).length > 0) obj.mitigations = mit
 
   // RemoteEntrypoint.host has a schema default ("127.0.0.1"); treat the block

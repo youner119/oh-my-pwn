@@ -138,7 +138,11 @@ export const state = sqliteTable("state", {
   mitigationCanary: integer("mitigation_canary", { mode: "boolean" }),
   mitigationRelro: text("mitigation_relro"),
   mitigationSeccomp: integer("mitigation_seccomp", { mode: "boolean" }),
-  mitigationRaw: text("mitigation_raw"),
+  // CET: marking (static, from checksec) + enforcement (runtime-measured at
+  // container verify). Present only when the binary is SHSTK/IBT-marked.
+  mitigationCetIbtMarked: integer("mitigation_cet_ibt_marked", { mode: "boolean" }),
+  mitigationCetShstkMarked: integer("mitigation_cet_shstk_marked", { mode: "boolean" }),
+  mitigationCetEnforced: integer("mitigation_cet_enforced", { mode: "boolean" }),
 
   // ── RemoteEntrypoint (flatten 4 column) ───────────────────────────────
   remoteHost: text("remote_host"),

@@ -432,7 +432,7 @@ Inspect the post-setup state:
     for static binaries with \`libc_version === "static"\`)
   - \`libc_path\` / \`ld_path\` (aliases of \`extracted_libs\` entries —
     kept for backward compat with existing SA/Exploiter prompts)
-  - \`mitigations\` (raw checksec flags), \`remote\` (host/port/wrapper)
+  - \`mitigations\` (structured: nx/pie/canary/relro/seccomp + \`cet\` marking & measured \`enforced\`), \`remote\` (host/port/wrapper)
   - \`workspace_root\` (returned by omp_load_challenge; forward it to setup's
     register_challenge); per-challenge subdir = \`<challenge_id>\` under that
     root, both host and container sides. SA/Exploiter use this rule.

@@ -45,7 +45,32 @@ const IsoTimestampSchema = z.string().regex(
   { message: "Expected ISO-8601 timestamp with timezone (Z or ±HH:MM)" },
 )
 
-/** ELF mitigations as reported by checksec on the target binary. */
+/**
+ * CET (Control-flow Enforcement Technology). The IBT/SHSTK **marking** is a
+ * static ELF property (`.note.gnu.property`) that checksec reads, but actual
+ * **enforcement** is environment-dependent (CPU + kernel + glibc/ld + tunables).
+ * A binary can be marked yet run with CET off — so marking ≠ enforced. omp-setup
+ * measures `enforced` at container-verify runtime (`/proc/<pid>/status`
+ * `x86_Thread_features` / shadow-stack VMA), the one place it actually runs the
+ * binary. Downstream agents MUST treat IBT/SHSTK as a blocker only when
+ * `enforced === true` — never from the marking alone.
+ */
+export const CetSchema = z.object({
+  /** ELF `.note.gnu.property` advertises IBT. */
+  ibt_marked: z.boolean(),
+  /** ELF `.note.gnu.property` advertises SHSTK. */
+  shstk_marked: z.boolean(),
+  /** Runtime enforcement measured at container verify. `null` = not measured. */
+  enforced: z.boolean().nullable(),
+})
+export type Cet = z.infer<typeof CetSchema>
+
+/**
+ * Target binary mitigations. **Structured, not raw checksec text.** Static
+ * mitigations (nx / pie / canary / relro) are read straight from the ELF and
+ * recorded verbatim; `seccomp` comes from the Dockerfile/runtime; `cet` carries
+ * the static marking PLUS the runtime-measured enforcement (see {@link CetSchema}).
+ */
 export const MitigationsSchema = z.object({
   nx: z.boolean().optional(),
   pie: z.boolean().optional(),
@@ -54,8 +79,8 @@ export const MitigationsSchema = z.object({
   relro: z.string().optional(),
   /** True if the Dockerfile / runtime applies a seccomp policy. */
   seccomp: z.boolean().optional(),
-  /** Raw checksec output, kept for audit. */
-  raw: z.string().optional(),
+  /** CET marking (static) + enforcement (runtime-measured). Omitted if no CET note. */
+  cet: CetSchema.optional(),
 })
 export type Mitigations = z.infer<typeof MitigationsSchema>
 
