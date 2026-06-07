@@ -335,24 +335,30 @@ Concrete classifier:
   - Read/leak primitives (\`fmt_string_read\`, \`*_leak\`, \`bof_leak\`)
   - \`ret2win\` / rip-control where success = banner/shell prompt
   - Any step whose \`expected_result\` is something to grep from stdout
-- **\`recommended_mode: 2\`** — needs memory/register inspection.
-  pwncli's debug driver spawns the binary under GDB; the same Python
-  script that calls \`io.sendline()\` / \`io.recv()\` for input also
-  exposes the process to \`pwno-mcp_get_context\` / \`pwno-mcp_get_memory\` /
-  \`pwno-mcp_execute\` for inspection. Use this whether or not the task
-  needs runtime input — Mode 2 cleanly covers both cases via the same
-  pwntools driver.
-  - Write-side primitives: \`fmt_string_write\`, \`tcache_poison\`,
-    \`fastbin_dup\`, \`house_of_*\`, \`got_overwrite\`, AAW with leak
+- **\`recommended_mode: 2\`** — the **proof** needs reading memory/registers
+  at a breakpoint, not just stdout. pwncli's debug driver spawns the binary
+  under GDB; you break at the decision point and read \`pwno-mcp_get_context\`
+  / \`pwno-mcp_get_memory\` there. **Mode 2 is a point-inspection tool, NOT a
+  full-chain runner** — if the step's success is observable from stdout
+  (shell / flag / leak), it is Mode 1 even when the primitive exercised is a
+  write.
+  - Write-side primitives where the proof IS the changed memory:
+    \`fmt_string_write\`, \`tcache_poison\`, \`fastbin_dup\`, \`house_of_*\`,
+    \`got_overwrite\`, AAW — verified by reading the target address at a
+    breakpoint.
   - Heap-layout verification (chunk headers, bin contents, freelist
-    pointers — with or without input sequences)
-  - Pure inspection tasks: function offset confirmation, .got entry,
-    register state at a fixed breakpoint, ELF mitigation bytes —
-    the driver can still spawn the binary and break before any input
-    is needed.
+    pointers).
+  - Pure inspection: function offset confirmation, .got entry, register
+    state at a fixed breakpoint, ELF mitigation bytes.
 
-For COMBINE tasks: if any chained source required Mode 2, the combined
-verification is Mode 2. Otherwise Mode 1.
+For COMBINE / full-chain tasks: classify by the **evidence form**, not by
+what the chained sources used in isolation. If the combined chain's success
+is observable from stdout (shell / flag / leak / crash) — the usual case —
+it is **Mode 1**, even if a constituent write primitive was verified in
+Mode 2. Route to Mode 2 only when the combine's own proof genuinely requires
+reading memory/registers at a point (rare). "This primitive needed
+inspection to *prove*" and "this full chain needs GDB to *run*" are separate
+judgments — do not carry the former into the latter.
 
 The hint is the default — Exploiter may override with a concrete reason
 (noted in their result). The hint biases mode selection but does not
