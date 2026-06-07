@@ -4,11 +4,12 @@ dist/
 .DS_Store
 references/
 
-# Global SQLite DB WAL sidecar at repo root (Phase 1 db-mcp spec).
-# 메인 `state.db` 자체는 초기 개발 단계에서 git 추적 (multi-machine /
-# 세션 간 schema + 첫 데이터 동기화 편의). 다만 WAL 모드 사이드카
-# (.db-wal / .db-shm) 는 checkpoint 마다 변경되는 임시 파일이라 git
-# 추적하면 commit noise — 추적 안 함.
+# Global SQLite DB at repo root (Phase 1 db-mcp spec).
+# 정상 DB 위치는 challenge 별 `<challenge>/.omp/state.db` — repo 루트의
+# `state.db` 는 OMP_DB_PATH 미설정 시 생기는 런타임 잔재라 추적 안 함.
+# WAL 모드 사이드카 (.db-wal / .db-shm) 도 checkpoint 마다 변경되는
+# 임시 파일이라 commit noise — 같이 추적 안 함.
+state.db
 state.db-wal
 state.db-shm
 
