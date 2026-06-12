@@ -18,17 +18,23 @@ import { createOmpExploiterMode0Agent } from "./omp-exploiter-mode-0"
 import { createOmpExploiterMode9Agent } from "./omp-exploiter-mode-9"
 import { createOmpSetupAgent } from "./omp-setup"
 
-/** MVP default model. T18 model resolution layer 추가 시 교체. */
-const DEFAULT_MODEL = "anthropic/claude-opus-4-8"
-
 /**
- * Default model for the GPT/principle-driven prompt variants. These agents'
- * prompts assume GPT-family processing (goal-driven, not mechanics
- * enumeration), so they default to a GPT model — the prompt and the model
- * are paired by agent identity. The launch-time `model` arg (commit a4661ad)
- * can still override per spawn. Decision: `.omc/decisions.md` #5.
+ * Per-agent default models — Axis A of the model-routing policy
+ * (`.omc/decisions.md` #5, user policy 2026-06-12). Each agent is registered
+ * with the model that fits its role by default; the launch-time `model` arg
+ * (commit a4661ad) overrides per spawn whenever the user specifies otherwise.
+ *
+ *   orchestrator / reverser / strategist → Claude  (coordination, deep
+ *       reasoning, adversarial verify)
+ *   setup / exploiter                    → GPT      (mechanical env work,
+ *       terminal/iterative execution)
+ *   vulnhunter                           → Claude registration default, but
+ *       the ensemble runs half-half Claude:GPT (Claude +1 on odd N) — the
+ *       Orchestrator assigns GPT to floor(N/2) members at spawn via the model
+ *       arg (N=5 → 3 Claude, 2 GPT).
  */
-const GPT_DEFAULT_MODEL = "openai/gpt-5.5"
+const CLAUDE_MODEL = "anthropic/claude-opus-4-8"
+const GPT_MODEL = "openai/gpt-5.5"
 
 /**
  * agent name → AgentConfig 매핑.
@@ -45,17 +51,17 @@ const GPT_DEFAULT_MODEL = "openai/gpt-5.5"
  * - `omp-exploiter-mode-9` — user-supplied prompt forwarded by the user
  */
 export const ompAgentConfigs: Record<string, AgentConfig> = {
-  "omp-orchestrator": createOmpOrchestratorAgent(DEFAULT_MODEL),
-  "omp-setup": createOmpSetupAgent(DEFAULT_MODEL),
-  "omp-reverser": createOmpReverserAgent(DEFAULT_MODEL),
-  "omp-vulnhunter": createOmpVulnhunterAgent(DEFAULT_MODEL),
-  "omp-strategist": createOmpStrategistAgent(DEFAULT_MODEL),
-  "omp-exploiter-mode-1": createOmpExploiterMode1Agent(DEFAULT_MODEL),
-  "omp-exploiter-mode-2": createOmpExploiterMode2Agent(DEFAULT_MODEL),
-  "omp-exploiter-mode-0": createOmpExploiterMode0Agent(DEFAULT_MODEL),
-  "omp-exploiter-mode-9": createOmpExploiterMode9Agent(DEFAULT_MODEL),
-  // GPT/principle-driven prompt variants — paired with a GPT default model.
-  // Decision: `.omc/decisions.md` #5.
-  "omp-exploiter-mode-1-gpt": createOmpExploiterMode1GptAgent(GPT_DEFAULT_MODEL),
-  "omp-exploiter-mode-2-gpt": createOmpExploiterMode2GptAgent(GPT_DEFAULT_MODEL),
+  "omp-orchestrator": createOmpOrchestratorAgent(CLAUDE_MODEL),
+  "omp-setup": createOmpSetupAgent(GPT_MODEL),
+  "omp-reverser": createOmpReverserAgent(CLAUDE_MODEL),
+  "omp-vulnhunter": createOmpVulnhunterAgent(CLAUDE_MODEL),
+  "omp-strategist": createOmpStrategistAgent(CLAUDE_MODEL),
+  "omp-exploiter-mode-1": createOmpExploiterMode1Agent(GPT_MODEL),
+  "omp-exploiter-mode-2": createOmpExploiterMode2Agent(GPT_MODEL),
+  "omp-exploiter-mode-0": createOmpExploiterMode0Agent(GPT_MODEL),
+  "omp-exploiter-mode-9": createOmpExploiterMode9Agent(GPT_MODEL),
+  // GPT/principle-driven prompt variants — opt-in (user-specified). Same GPT
+  // default model. Decision: `.omc/decisions.md` #5.
+  "omp-exploiter-mode-1-gpt": createOmpExploiterMode1GptAgent(GPT_MODEL),
+  "omp-exploiter-mode-2-gpt": createOmpExploiterMode2GptAgent(GPT_MODEL),
 }

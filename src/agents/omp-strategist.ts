@@ -130,6 +130,17 @@ agent name.
   yourself in Step 6 and forward its contents as Exploiter's
   user-message prompt. The retry loop is still yours.
 
+**Model routing fields (forwarded alongside \`mode_override\`).** Orchestrator
+also forwards two optional fields you apply at Step 6:
+
+- **\`prompt_variant\`** (\`"gpt" | null\`) — when \`"gpt"\`, use the Exploiter's
+  GPT prompt variant: Step 6a appends \`-gpt\` to a Mode 1/2 name AND you hand a
+  **goal** instead of a step recipe. Default \`null\` → existing prompt. Only
+  Mode 1/2 have a \`-gpt\` variant (Mode 0/9 ignore it).
+- **\`exploiter_model_override\`** (\`"provider/model"\` | \`"parent"\` | \`null\`) —
+  a user model directive for the Exploiter. Pass it as the \`model\` arg on the
+  Step 6c launch when set; omit when \`null\` (Exploiter's registered default).
+
 **Channel discipline (CRITICAL).** SA must NEVER set
 \`recommended_mode: 0\` or \`recommended_mode: 9\`. The \`recommended_mode\`
 field is \`1 | 2\` only — SA's own judgement of the evidence shape. Mode
@@ -374,20 +385,41 @@ as HOST or CONTAINER so Exploiter doesn't misroute it.
 
 #### 6a: Pick the Exploiter agent name from the dispatch fields
 
-The Exploiter is split into four mode-specific agents (no \`exploiter\`
-short alias — must be the full mode-suffixed name). Resolve the agent
-name from \`mode_override\` (precedence) and \`recommended_mode\`:
+The Exploiter is split into mode-specific agents (no \`exploiter\` short
+alias — must be the full mode-suffixed name). Resolve the agent name from
+\`mode_override\` (precedence) and \`recommended_mode\`, then apply the GPT
+prompt variant if Orchestrator forwarded \`prompt_variant: "gpt"\`:
 
 \`\`\`
-agent =
+let agent =
   mode_override === "0" ? "omp-exploiter-mode-0" :
   mode_override === "9" ? "omp-exploiter-mode-9" :
   recommended_mode === 2 ? "omp-exploiter-mode-2" :
                            "omp-exploiter-mode-1"
+
+// GPT prompt variant (opt-in; Orchestrator forwards prompt_variant in Context).
+// Only Mode 1/2 have a -gpt variant — Mode 0/9 do not, so they ignore it.
+if (prompt_variant === "gpt" && (agent === "omp-exploiter-mode-1" || agent === "omp-exploiter-mode-2")) {
+  agent = agent + "-gpt"   // omp-exploiter-mode-1-gpt / omp-exploiter-mode-2-gpt
+}
 \`\`\`
 
 \`mode_override\` always wins when set. Otherwise default to Mode 1
 (host) unless your Step 5b classifier picked Mode 2.
+
+**When you resolve a \`-gpt\` agent, change HOW you write the task (Step 6d):
+hand a GOAL, not a step recipe.** The GPT prompt variant is principle-driven —
+it derives the byte-level mechanics itself from verified facts. So for a
+\`-gpt\` spawn, give it the *objective* + the verified primitive + the facts it
+needs (offsets, libc version, leaked-value provenance, mitigations) and let it
+sequence the mechanics. Do NOT spell out a per-step keystroke procedure (that
+is the contradiction surface a GPT prompt drifts on). For the non-\`-gpt\`
+(Claude-shaped) agents, keep the detailed step template below unchanged.
+
+**Exploiter model override.** If Orchestrator forwarded
+\`exploiter_model_override\` (a \`"provider/model"\` string or \`"parent"\`, else
+\`null\`), pass it as the \`model\` arg on the launch in Step 6c. When \`null\`,
+omit \`model\` — the Exploiter uses its registered default.
 
 #### 6b: Mode 9 only — read the user's prompt file
 
@@ -414,7 +446,9 @@ Two tool calls, blocking on the second.
 const r = omp_task_launch({
   agent: <resolved agent name from 6a>,
   description: "<short label — verify/combine/mode-N task>",
-  prompt: <see template per mode below>
+  prompt: <see template per mode below — GOAL form when agent is -gpt>,
+  // Include only when exploiter_model_override is set (else omit for the default):
+  // model: <exploiter_model_override>   // "provider/model" or "parent"
 })
 // r = { task_id, session_id }
 const { results } = omp_task_wait_all({ task_ids: [r.task_id] })

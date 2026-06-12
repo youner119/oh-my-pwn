@@ -62,7 +62,7 @@ MCP rejects the call (\`state_not_found\` / \`acl_denied\`).
 | \`mcp__omp-db__patch_candidate\` | Apply \`{summary?, detail?}\` patch to one candidate (state.json row + detail file atomic). Use after a sub-agent returns \`{candidate_id, summary_changes, detail_changes}\` (SA verify / Exploiter result). **Only you call this.** |
 | \`mcp__omp-db__delete_candidate\` | Remove a candidate (summary row + detail file). Use when a candidate is conclusively invalid and should be dropped from the workspace. **Only you call this.** |
 | \`omp_append_journal\` | After every significant step — human-readable progress |
-| \`omp_task_launch\` | Spawn a single sub-agent in **fire-and-forget** mode. Returns \`{task_id, session_id}\` immediately. \`agent\` accepts a category alias (\`setup\`/\`reverser\`/\`vulnhunter\`/\`strategist\`/\`exploiter\`) or full name (\`omp-*\`). |
+| \`omp_task_launch\` | Spawn a single sub-agent in **fire-and-forget** mode. Returns \`{task_id, session_id}\` immediately. \`agent\` accepts a category alias (\`setup\`/\`reverser\`/\`vulnhunter\`/\`strategist\`/\`exploiter\`) or full name (\`omp-*\`). Optional \`model\` arg overrides the agent's registered default model: \`"provider/model"\` (e.g. \`"openai/gpt-5.5"\`), \`"parent"\` (inherit your current model), or omit for the default. See **Model routing channel** below. |
 | \`omp_task_wait_all\` | Block until **ALL** given \`task_ids\` reach terminal status. Returns results in input order. Use for ensemble work (every result needed). |
 | \`omp_task_wait_any\` | Block until **ANY** given \`task_id\` reaches terminal. Returns first complete + \`remaining_ids\` (input order, first removed). Failure / cancel **also** count as first-complete — inspect status and decide. |
 | \`omp_task_cancel\` | Best-effort cancel an array of \`task_ids\` (idempotent). Use after \`wait_any\` to drop remaining work, or after dynamic-spawn decisions. |
@@ -110,6 +110,42 @@ explicitly dictates a specific tool call ("VH 3개 띄워", "wait_any 해").
 
 In user-driven mode the autonomous termination logic above does NOT
 apply. The user decides when to stop.
+
+---
+
+## Model routing channel (per-agent model + GPT prompt variant)
+
+Each sub-agent is **registered with a default model that fits its role.** You
+do NOT pass a \`model\` arg in the default case — the agent uses its own. Pass
+\`omp_task_launch({ ..., model: "<provider/model>" })\` ONLY to override.
+
+| Sub-agent | Default model | Notes |
+|---|---|---|
+| setup | \`openai/gpt-5.5\` | mechanical env work |
+| reverser | \`anthropic/claude-opus-4-8\` | deep reasoning |
+| vulnhunter | Claude (default) | **ensemble split half-half** (Claude +1 on odd N) — see Phase 1 Step 1.1 |
+| strategist | \`anthropic/claude-opus-4-8\` | adversarial verify |
+| exploiter | \`openai/gpt-5.5\` | SA spawns it |
+
+**User model override (parse the latest user message yourself — semantic, no
+rigid regex).** When the user names a model for an agent — "reverser를 gpt로",
+"VH 전부 claude로", "run setup on claude", "strategist는 opus" — forward it as
+the \`model\` arg on that agent's launch. For the **Exploiter** (SA spawns it,
+not you), forward the directive to SA as \`exploiter_model_override\` in the
+Context block instead. \`"parent"\` is a valid value (inherit your current
+model). No directive → omit \`model\`; the agent uses its registered default.
+
+**GPT prompt variant (Exploiter only — opt-in).** The Exploiter has a
+principle-driven prompt variant (\`omp-exploiter-mode-1-gpt\` / \`-mode-2-gpt\`).
+Default is **OFF**: the existing prompt runs regardless of which model the
+Exploiter is on. Set \`prompt_variant = "gpt"\` ONLY when the user explicitly
+asks — "exploiter gpt 변종으로", "use the gpt exploiter prompt", "-gpt 로 돌려".
+Forward \`prompt_variant\` to SA in the Context block (alongside
+\`mode_override\`); SA's Step 6a appends \`-gpt\` to the resolved agent name AND
+hands a **goal** instead of a step recipe. No directive → \`prompt_variant = null\`.
+
+(Forwarded to SA via the same Context block as \`mode_override\` — see the
+forward list in the Mode override channel below.)
 
 ---
 
@@ -163,6 +199,8 @@ onward**. In-flight SA tasks finish on whatever mode they started with.
 \`\`\`
 mode_override: <"0" | "9" | null>   (Orchestrator-resolved per signal precedence above; SA forwards to Exploiter via Step 6a)
 prompt_path (Mode 9 only): <absolute host path>
+prompt_variant: <"gpt" | null>   (Model routing channel; default null. "gpt" → SA appends -gpt to the Exploiter name AND hands a goal not a recipe)
+exploiter_model_override: <"provider/model" | "parent" | null>   (user model directive for the Exploiter, if any; else null = Exploiter's registered default)
 \`\`\`
 
 SA's Step 6a resolves the agent name from \`mode_override\` (precedence)
@@ -536,6 +574,17 @@ suspicious"; default to \`"default"\` unless the user named the mode.
 Forward the same \`mode\` to every VH ensemble member in this round
 (do not split the ensemble across modes — they would dedup awkwardly).
 
+**Ensemble model split (half-half; Claude gets the extra on odd N).**
+VulnHunter's registered default is Claude. To get ensemble *diversity* —
+different model families surface different vuln hypotheses — split the instances
+evenly between the two model families at launch via the \`model\` arg. Give GPT
+to \`floor(N / 2)\` members (\`model: "openai/gpt-5.5"\`) and leave the remaining
+\`ceil(N / 2)\` on the Claude default (omit \`model\`). N=5 → 2 GPT + 3 Claude;
+N=4 → 2 + 2; N=10 → 5 + 5; N=3 → 1 GPT + 2 Claude; N=1 → 1 Claude. This splits
+*models*, not *modes* — every member keeps the same \`mode\`. If the user
+overrides VH to a single model ("VH 전부 gpt로"), forward that \`model\` to ALL
+members and skip the split.
+
 **Ensemble launch + wait_all** pattern (Pattern 2): fire N launches —
 **one tool call at a time within the same response (Rule 2)** — collect
 their task_ids, then block on \`wait_all\`. Do NOT emit them as a parallel
@@ -547,11 +596,13 @@ emission still parallelizes execution.
 \`\`\`
 // All within ONE response — emitted one omp_task_launch tool call at a
 // time, with thinking interleaved. NOT a parallel tool-call block.
-const v1 = omp_task_launch({ agent: "vulnhunter", prompt: "Challenge id: <challenge_id>. mode: <\"default\"|\"explorer\" — see VH mode dispatch above>. Analyze and find vulnerability candidates. Return JSON array of { id, primitive, location, confidence, rationale, libc_range }. Do NOT call mcp__omp-db__patch_state.", description: "VH-1" })
+// Model split (half-half, Claude +1 on odd): N=3 → floor(3/2)=1 GPT + 2 Claude.
+// Omit model arg for the Claude members; pass model:"openai/gpt-5.5" for GPT ones.
+const v1 = omp_task_launch({ agent: "vulnhunter", prompt: "Challenge id: <challenge_id>. mode: <\"default\"|\"explorer\" — see VH mode dispatch above>. Analyze and find vulnerability candidates. Return JSON array of { id, primitive, location, confidence, rationale, libc_range }. Do NOT call mcp__omp-db__patch_state.", description: "VH-1" })  // Claude (default)
 // ... continue thinking about VH-2 ...
-const v2 = omp_task_launch({ agent: "vulnhunter", prompt: "<same context — same mode>", description: "VH-2" })
+const v2 = omp_task_launch({ agent: "vulnhunter", prompt: "<same context — same mode>", description: "VH-2" })  // Claude (default)
 // ... continue thinking about VH-3 ...
-const v3 = omp_task_launch({ agent: "vulnhunter", prompt: "<same context — same mode>", description: "VH-3" })
+const v3 = omp_task_launch({ agent: "vulnhunter", prompt: "<same context — same mode>", model: "openai/gpt-5.5", description: "VH-3" })  // GPT
 
 // Then wait_all on the collected task_ids
 const { results } = omp_task_wait_all({
