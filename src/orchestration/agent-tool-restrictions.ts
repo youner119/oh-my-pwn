@@ -110,6 +110,23 @@ const AGENT_RESTRICTIONS: Record<string, Record<string, boolean>> = {
     omp_task_cancel: false,
     ...DB_WRITE_DENY_ALL,
   },
+  // GPT/principle-driven prompt variants of mode-1 / mode-2. Same leaf
+  // restriction shape — listed individually so the unknown-agent fallback
+  // (`{}` = full access) never relaxes them. Decision: `.omc/decisions.md` #5.
+  "omp-exploiter-mode-1-gpt": {
+    omp_task_launch: false,
+    omp_task_wait_all: false,
+    omp_task_wait_any: false,
+    omp_task_cancel: false,
+    ...DB_WRITE_DENY_ALL,
+  },
+  "omp-exploiter-mode-2-gpt": {
+    omp_task_launch: false,
+    omp_task_wait_all: false,
+    omp_task_wait_any: false,
+    omp_task_cancel: false,
+    ...DB_WRITE_DENY_ALL,
+  },
 }
 
 /**

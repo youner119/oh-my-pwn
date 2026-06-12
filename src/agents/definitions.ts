@@ -12,12 +12,23 @@ import { createOmpVulnhunterAgent } from "./omp-vulnhunter"
 import { createOmpStrategistAgent } from "./omp-strategist"
 import { createOmpExploiterMode1Agent } from "./omp-exploiter-mode-1"
 import { createOmpExploiterMode2Agent } from "./omp-exploiter-mode-2"
+import { createOmpExploiterMode1GptAgent } from "./omp-exploiter-mode-1-gpt"
+import { createOmpExploiterMode2GptAgent } from "./omp-exploiter-mode-2-gpt"
 import { createOmpExploiterMode0Agent } from "./omp-exploiter-mode-0"
 import { createOmpExploiterMode9Agent } from "./omp-exploiter-mode-9"
 import { createOmpSetupAgent } from "./omp-setup"
 
 /** MVP default model. T18 model resolution layer 추가 시 교체. */
-const DEFAULT_MODEL = "openai/gpt-5.5"
+const DEFAULT_MODEL = "anthropic/claude-opus-4-8"
+
+/**
+ * Default model for the GPT/principle-driven prompt variants. These agents'
+ * prompts assume GPT-family processing (goal-driven, not mechanics
+ * enumeration), so they default to a GPT model — the prompt and the model
+ * are paired by agent identity. The launch-time `model` arg (commit a4661ad)
+ * can still override per spawn. Decision: `.omc/decisions.md` #5.
+ */
+const GPT_DEFAULT_MODEL = "openai/gpt-5.5"
 
 /**
  * agent name → AgentConfig 매핑.
@@ -43,4 +54,8 @@ export const ompAgentConfigs: Record<string, AgentConfig> = {
   "omp-exploiter-mode-2": createOmpExploiterMode2Agent(DEFAULT_MODEL),
   "omp-exploiter-mode-0": createOmpExploiterMode0Agent(DEFAULT_MODEL),
   "omp-exploiter-mode-9": createOmpExploiterMode9Agent(DEFAULT_MODEL),
+  // GPT/principle-driven prompt variants — paired with a GPT default model.
+  // Decision: `.omc/decisions.md` #5.
+  "omp-exploiter-mode-1-gpt": createOmpExploiterMode1GptAgent(GPT_DEFAULT_MODEL),
+  "omp-exploiter-mode-2-gpt": createOmpExploiterMode2GptAgent(GPT_DEFAULT_MODEL),
 }

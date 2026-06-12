@@ -25,6 +25,10 @@ const KNOWN_AGENTS: ReadonlySet<string> = new Set([
   "omp-exploiter-mode-2",
   "omp-exploiter-mode-0",
   "omp-exploiter-mode-9",
+  // GPT/principle-driven prompt variants (decisions.md #5). Launched by
+  // explicit name only — no category alias, same as their siblings.
+  "omp-exploiter-mode-1-gpt",
+  "omp-exploiter-mode-2-gpt",
 ])
 
 /**
