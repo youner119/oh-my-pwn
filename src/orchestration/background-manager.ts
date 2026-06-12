@@ -251,7 +251,18 @@ export class BackgroundManager {
    */
   async launchAsync(input: LaunchInput): Promise<LaunchResult> {
     const resolvedAgent = resolveAgent(input.agent)
-    const resolvedInput: LaunchInput = { ...input, agent: resolvedAgent }
+    // Resolve `modelSpec` ("parent" / "providerID/modelID" / empty) to a
+    // concrete model *before* createTask so the concurrency bucket key
+    // reflects the model the child will actually run on. An explicit
+    // `input.model` (programmatic callers) is used as a fallback.
+    const resolvedModel =
+      (await this.resolveModelSpec(input.modelSpec, input.parentSessionID)) ??
+      input.model
+    const resolvedInput: LaunchInput = {
+      ...input,
+      agent: resolvedAgent,
+      model: resolvedModel,
+    }
 
     const task = this.createTask(resolvedInput)
     await this.concurrency.acquire(task.concurrencyKey)
@@ -470,6 +481,60 @@ export class BackgroundManager {
       description: input.description,
     })
     return task
+  }
+
+  /**
+   * Resolve a raw `modelSpec` to a concrete `{ providerID, modelID }`.
+   *
+   *   - undefined / empty → `undefined` (child keeps its `agent.model` default).
+   *   - "parent"          → query the parent session's current model
+   *                         (`session.get().model`, where `.id` is the modelID).
+   *                         If the parent has no resolved model yet, returns
+   *                         `undefined` → safe fallback to the agent default.
+   *   - "providerID/modelID" → split on the first "/".
+   *
+   * Throws on a malformed spec (no "/", or empty side) so a typo surfaces at
+   * launch time rather than silently downgrading to the default.
+   */
+  private async resolveModelSpec(
+    spec: string | undefined,
+    parentSessionID: string,
+  ): Promise<{ providerID: string; modelID: string } | undefined> {
+    const trimmed = spec?.trim()
+    if (!trimmed) return undefined
+
+    if (trimmed === "parent") {
+      try {
+        const raw = await this.client.get({
+          path: { id: parentSessionID },
+          query: { directory: this.directory },
+        })
+        const parent = unwrapData<{
+          model?: { id: string; providerID: string }
+        }>(raw)
+        if (parent?.model?.providerID && parent.model.id) {
+          return {
+            providerID: parent.model.providerID,
+            modelID: parent.model.id,
+          }
+        }
+      } catch {
+        // Parent lookup failed — fall through to the agent default.
+      }
+      return undefined
+    }
+
+    const idx = trimmed.indexOf("/")
+    if (idx <= 0 || idx === trimmed.length - 1) {
+      throw new Error(
+        `invalid model spec "${spec}" — expected "providerID/modelID" ` +
+          `(e.g. "openai/gpt-5.5"), "parent", or empty for the agent default.`,
+      )
+    }
+    return {
+      providerID: trimmed.slice(0, idx),
+      modelID: trimmed.slice(idx + 1),
+    }
   }
 
   private async startSession(

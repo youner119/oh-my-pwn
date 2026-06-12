@@ -17,11 +17,21 @@ function createFakeClient(options?: {
   abortThrows?: boolean
   /** If true, create() throws — to test launchAsync error handling. */
   createThrows?: boolean
+  /** Model returned by get() as the parent session's current model (for
+   * `modelSpec: "parent"` resolution). Shape mirrors opencode session Info
+   * `model` where `.id` is the modelID. Omit → parent has no model. */
+  parentModel?: { id: string; providerID: string }
 }): OmpSessionClient & {
-  sessions: Map<string, { agent: string; prompt: string }>
+  sessions: Map<
+    string,
+    { agent: string; prompt: string; model?: { providerID: string; modelID: string } }
+  >
   abortedSessions: Set<string>
 } {
-  const sessions = new Map<string, { agent: string; prompt: string }>()
+  const sessions = new Map<
+    string,
+    { agent: string; prompt: string; model?: { providerID: string; modelID: string } }
+  >()
   const abortedSessions = new Set<string>()
   let sessionCounter = 0
   const startTimes = new Map<string, number>()
@@ -40,10 +50,15 @@ function createFakeClient(options?: {
       return { data: { id } }
     },
     async promptAsync(params) {
-      const body = params.body as { agent?: string; parts?: Array<{ text?: string }> }
+      const body = params.body as {
+        agent?: string
+        parts?: Array<{ text?: string }>
+        model?: { providerID: string; modelID: string }
+      }
       sessions.set(params.path.id, {
         agent: body.agent ?? "unknown",
         prompt: body.parts?.[0]?.text ?? "",
+        model: body.model,
       })
     },
     async status() {
@@ -77,7 +92,12 @@ function createFakeClient(options?: {
       }
     },
     async get(params) {
-      return { data: { directory: "/test" } }
+      return {
+        data: {
+          directory: "/test",
+          ...(options?.parentModel ? { model: options.parentModel } : {}),
+        },
+      }
     },
     async abort(params) {
       if (options?.abortThrows) {
@@ -178,6 +198,115 @@ describe("BackgroundManager", () => {
     expect(failedTasks.length).toBe(1)
     expect(failedTasks[0].status).toBe("failed")
     expect(failedTasks[0].error).toContain("simulated session.create failure")
+  })
+
+  // ── modelSpec resolution ──────────────────────────────────────────────
+
+  test("modelSpec omitted → no model in prompt body (agent default)", async () => {
+    const client = createFakeClient({ idleDelay: 60000 })
+    const manager = new BackgroundManager({ client, directory: "/test" })
+
+    const r = await manager.launchAsync({
+      parentSessionID: "p",
+      agent: "omp-vulnhunter",
+      description: "default model",
+      prompt: "x",
+    })
+
+    expect(client.sessions.get(r.session_id)!.model).toBeUndefined()
+    manager.shutdown()
+  })
+
+  test("modelSpec 'providerID/modelID' → parsed into prompt body model", async () => {
+    const client = createFakeClient({ idleDelay: 60000 })
+    const manager = new BackgroundManager({ client, directory: "/test" })
+
+    const r = await manager.launchAsync({
+      parentSessionID: "p",
+      agent: "omp-vulnhunter",
+      description: "explicit model",
+      prompt: "x",
+      modelSpec: "openai/gpt-5.5",
+    })
+
+    expect(client.sessions.get(r.session_id)!.model).toEqual({
+      providerID: "openai",
+      modelID: "gpt-5.5",
+    })
+    manager.shutdown()
+  })
+
+  test("modelSpec with modelID containing '/' splits on first slash only", async () => {
+    const client = createFakeClient({ idleDelay: 60000 })
+    const manager = new BackgroundManager({ client, directory: "/test" })
+
+    const r = await manager.launchAsync({
+      parentSessionID: "p",
+      agent: "omp-vulnhunter",
+      description: "slashy model",
+      prompt: "x",
+      modelSpec: "openrouter/anthropic/claude-opus-4-8",
+    })
+
+    expect(client.sessions.get(r.session_id)!.model).toEqual({
+      providerID: "openrouter",
+      modelID: "anthropic/claude-opus-4-8",
+    })
+    manager.shutdown()
+  })
+
+  test("modelSpec 'parent' → inherits parent session's current model", async () => {
+    const client = createFakeClient({
+      idleDelay: 60000,
+      parentModel: { id: "claude-opus-4-8", providerID: "anthropic" },
+    })
+    const manager = new BackgroundManager({ client, directory: "/test" })
+
+    const r = await manager.launchAsync({
+      parentSessionID: "p",
+      agent: "omp-vulnhunter",
+      description: "parent model",
+      prompt: "x",
+      modelSpec: "parent",
+    })
+
+    expect(client.sessions.get(r.session_id)!.model).toEqual({
+      providerID: "anthropic",
+      modelID: "claude-opus-4-8",
+    })
+    manager.shutdown()
+  })
+
+  test("modelSpec 'parent' with no parent model → falls back to agent default", async () => {
+    const client = createFakeClient({ idleDelay: 60000 }) // get() returns no model
+    const manager = new BackgroundManager({ client, directory: "/test" })
+
+    const r = await manager.launchAsync({
+      parentSessionID: "p",
+      agent: "omp-vulnhunter",
+      description: "parent missing",
+      prompt: "x",
+      modelSpec: "parent",
+    })
+
+    expect(client.sessions.get(r.session_id)!.model).toBeUndefined()
+    manager.shutdown()
+  })
+
+  test("modelSpec malformed → launchAsync throws", async () => {
+    const client = createFakeClient({ idleDelay: 60000 })
+    const manager = new BackgroundManager({ client, directory: "/test" })
+
+    await expect(
+      manager.launchAsync({
+        parentSessionID: "p",
+        agent: "omp-vulnhunter",
+        description: "bad spec",
+        prompt: "x",
+        modelSpec: "no-slash-here",
+      }),
+    ).rejects.toThrow(/invalid model spec/)
+    manager.shutdown()
   })
 
   test("multiple parallel launches create separate sessions", async () => {

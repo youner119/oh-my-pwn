@@ -49,7 +49,15 @@ export interface OmpSessionClient {
   get(params: {
     path: { id: string }
     query?: Record<string, unknown>
-  }): Promise<{ data?: { directory?: string } }>
+  }): Promise<{
+    data?: {
+      directory?: string
+      /** Session's current model (opencode session Info `model`). `id` is the
+       * modelID. Populated by the ModelSwitched projector once the session has
+       * been prompted — used to resolve `modelSpec: "parent"`. */
+      model?: { id: string; providerID: string; variant?: string }
+    }
+  }>
 
   /**
    * Abort a running session — used by BackgroundManager.cancel() (T4).
@@ -94,7 +102,22 @@ export interface LaunchInput {
   description: string
   prompt: string
   tools?: Record<string, boolean>
+  /**
+   * Resolved model for the child session. When set, passed to the prompt as
+   * `input.model`, which wins opencode's `input.model ?? agent.model ??
+   * currentModel` resolution. Usually derived from `modelSpec` (below); a
+   * direct programmatic caller may set it instead.
+   */
   model?: { providerID: string; modelID: string }
+  /**
+   * Raw model directive from the `omp_task_launch` tool, resolved to `model`
+   * in `launchAsync` before the task is created:
+   *   - undefined / empty → leave `model` unset → child uses its own
+   *     `agent.model` default.
+   *   - "parent"          → inherit the parent session's current model.
+   *   - "providerID/modelID" (e.g. "openai/gpt-5.5") → that exact model.
+   */
+  modelSpec?: string
 }
 
 /* ── 4-tool surface result types ──────────────────────────────────────── */

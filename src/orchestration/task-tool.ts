@@ -38,9 +38,23 @@ Unknown names return an error.`,
         ),
       prompt: tool.schema.string().describe("Full prompt for the sub-agent."),
       description: tool.schema.string().describe("Short task description."),
+      model: tool.schema
+        .string()
+        .optional()
+        .describe(
+          "Model for the sub-agent. Omit (or leave empty) → the agent's own " +
+            "default model. 'parent' → inherit THIS (launching) session's " +
+            "current model. Otherwise a 'providerID/modelID' string, e.g. " +
+            "'openai/gpt-5.5' or 'anthropic/claude-opus-4-8'.",
+        ),
     },
     async execute(
-      args: { agent: string; prompt: string; description: string },
+      args: {
+        agent: string
+        prompt: string
+        description: string
+        model?: string
+      },
       ctx: { sessionID: string },
     ) {
       try {
@@ -49,6 +63,7 @@ Unknown names return an error.`,
           agent: args.agent,
           description: args.description,
           prompt: args.prompt,
+          modelSpec: args.model,
         })
         return JSON.stringify({
           ok: true,
