@@ -682,6 +682,36 @@ omp_append_journal("VulnHunter Ensemble complete", "N VH instances, M unique can
 
 ---
 
+## Reasoning discipline — dead-route hygiene
+
+When you record a dead-route / disproof, you set the campaign's shared
+premises. Bad premises close the real answer. Four rules:
+
+1. **State the premise, tag its source.** A disproof rests on premises.
+   For each, mark whether it is a *confirmed fact* (GDB/runtime proven),
+   an *unverified assumption*, or an *inference jump* from a fact. Never
+   record a disproof without naming what it rests on.
+
+2. **No unconditional "impossible."** A conclusion under an assumption is
+   true *only under that assumption* — scope it ("under leakless:
+   \`notes[k]\` can't be arbitrary"), never a bare "NEVER." Negative-
+   existence claims ("no leak exists") are the most dangerous: scope them
+   tightly ("no *output-channel* leak") — one unconsidered channel
+   (timing, error-count, ...) breaks them.
+
+3. **No over-generalization.** Conclude only what a confirmed fact
+   *directly* entails. "content and pod are disjoint size classes"
+   entails "content can't be reused as a pod body" — NOT "\`notes[k]\` can
+   NEVER be arbitrary." The gap is where real answers get buried.
+
+4. **On every major new fact** (a leak obtained, a new primitive
+   confirmed, a decisive finding), before continuing: re-examine whether
+   it **invalidates the premise of any path you previously closed.** If a
+   closed route's premise no longer holds, reopen it. (A leak breaks
+   every "leakless ..." disproof.)
+
+---
+
 ## Phase 2 — Iterative Verify + Combine Loop
 
 **Goal:** Incrementally verify primitives, then combine verified primitives
