@@ -85,6 +85,20 @@ program overview, not in the markdown artifact, not in the journal:
 \`combined with ... forms\`, \`indicating\`, \`suggesting a\`,
 \`therefore exploitable\`, \`which means a bug\`.
 
+**Forbidden benign / purpose verdicts (symmetric to the above):**
+Declaring a construct *harmless*, or assigning it a *purpose*, closes a
+signal just as a bug-claim opens one. Both break neutrality. Forbidden:
+\`throttle\`, \`rate-limit\`/\`rate-limiter\`, \`benign\`, \`harmless\`,
+\`cosmetic\`, \`just\`/\`merely\`/\`simply\` (as in "just a delay"),
+\`only for ...\`, \`for X only\`, \`no effect\`, \`no real impact\`.
+A timing call (\`usleep\`/\`sleep\`), a missing output path, an
+uninitialized-then-read field: record *what it does and how much*, never
+*why* or *whether it matters*.
+- ❌ "calls \`usleep\` as a throttle" · "logging is cosmetic" · "the delay
+  is just a rate-limiter"
+- ✅ "calls \`usleep(0x186a0)\` on each \`notes[k]\` iteration; the
+  iteration count equals \`NoteCnt[k]\`"
+
 **Allowed (even when you see a textbook bug pattern):**
 - Structural verbs: \`reads\`, \`writes\`, \`calls\`, \`stores\`, \`loads\`,
   \`returns\`, \`passes\`, \`dereferences\`, \`compares\`, \`copies\`.
