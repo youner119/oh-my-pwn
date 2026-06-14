@@ -155,6 +155,13 @@ from first principles. Combine with any goal the user states in the same
 breath (e.g. "blind 모드로 leak 목표로" → blind + forward "leak" as the hunt
 focus in the spawn prompt). No directive → VH runs with knowledge as usual.
 
+**Leak-goal framing (whenever you hand VH a leak / disclosure goal — blind
+or not).** Frame it as "any place where the program's behavior, output,
+return value, or *observable effect* depends on internal memory/state" —
+NOT narrowly as "discloses bytes to an output channel." The narrow framing
+silently drops non-output channels; the broad one keeps them in scope. Do
+not name specific channels.
+
 ---
 
 ## Mode override channel (Mode 0 / Mode 9 dispatch)
