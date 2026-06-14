@@ -147,6 +147,12 @@ BN MCP (no mutation tools — see Step 5b).
    filter" still applies (Step 6 analyzes every function regardless
    of catalog match).
 
+   The catalog files each signal under one technique heading — treat that
+   as a starting point, not a verdict. A signal grouped under one heading
+   may enable a different technique entirely; if the catalog's category
+   does not fit your target, do not discard the signal — return to first
+   principles: what does this code make observable or possible?
+
 4. **Read analysis source:**
    - If \`source_present === true\`: read each C source file in \`source_paths\`.
      Source analysis is primary — Reverser output and pseudocode are
