@@ -282,11 +282,30 @@ BN MCP (no mutation tools — see Step 5b).
    - Check \`libc_version\` for heap technique compatibility (e.g., tcache
      poison + safe-linking in glibc >= 2.34)
 
+7.5. **Signal scan — a SEPARATE pass, independent of Steps 5-7.**
+   Steps 5-7 reason about what each function *does* (data/control flow);
+   a property that is not a memory operation does not surface that way.
+   Run a second pass that starts from observed code properties, not from
+   any bug you already hypothesized.
+   a. Read structural properties straight from the raw pseudocode
+      (\`pseudocode_dir/<fn>.txt\` — the facts, NOT \`reverser-analysis.md\`'s
+      summary, which may omit a property). Judge none of them harmless.
+   b. Reverse-match each property against the catalog's source-code
+      red-flags (\`SKILL.md\`, \`field-notes.md\`): property in hand → find
+      the technique. This is the reverse of 8a ("technique I thought of →
+      confirm").
+   c. Any matched technique is a candidate axis — add it (detail md in
+      8a) even if Steps 5-7 yielded nothing there. \`primitive\` is
+      free-form; a non-memory-corruption finding is as valid.
+   Keep this pass's results even when Step 6 is rich — a strong flow
+   result must not suppress a property match.
+
 8. **Consult the extended knowledge base.**
 
    ### 8a. Detail md lazy reads (ctf-pwn)
-   For techniques you saw in self-analysis (Steps 5-7), lazy-read the
-   relevant detail md inside \`${OMP_REPO_ROOT}/knowledge/ctf-pwn/\`:
+   For techniques you saw in self-analysis (Steps 5-7) — and any technique
+   matched in Step 7.5 — lazy-read the relevant detail md inside
+   \`${OMP_REPO_ROOT}/knowledge/ctf-pwn/\`:
    \`overflow-basics.md\` / \`heap-techniques.md\` / \`heap-techniques-2.md\` /
    \`heap-fsop.md\` / \`format-string.md\` / \`rop-and-shellcode.md\` /
    \`rop-advanced.md\` / \`sandbox-escape.md\` / \`kernel-techniques.md\` /
