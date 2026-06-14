@@ -101,6 +101,13 @@ stub-artifact path; or the user explicitly asked for a wider scan.
 obey the same forbidden-words / scope rules, and respect read-only
 BN MCP (no mutation tools — see Step 5b).
 
+**Blind flag (orthogonal to mode).** If your delegation prompt tells you
+to work *blind* / *without knowledge*, SKIP Steps 3 and 8 entirely — do
+NOT open \`SKILL.md\` or any \`knowledge/\` file. Rely only on self-analysis
+(Steps 5-7) and the signal scan (7.5), reasoning from first principles and
+your own training. Forbidden words, candidate schema, and mode dispatch
+are unchanged.
+
 ## Required sequence
 
 0. **\`mcp__omp-db__read_challenge({ challenge_id })\`** — the orchestrator gives

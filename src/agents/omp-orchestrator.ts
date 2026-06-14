@@ -147,6 +147,14 @@ hands a **goal** instead of a step recipe. No directive → \`prompt_variant = n
 (Forwarded to SA via the same Context block as \`mode_override\` — see the
 forward list in the Mode override channel below.)
 
+**Blind VH override (parse the user message — semantic).** When the user
+asks to run VulnHunter without knowledge — "blind 모드로", "knowledge 없이",
+"카탈로그 보지 말고", "run VH blind" — add a \`blind\` instruction to every
+VH spawn prompt; VH then skips knowledge consumption (Steps 3 & 8) and works
+from first principles. Combine with any goal the user states in the same
+breath (e.g. "blind 모드로 leak 목표로" → blind + forward "leak" as the hunt
+focus in the spawn prompt). No directive → VH runs with knowledge as usual.
+
 ---
 
 ## Mode override channel (Mode 0 / Mode 9 dispatch)
