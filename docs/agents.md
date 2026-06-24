@@ -169,9 +169,9 @@ fresh → `mcp__omp-db__register_challenge({dir, workspace_root, agent_id:"setup
   - `user-mode-elf` (rule 7) 만 Phase 1–5 진행.
 - **Phase 1 — docker build:** `omp_setup_docker_build` (`image_tag_hint` **필수** =
   `omp-<sha8>`, `force_rebuild`→`--no-cache`, docker layer cache 위임).
-- **Phase 2 — ldd map:** `docker run --rm <image> ldd <bin>` 로 라이브러리 의존성 파악.
-  **static-linked branch:** "not a dynamic executable" 이면 Phase 3 추출/patchelf skip,
-  Phase 4 host verify 는 input binary 직접, Phase 5 는 binary 만 stage.
+- **Phase 2 — Dependency discovery (ldd):** `docker run --rm <image> ldd <bin>` 로
+  라이브러리 의존성 파악. **static-linked branch:** "not a dynamic executable" 이면
+  Phase 3 추출/patchelf skip, Phase 4 host verify 는 input binary 직접, Phase 5 는 binary 만 stage.
 - **Phase 3 — extract + patchelf:** `omp_setup_extract_file`(image → `.omp/artifacts/`)
   로 libc/ld 추출 + `omp_setup_patch_elf`(binary: `interpreter`+`replacements` / library:
   in-place) 로 SONAME → 절대경로 rewrite.
@@ -179,6 +179,10 @@ fresh → `mcp__omp-db__register_challenge({dir, workspace_root, agent_id:"setup
   missing-lib 검사.
 - **Phase 5 — workspace stage + container verify:** artifacts → `workspace/<challenge_id>/`
   patchelf(fresh-source) + `omp_setup_verify_runtime`(`mode=container`, CET enforce probe 포함).
+- **Phase 6 — Mark complete:** `patch_state{setup_complete:true}` + journal "setup complete"
+  요약. **실패 정책 (D8, 전 phase):** 어느 phase 든 실패 시 진단 수집 + journal failure record
+  + `setup_unsupported_reason` 시드 + `setup_complete` 미설정(retry 0) → 사용자가
+  force re-setup / 폴더 수정 / handoff 결정.
 
 **Tool 사용:**
 - `mcp__omp-db__register_challenge` / `lookup_challenge` / `read_challenge` (identity)
