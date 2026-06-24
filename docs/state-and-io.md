@@ -3,42 +3,51 @@
 이 문서는 OmP가 **어떻게 상태를 저장하고**, **어떤 산출물을 만들고**, 사람이
 **어디를 읽고 어떻게 개입**하는지 정리합니다.
 
+> **2026-06 database-mcp cutover:** `state` 와 `vuln_candidates` 는 옛
+> `.omp/state.json` + `.omp/candidates/*.json` per-file storage 에서 **repo-root
+> 글로벌 single SQLite `state.db`** (별개 DB MCP server `omp-db`) 로 이전됐습니다.
+> 본 문서의 **스키마 (ChallengeState 필드) / sole-writer 정책 / journal / artifacts**
+> 영역은 그대로 유효하되, 저장 매체가 file → DB 로 바뀐 부분을 반영합니다. DB file
+> 위치 / 10 table schema / mapper / ACL 2 layer / 외부 read 채널은 **`docs/database.md`**
+> 가 정본입니다.
+
 ---
 
 ## 핵심 원칙
 
-1. **각 challenge 폴더 안에 `.omp/` 디렉토리가 생기고, 모든 상태가 거기에
-   저장됩니다.** 전역 `.omp/<slug>/` 같은 건 없음. Challenge 폴더를 tar로
-   말아 다른 머신에 옮기면 OmP 상태도 같이 따라감.
-2. **`state.json`은 machine-truth, `journal.md`는 human-readable.**
-   State는 Zod-validated JSON, journal은 append-only markdown.
+1. **state / candidate 는 repo-root `state.db` (글로벌 single DB), journal /
+   artifacts / logs / exploit 는 각 challenge 폴더 `.omp/`.** cutover 전엔 모든
+   상태가 폴더 `.omp/` 안에 있었으나, 이제 machine-truth state 는 DB 로 분리됨.
+   challenge 는 surrogate `challenge_id = "<name>_<uuid8>"` 로 식별 (dir 은 mutable
+   컬럼) — 폴더를 옮겨도 `lookup_challenge(dir)` 로 재연결. 폴더 tar 이전 시
+   artifacts/journal 은 따라가지만 DB state 는 새 머신에서 재등록 (catalog).
+2. **`state.db` 가 machine-truth, `journal.md` 는 human-readable.**
+   State 는 Zod-validated (DB row ↔ nested object), journal 은 append-only markdown.
 3. **사람은 journal만 읽음. 수정은 prompt 채널로만.** `vim journal.md`
    같은 파일 직접 편집은 지원하지 않음. 사용자가 correction을 prompt로
-   말하면 orchestrator가 `state.json`을 고치고 `journal.md`에 correction
-   블록을 append.
-4. **Agent는 state file을 직접 쓰지 않음.** 반드시 `omp_read_state` /
-   `omp_patch_state` / `omp_append_journal` tool 경유.
+   말하면 orchestrator가 `mcp__omp-db__patch_state`로 state를 고치고
+   `journal.md`에 correction 블록을 append.
+4. **Agent는 state를 직접 쓰지 않음.** 반드시 `mcp__omp-db__read_state` /
+   `mcp__omp-db__patch_state` / `omp_append_journal` tool 경유.
 5. **병렬 환경에서 Orchestrator가 sole writer.** 병렬 실행되는
-   StrategyAgent/Exploiter는 `omp_patch_state`를 호출하지 않고 결과만
+   StrategyAgent/Exploiter는 `patch_state`를 호출하지 않고 결과만
    반환. Orchestrator가 수집 후 순차적으로 state에 반영. 동시 쓰기
-   충돌 방지. (`omp_read_state`로 읽기는 가능.)
+   충돌 방지 (+ ACL Layer 2 가 server-side 강제). (`read_state`로 읽기는 가능.)
 
 ---
 
-## `<challenge-dir>/.omp/` 레이아웃
+## 레이아웃 — repo-root `state.db` + challenge 폴더 `.omp/`
 
 ```
+<repo-root>/
+└── state.db                      ← 글로벌 single SQLite (state + candidate, 모든 challenge). OMP_DB_PATH. spec: database.md
+
 <challenge-dir>/
 ├── prob                          ← binary (원본 또는 patchelf로 교체된 버전)
 ├── Dockerfile                    ← remote 재현용
 ├── chal.c                        ← (선택) C 소스 — 있으면 Reverser skip
-└── .omp/                         ← OmP 상태 + 산출물
-    ├── state.json                ← machine-truth. Zod schema (ChallengeState). minified write (한 줄)
+└── .omp/                         ← OmP 산출물 (state/candidate 는 DB 로 이전 — 여기 없음)
     ├── journal.md                ← append-only progress log (read-only for humans)
-    ├── candidates/               ← vuln_candidates per-file detail storage (spec: state-split-vuln-candidates.md)
-    │   ├── vuln_1.json           ← VulnCandidateDetail (minified JSON). id 별 한 file.
-    │   ├── vuln_2.json
-    │   └── derived_vuln_4_vuln_16.json
     ├── artifacts/                ← agent-생성 산출물
     │   ├── libc.so.6             ← docker image에서 추출한 libc
     │   ├── ld-linux-x86-64.so.2  ← docker image에서 추출한 ld
@@ -51,15 +60,17 @@
     └── exploit/                  ← Exploiter pwntools scripts (병렬 시 candidate별 서브디렉토리)
 ```
 
-`state.json` 은 minified 한 줄로 박힘 (opencode read tool 의 byte cap +
-LLM context 영역 축소). `candidates/<id>.json` 도 같은 정책.
-`candidates/` 디렉토리는 첫 `omp_create_candidate` 호출 시점에 lazy 생성.
+`state` / `candidate` 는 `state.db` 의 정규화 table (summary row + detail array FK)
+에 박힘 — 옛 `.omp/state.json` minified + `.omp/candidates/<id>.json` per-file 은
+폐기. DB row 조립은 `mcp__omp-db__read_state` / `read_candidate` 가 multi-table →
+nested object 로 수행.
 
-각 서브디렉토리는 T02 `initializeOmpDir`가 load 시 자동으로 생성합니다.
+`.omp/` 의 journal/artifacts/logs/exploit 서브디렉토리는 `omp_load_challenge` 의
+`initializeOmpDir`가 load 시 자동으로 생성합니다 (state.json 시드는 안 함 — T20).
 
 ---
 
-## `state.json` 스키마 (ChallengeState)
+## ChallengeState 스키마 (`state.db`)
 
 `src/state/challenge-state.ts`의 Zod schema가 single source of truth.
 주요 필드를 그룹별로:
@@ -131,11 +142,12 @@ Multi-NEEDED 챌린지 (libm/libz/libbz2/liblzma 등) 의 추가 라이브러리
 
 **VulnHunter output (T10) — Summary/Detail split (state-split-vuln-candidates.md D2):**
 
-`vuln_candidates[]` 는 state.json 에 *summary array* 만 박힘. detail 은
-`.omp/candidates/<id>.json` 의 별개 file. 두 영역 합성은 `omp_read_candidate`
+`vuln_candidates[]` 는 `state.db` 의 *summary row* 로 박힘. detail 은 별개
+`candidates` detail array (FK). 두 영역 합성은 `mcp__omp-db__read_candidate`
 또는 `VulnCandidateSchema = VulnCandidateSummary.merge(VulnCandidateDetail)`.
+(옛 `.omp/candidates/<id>.json` per-file 폐기 — database-mcp cutover.)
 
-*Summary fields* (state.json):
+*Summary fields* (state.db summary row):
 
 | 필드 | 설명 |
 |---|---|
@@ -148,7 +160,7 @@ Multi-NEEDED 챌린지 (libm/libz/libbz2/liblzma 등) 의 추가 라이브러리
 | `gives_count` / `needs_count` | detail 의 array length — *진행 정도* 만 노출. |
 | `has_poc` | `detail.poc_script_path` 존재 여부 (boolean). |
 
-*Detail fields* (`.omp/candidates/<id>.json`):
+*Detail fields* (state.db detail array):
 
 | 필드 | 설명 |
 |---|---|
@@ -170,10 +182,10 @@ Multi-NEEDED 챌린지 (libm/libz/libbz2/liblzma 등) 의 추가 라이브러리
 | `vulnhunter_analysis_path` | `vulnhunter-analysis.md` 절대경로 |
 | `vulnhunter_analyzed_at` | ISO timestamp |
 
-> **Loader strictness (D4):** `loadChallengeState` 가 old format (detail
-> field 가 state.json 의 `vuln_candidates[]` 에 박혀있는 경우) 감지 시
-> `ChallengeStateLoadError` 던짐. migration 은 OmP implementation 영역 밖
-> — 사용자가 외부 도구로 변환 후 재기동.
+> **Schema enforcement:** `patch_state` 의 `vuln_candidates[]` 는 summary
+> field 만 수락 — detail field 박힘 시 `vuln_candidates_detail_in_summary_patch`
+> reject (database.md). DB cutover 는 fresh start (옛 file format migration
+> 없음, T3 폐기) 라 old-format 로드 분기 자체가 소멸.
 
 **StrategyAgent plan (T14):**
 
@@ -216,12 +228,15 @@ Multi-NEEDED 챌린지 (libm/libz/libbz2/liblzma 등) 의 추가 라이브러리
 | `created_at` | ISO timestamp |
 | `updated_at` | 매 save 시 자동 갱신 |
 
-### Atomic write
+### Atomic write (DB transaction)
 
-`saveChallengeState`는:
-1. Zod schema로 재검증 (invalid면 throw)
+`mcp__omp-db__patch_state` handler 는:
+1. 기존 row 로드 + shallow merge 후 Zod schema 재검증 (invalid면 reject, row 무변경)
 2. `updated_at` 자동 갱신
-3. `state.json.tmp`에 쓴 뒤 `rename`으로 원자적 교체 (부분 쓰기 없음)
+3. multi-table write 를 한 SQLite transaction (bun:sqlite + WAL) 으로 — 부분 쓰기 없음
+
+(옛 file 시절 `saveChallengeState` 의 `state.json.tmp` + `rename` 원자성은
+DB transaction 으로 대체 — `saveChallengeState` 함수는 T22 에서 제거.)
 
 ---
 
@@ -237,7 +252,7 @@ _Created: 2026-04-15T05:54:30.371Z_
 
 > This file is an **append-only progress log** written by OmP agents.
 > It is **read-only for humans** — corrections flow through the prompt
-> channel and are applied by the Orchestrator to state.json plus a
+> channel and are applied by the Orchestrator to state.db plus a
 > `## User correction` block below. Do not edit this file by hand.
 
 ## Inputs
@@ -277,7 +292,7 @@ _Created: 2026-04-15T05:54:30.371Z_
   timestamp. Body는 markdown.
 - **User correction 블록도 agent가 씀.** 사용자가 prompt로 "libc 버전은
   2.31이야"라고 말하면 orchestrator가:
-  1. `omp_patch_state`로 `state.libc_version` 수정
+  1. `mcp__omp-db__patch_state`로 `state.libc_version` 수정
   2. `omp_append_journal("User correction", "> <사용자 원문>\n\n- Updated ...")`
   3. 필요하면 해당 단계부터 재계획
 
@@ -373,7 +388,7 @@ timestamped 파일로 저장. 빌드 실패 시 사용자가 이 로그를 직�
 
 ### `loadChallengeFolder` (T03) — load-or-init
 
-- `state.json` 이미 존재 → 그대로 로드
+- `.omp/` 이미 존재 → 검증만 (state 는 `state.db`, db-mcp `lookup_challenge` 로 회수)
 - `binary_sha256` 재계산 → drift 감지하면 **state는 건드리지 않고 journal에만
   `## binary sha drift` 블록 append**. 재시딩은 사용자가 명시적으로 `rm -rf .omp/`
   하거나 prompt correction으로 지시해야 함.
@@ -381,8 +396,8 @@ timestamped 파일로 저장. 빌드 실패 시 사용자가 이 로그를 직�
 
 ### `runEnvSetup` (T04) — partial commit
 
-- 파이프라인 각 단계 후 `saveChallengeState` 호출 → 중간 실패해도 진행한
-  만큼 commit됨
+- 파이프라인 각 단계 후 `mcp__omp-db__patch_state` 로 commit → 중간 실패해도 진행한
+  만큼 DB 에 반영됨
 - `docker image inspect`로 cache hit이면 build skip, 그 외엔 rebuild
 
 ### `omp_run_reverser` (agent 호출) — sha match skip + force
@@ -398,30 +413,29 @@ timestamped 파일로 저장. 빌드 실패 시 사용자가 이 로그를 직�
 
 | 주체 | 쓸 수 있는 것 | 금지 |
 |---|---|---|
-| **library** (loader, envsetup) | `state.json` (`saveChallengeState`), `journal.md` (`appendJournalSection`), `artifacts/*`, `candidates/<id>.json` (`saveCandidate`) | 직접 사용자 입력 읽기 |
-| **agent (Orchestrator)** | `omp_patch_state` / `omp_append_journal` / `omp_{create,patch,delete}_candidate` tool 경유. **병렬 환경의 sole writer** | `write` / `edit` tool로 state.json / journal.md / candidates 직접 수정 |
-| **agent (omp-setup)** | `omp_patch_state` / `omp_append_journal` tool 경유 (Phase 0-6 순차) — `etc` write 허용 | state.json 직접 쓰기. candidate tool 미사용 (omp-setup 영역 아님). |
-| **agent (Reverser)** | `omp_patch_state` (path / timestamp 만) / `omp_append_journal` 경유 + `write` tool로 `artifacts/reverser-*.md` 생성 | `etc` write / candidate write / state.json 직접 쓰기 |
-| **sub-agent (VulnHunter / Strategist / Exploiter)** | `omp_read_state` / `omp_read_candidate` 로 read 만. 결과는 task return value 로 반환. | `omp_patch_state` / `omp_append_journal` / `omp_{create,patch,delete}_candidate` 다 **ACL deny** (sole writer 위반). `etc` write 도 deny. |
-| **사용자** | prompt 채널로 agent에게 correction 지시 | 파일 직접 수정 |
-| **`omp_patch_state`** | `state.json` 부분 필드 (Zod validated). `vuln_candidates[]` 는 summary field 만 (detail 박힘 시 reject) | `challenge_dir` / `schema_version` (자동 strip) |
-| **`omp_{create,patch,delete}_candidate`** | `vuln_candidates[]` summary row + `candidates/<id>.json` detail (둘 다 atomic) | Orchestrator 외 sub-agent (ACL) |
+| **library** (loader, envsetup) | `journal.md` (`appendJournalSection`), `artifacts/*`, `.omp/` 디렉토리 init (`initializeOmpDir`) | state/candidate 직접 write (DB 로 이전 — `saveChallengeState`/`saveCandidate` T22 제거), 사용자 입력 직접 읽기 |
+| **agent (Orchestrator)** | `mcp__omp-db__patch_state` / `omp_append_journal` / `mcp__omp-db__{create,patch,delete}_candidate` (+ challenge identity tool) 경유. **병렬 환경의 sole writer** | `write` / `edit` tool로 DB / journal.md 직접 수정 |
+| **agent (omp-setup)** | `mcp__omp-db__patch_state` (+ `register_challenge`) / `omp_append_journal` 경유 (Phase 0-6 순차) — `etc` write 허용 | candidate write 미사용 (omp-setup 영역 아님). |
+| **agent (Reverser)** | `mcp__omp-db__patch_state` (path / timestamp 만) / `omp_append_journal` 경유 + `write` tool로 `artifacts/reverser-*.md` 생성 | `etc` write / candidate write |
+| **sub-agent (VulnHunter / Strategist / Exploiter)** | `mcp__omp-db__read_state` / `read_candidate` 로 read 만. 결과는 task return value 로 반환. | `mcp__omp-db__patch_state` / `{create,patch,delete}_candidate` 다 **ACL 2 layer deny** (sole writer 위반). `etc` write 도 deny. |
+| **사용자** | prompt 채널로 agent에게 correction 지시 | DB / 파일 직접 수정 |
+| **`mcp__omp-db__patch_state`** | state 부분 필드 (Zod validated, `agent_id` ACL). `vuln_candidates[]` 는 summary field 만 (detail 박힘 시 reject) | identity/version 키 (`challenge_id` / `schema_version`) |
+| **`mcp__omp-db__{create,patch,delete}_candidate`** | `vuln_candidates[]` summary row + detail array (한 tx) | Orchestrator 외 sub-agent (ACL) |
 
-**protected fields:** `omp_patch_state`는 patch 객체에서 `challenge_dir`,
-`schema_version` 두 필드만 자동으로 제거합니다 (T05). 두 필드는 loader
-초기 시점 외에는 변경 금지. `binary_path` 등 그 외 필드는 patchable —
-omp-setup Phase 3 이 patchelf 결과를 `binary_path` 박음 (`binary_sha256`
-같이).
+**protected fields:** `mcp__omp-db__patch_state`는 `challenge_id` /
+`schema_version` 같은 identity/version 키를 patch 대상에서 제외. 그 외 필드는
+patchable — omp-setup Phase 3 이 patchelf 결과를 `binary_path` 박음
+(`binary_sha256` 같이).
 
 **`vuln_candidates` channel split (state-split-vuln-candidates.md D2/D3):**
 
 | 데이터 | 채널 |
 |---|---|
-| Summary fields (id / verification_result / primitive / agent / combined_from / description / gives_count / needs_count / has_poc) | `omp_patch_state({vuln_candidates: [{...}]})` 가능 — summary-only |
-| Detail fields (rationale / verification_blockers / gives / needs / poc_script_path / location / libc_range / origin_type / derived_from / confidence) | `omp_patch_candidate({id, patch: {detail}})` — `omp_patch_state` 에 박힘 시 reject |
-| Summary + Detail 동시 갱신 | `omp_patch_candidate({id, patch: {summary, detail}})` 한 호출 (state.json row + detail file atomic) |
-| 신규 candidate | `omp_create_candidate({candidate: {summary + detail}})` (둘 다 atomic write) |
-| Candidate 폐기 | `omp_delete_candidate({id})` (state.json row + detail file 둘 다 제거) |
+| Summary fields (id / verification_result / primitive / agent / combined_from / description / gives_count / needs_count / has_poc) | `mcp__omp-db__patch_state({vuln_candidates: [{...}]})` 가능 — summary-only |
+| Detail fields (rationale / verification_blockers / gives / needs / poc_script_path / location / libc_range / origin_type / derived_from / confidence) | `mcp__omp-db__patch_candidate({id, patch: {detail}})` — `patch_state` 에 박힘 시 reject |
+| Summary + Detail 동시 갱신 | `mcp__omp-db__patch_candidate({id, patch: {summary, detail}})` 한 호출 (summary row + detail array 한 tx) |
+| 신규 candidate | `mcp__omp-db__create_candidate({candidate: {summary + detail}})` (한 tx) |
+| Candidate 폐기 | `mcp__omp-db__delete_candidate({id})` (row + detail array cascade) |
 
 ACL enforcement: `src/orchestration/agent-tool-restrictions.ts`. sub-agent
 가 candidate write tool 호출하면 tool 실행 전 reject.
@@ -456,7 +470,7 @@ libc 버전은 2.35가 아니고 2.31이야. Dockerfile에서 ubuntu:20.04를
 알겠습니다. state.libc_version을 "2.31"로 수정하고 envsetup을 재실행
 합니다.
 
-1. omp_patch_state: libc_version="2.31" 기록
+1. mcp__omp-db__patch_state: libc_version="2.31" 기록
 2. omp_append_journal("User correction", ...)
 3. user prompt 에 "setup 재설정" 박아서 force re-setup → Orchestrator
    Phase 0 gate 가 omp-setup agent 를 force_rebuild=true 로 재실행
@@ -478,7 +492,7 @@ libc 버전은 2.35가 아니고 2.31이야. Dockerfile에서 ubuntu:20.04를
 ### 중요한 것
 
 - **사용자는 journal을 수정하지 않음.** agent가 append.
-- **사용자는 state.json을 수정하지 않음.** agent가 `omp_patch_state`로
+- **사용자는 state(`state.db`)를 직접 수정하지 않음.** agent가 `mcp__omp-db__patch_state`로
   수정.
 - **사용자 원문은 quote block으로 보존됨.** 나중에 무엇을 왜 바꿨는지
   audit할 수 있도록.
@@ -506,12 +520,14 @@ contrarian 해결과 Round 2 refinement에서 locked됨.
 
 | 파일 | 역할 |
 |---|---|
-| `src/state/challenge-state.ts` | Zod schema 정의 (`ChallengeState`) |
-| `src/state/io.ts` | `loadChallengeState`, `saveChallengeState`, `initializeOmpDir` |
+| `src/state/challenge-state.ts` | Zod schema 정의 (`ChallengeState`) — DB mapper 가 이 schema 로 row 재조립 |
+| `src/state/io.ts` | `initializeOmpDir` / `getStatePaths` (state/candidate file IO 는 T22 제거) |
 | `src/state/journal.ts` | `appendJournalSection`, `initializeJournal`, `appendUserCorrection` |
 | `src/state/layout.ts` | 경로 헬퍼 (`resolveOmpDir`, `resolveArtifactsDir`, 등) |
-| `src/state/constants.ts` | `.omp`, `state.json`, `journal.md`, schema version |
-| `src/loader/load-challenge-folder.ts` | T03 — challenge 폴더 validate + initialize |
-| `src/envsetup/run-envsetup.ts` | T04 — docker build + libc 추출 + patchelf 파이프라인 |
+| `src/state/constants.ts` | `.omp`, `journal.md`, schema version |
+| `src/db/` | Drizzle schema (10 table) + migration runner + `openDb` (bun:sqlite, WAL). `state.db` |
+| `src/db-mcp/` | DB MCP server `omp-db` — `server.ts` (11 tool) + `mapper.ts` (table↔nested) + `acl.ts` (Layer 2) |
+| `src/loader/load-challenge-folder.ts` | challenge 폴더 validate + `.omp/` initialize (non-DB, T20) |
+| `src/envsetup/` | docker build + libc 추출 + patchelf — omp-setup atomic tool 이 wrap |
 
 다음 문서에서 **agent가 사용하는 tool 목록**을 다룹니다 → [tools.md](tools.md).
