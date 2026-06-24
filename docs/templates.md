@@ -275,7 +275,7 @@ Reverser가 `reverser-research.md`를 생성하는 full flow:
     "(VERIFICATION FAILED — STRUCTURAL ISSUES REMAIN)" to artifact header,
     record violations in journal, continue (do not block indefinitely).
 
-7. Agent moves to next step (KO report or omp_patch_state).
+7. Agent moves to next step (KO report or mcp__omp-db__patch_state).
 ```
 
 Step 5~6의 retry loop가 핵심 안전망입니다. LLM이 쉽게 놓치는 failure
