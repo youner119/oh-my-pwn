@@ -138,7 +138,8 @@ bun build src/plugin.ts \
   --external zod
 ```
 
-결과: `dist/plugin.js` (단일 파일, 현재 ~130KB).
+결과: `dist/plugin.js` (단일 파일, 현재 ~405KB). 별도 `bun run build:db-mcp` →
+`dist/db-mcp.js` (~55KB, DB MCP server `omp-db` + migrations 복사).
 
 ### 전체 빌드 (플러그인 + CLI reserved)
 
@@ -310,54 +311,59 @@ oh-my-pwn/
 │   ├── index.ts                  ← library re-exports
 │   ├── agents/
 │   │   ├── types.ts              ← AgentConfig, AgentFactory 타입
-│   │   ├── definitions.ts        ← ompAgentConfigs registry (DEFAULT_MODEL)
+│   │   ├── definitions.ts        ← ompAgentConfigs registry (11 agents, CLAUDE_MODEL/GPT_MODEL 차등)
 │   │   ├── omp-orchestrator.ts   ← Orchestrator factory + prompt
+│   │   ├── omp-setup.ts          ← Setup factory + prompt (envsetup Phase 0-6)
 │   │   ├── omp-reverser.ts       ← Reverser factory + prompt
-│   │   ├── omp-vulnhunter.ts    ← VulnHunter factory + prompt (T10)
-│   │   ├── omp-strategist.ts    ← StrategyAgent factory + prompt (T14)
-│   │   ├── omp-exploiter.ts     ← Exploiter factory + prompt (T16)
+│   │   ├── omp-vulnhunter.ts     ← VulnHunter factory + prompt
+│   │   ├── omp-strategist.ts     ← StrategyAgent factory + prompt
+│   │   ├── omp-exploiter-mode-{0,1,2,9}.ts (+ mode-{1,2}-gpt.ts)  ← Exploiter (mode별 분화)
 │   │   └── *.test.ts
-│   ├── tools/
-│   │   ├── index.ts              ← 10 tool re-exports
+│   ├── tools/                    ← plugin tool 12개 구현
+│   │   ├── index.ts              ← tool re-exports
 │   │   ├── omp-load-challenge.ts
-│   │   ├── omp-run-envsetup.ts
-│   │   ├── omp-read-state.ts
-│   │   ├── omp-patch-state.ts
 │   │   ├── omp-append-journal.ts
 │   │   ├── omp-get-template.ts
-│   │   └── omp-verify-template-output.ts
+│   │   ├── omp-verify-template-output.ts
+│   │   └── omp-setup-{docker-build,extract-file,patch-elf,verify-runtime}.ts
+│   ├── db/                       ← Drizzle schema + migration (repo-root state.db)
+│   │   ├── schema.ts             ← 10 table (challenge_id 키)
+│   │   ├── index.ts              ← openDb (bun:sqlite, WAL) + migrate
+│   │   └── migrations/
+│   ├── db-mcp/                   ← 별개 DB MCP server omp-db (stdio, mcp__omp-db__*)
+│   │   ├── server.ts             ← 11 tool (state/candidate/challenge)
+│   │   ├── mapper.ts             ← table ↔ nested JSON
+│   │   ├── acl.ts                ← ACL Layer 2 (agent_id allowlist)
+│   │   └── index.ts              ← entry (OMP_DB_PATH fail-fast)
 │   ├── templates/
 │   │   ├── index.ts              ← template registry
 │   │   ├── reverser-research-en.ts
 │   │   └── reverser-research-ko.ts
-│   ├── state/                    ← T02 — ChallengeState 영속 layer
+│   ├── state/                    ← ChallengeState schema + journal (state/candidate IO 는 DB)
 │   │   ├── constants.ts
 │   │   ├── layout.ts             ← 경로 헬퍼
-│   │   ├── challenge-state.ts    ← Zod schema
-│   │   ├── io.ts                 ← load/save state
+│   │   ├── challenge-state.ts    ← Zod schema (DB mapper 가 재조립)
+│   │   ├── io.ts                 ← initializeOmpDir / getStatePaths
 │   │   ├── journal.ts            ← append-only journal
 │   │   └── *.test.ts
-│   ├── loader/                   ← T03 — challenge folder loader
+│   ├── loader/                   ← challenge folder loader
 │   │   ├── challenge-load-error.ts
 │   │   ├── binary-detect.ts
 │   │   ├── load-challenge-folder.ts
 │   │   └── *.test.ts
-│   ├── envsetup/                 ← T04 — deterministic env 파이프라인
+│   ├── envsetup/                 ← deterministic env 라이브러리 (omp-setup atomic 이 wrap)
 │   │   ├── envsetup-error.ts
 │   │   ├── docker-runner.ts
 │   │   ├── docker-build.ts
-│   │   ├── docker-extract.ts
-│   │   ├── dockerfile-parse.ts
-│   │   ├── elf-mitigations.ts
-│   │   ├── glibc-detect.ts
 │   │   ├── patch-elf.ts
-│   │   ├── run-envsetup.ts       ← high-level entry
 │   │   └── *.test.ts
-│   ├── orchestration/            ← (계획) 병렬 인프라 (OmO 포팅)
-│   │   ├── task-tool.ts          ← delegate-task tool (병렬 agent spawn)
+│   ├── orchestration/            ← 병렬 인프라 (4-tool subagent surface)
+│   │   ├── task-tool.ts          ← omp_task_* 4-tool surface
 │   │   ├── background-manager.ts ← session polling + completion notification
 │   │   ├── concurrency.ts        ← 모델별 동시 실행 제한
-│   │   └── container-manager.ts  ← pwno-mcp Docker container lifecycle
+│   │   ├── agent-resolver.ts     ← category alias → agent
+│   │   ├── agent-tool-restrictions.ts  ← ACL Layer 1 (surface 최소화)
+│   │   └── event-log.ts          ← per-instance events log (TUI sidebar)
 │   ├── llm/                      ← (reserved, 현재 비어 있음)
 │   └── cli/                      ← (reserved, CLI mode future)
 ├── dist/
