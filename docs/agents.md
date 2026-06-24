@@ -51,34 +51,40 @@ export function createOmpOrchestratorAgent(model: string): AgentConfig {
 정의합니다:
 
 ```ts
-const DEFAULT_MODEL = "openai/gpt-5.5"
+const CLAUDE_MODEL = "anthropic/claude-opus-4-8"   // 분석/추론 agent
+const GPT_MODEL = "openai/gpt-5.5"                  // setup / exploiter
 
 export const ompAgentConfigs: Record<string, AgentConfig> = {
-  "omp-orchestrator": createOmpOrchestratorAgent(DEFAULT_MODEL),
-  "omp-reverser": createOmpReverserAgent(DEFAULT_MODEL),
-  // 추�� 추가 (3-agent exploit pipeline):
-  // "omp-vulnhunter": createOmpVulnhunterAgent(DEFAULT_MODEL),
-  // "omp-strategist": createOmpStrategistAgent(DEFAULT_MODEL),
-  // "omp-exploiter": createOmpExploiterAgent(DEFAULT_MODEL),
+  "omp-orchestrator": createOmpOrchestratorAgent(CLAUDE_MODEL),
+  "omp-setup": createOmpSetupAgent(GPT_MODEL),
+  "omp-reverser": createOmpReverserAgent(CLAUDE_MODEL),
+  "omp-vulnhunter": createOmpVulnhunterAgent(CLAUDE_MODEL),
+  "omp-strategist": createOmpStrategistAgent(CLAUDE_MODEL),
+  "omp-exploiter-mode-1": createOmpExploiterMode1Agent(GPT_MODEL),
+  "omp-exploiter-mode-2": createOmpExploiterMode2Agent(GPT_MODEL),
+  "omp-exploiter-mode-0": createOmpExploiterMode0Agent(GPT_MODEL),
+  "omp-exploiter-mode-9": createOmpExploiterMode9Agent(GPT_MODEL),
+  "omp-exploiter-mode-1-gpt": createOmpExploiterMode1GptAgent(GPT_MODEL),
+  "omp-exploiter-mode-2-gpt": createOmpExploiterMode2GptAgent(GPT_MODEL),
 }
 ```
 
 이 map은 `plugin.ts`의 `config` hook에서 `Object.assign(cfg.agent, ompAgentConfigs)`로
-opencode config에 주입됩니다. 결과적으로 opencode TUI agent picker에
-`omp-orchestrator`, `omp-reverser`가 나타납니다.
+opencode config에 주입됩니다 (총 11 agents). orchestrator / setup / reverser 가
+TUI agent picker 에 나타나고 (mode: all), VH / SA / exploiter 는 subagent 전용
+(orchestrator 가 spawn).
 
-### 기본 모델
+### 모델 — 분석/추론 vs 구현 차등
 
-현재 기본값은 `openai/gpt-5.5`. 이유:
-- OmP는 JSON 스키마 정확도가 중요 (state patch, BN MCP 호출 등) — GPT-5
-  계열은 structured output에 강함
-- Claude Opus는 창의적 판단에 좋지만 script/tool 호출 정밀도는 GPT가 비등
-- 사용자가 TUI에서 per-session model 변경 가능하므로 기본값은 "안정적"인
-  것으로 선정
+두 모델을 agent 성격에 따라 차등 배정:
+- **`CLAUDE_MODEL` (`anthropic/claude-opus-4-8`)** — orchestrator / reverser /
+  vulnhunter / strategist. semantic 분석, 취약점 추론, 전략 판단.
+- **`GPT_MODEL` (`openai/gpt-5.5`)** — setup / exploiter (mode-0/1/2/9 +
+  mode-1/2-gpt). envsetup atomic 흐름 + pwntools driver — structured tool 호출 정밀도.
 
-향후 per-model prompt variant (`default.ts` / `gpt.ts` / `gemini.ts`)를
-도입하면 agent factory가 model에 따라 다른 prompt 버전을 반환할 수 있게
-확장 예정 (OmO 패턴). 현재는 단일 variant.
+사용자가 TUI에서 per-session model 변경 가능. reasoning effort 는 `OMP_REASONING_EFFORT`
+env (`chat.params` hook) 로 조정. 향후 per-model prompt variant (`default.ts` /
+`gpt.ts`) 확장 가능 (OmO 패턴) — 현재 mode-1/2 와 mode-1/2-gpt 가 그 variant 축.
 
 ---
 
@@ -92,17 +98,13 @@ opencode config에 주입됩니다. 결과적으로 opencode TUI agent picker에
 | `subagent` | 다른 agent가 delegation으로만 호출하는 내부 agent |
 | `all` | 양쪽 다 가능 (디버깅용) |
 
-**현재 상태 (2026-04-17):**
-- `omp-orchestrator`: `mode: "all"`
-- `omp-reverser`: `mode: "all"`
-- `omp-vulnhunter`: `mode: "all"` (T10)
-- `omp-strategist`: `mode: "all"` (T14)
-- `omp-exploiter`: `mode: "all"` (T16)
+**현재 상태:**
+- `omp-orchestrator` / `omp-setup` / `omp-reverser`: `mode: "all"` (디버깅용 — TUI picker 노출)
+- `omp-vulnhunter` / `omp-strategist` / `omp-exploiter-mode-{0,1,2,9}` (+ `mode-{1,2}-gpt`): subagent 전용 (orchestrator 가 spawn)
 
 **향후 운영 모드:**
 - `omp-orchestrator` → `primary` (사용자 진입점)
-- `omp-reverser` → `subagent` (orchestrator가 delegate)
-- 나머지 future agents도 `subagent`
+- 나머지 → `subagent` (orchestrator가 delegate)
 
 디버깅 단계에서는 양쪽 agent 전부 사용자가 직접 띄울 수 있게 `"all"`로
 둡니다. 운영 전환 시점에 `definitions.ts`에서 mode만 바꾸면 됨.
@@ -121,7 +123,7 @@ correction을 받아 state를 고치고 재계획.
 **병렬 실행 단계별 역할 (새 설계):**
 - **Phase 1:** VH ensemble을 병렬로 spawn (각 VH가 독립 관점으로 분석) → 모든 VH 완료 후 결과 merge/dedup → candidate list 확정
 - **Phase 2:** candidate별로 SA+Exploiter 쌍을 병렬로 spawn (SA가 Exploiter를 sub-agent로 spawn) → 각 쌍이 독립 실행
-- **Phase 3:** 모든 결과 수집 → `omp_patch_state` 호출 (sole writer). 성공 candidate 있으면 파생 primitive 탐색용 VH 2차 분석 가능. Exploiter의 부수 발견(새 leak/heap primitive) → 새 candidate로 등록 후 Phase 2 재진입
+- **Phase 3:** 모든 결과 수집 → `mcp__omp-db__patch_state` 호출 (sole writer). 성공 candidate 있으면 파생 primitive 탐색용 VH 2차 분석 가능. Exploiter의 부수 발견(새 leak/heap primitive) → 새 candidate로 등록 후 Phase 2 재진입
 - **Phase 4:** flag/shell 획득 → SUCCESS. 전체 소진 + cascading 없음 → 사용자 handoff. Budget 초과 → 사용자 handoff.
 
 > **인프라 노트:** 병렬 spawn은 OmO의 `task` tool + BackgroundManager + ConcurrencyManager 인프라 포팅 필요. 현재 미구현. 세부 사항은 아래 "병렬 실행 인프라" 섹션 참조.
@@ -134,8 +136,8 @@ correction을 받아 state를 고치고 재계획.
 
 **Tool 사용:**
 - `omp_load_challenge` (fresh challenge 첫 호출)
-- `omp_read_state` (매 phase 시작)
-- `omp_patch_state` (Phase 1+ 결과 기록 — sole writer. Phase 0 setup 동안에는 omp-setup agent 가 직접 쓰는 D1 relaxation)
+- `mcp__omp-db__read_state` (매 phase 시작)
+- `mcp__omp-db__patch_state` (Phase 1+ 결과 기록 — sole writer. Phase 0 setup 동안에는 omp-setup agent 가 직접 쓰는 D1 relaxation)
 - `omp_append_journal` (user correction 기록 외)
 - `omp_task_launch` / `_wait_all` / `_wait_any` / `_cancel` (sub-agent 인프라)
 
@@ -174,13 +176,14 @@ BN MCP를 통해 함수/변수 rename, inline comment 주입, 타입 refinement
 port 9009에 실행 중이어야 동작. binary_ninja_mcp v2.0.0 (multi-session 모델)
 이후 모든 MCP tool 이 **`view_id` 필수** — Reverser 가 step 0 에서
 `list_view` 박은 후 `create_view(filepath=state.binary_path,
-view_id=basename(state.challenge_dir))` 박음. 그 후 모든 호출에 같은
+view_id=basename(challenge_dir))` 박음 (challenge_dir 은 `read_challenge(challenge_id)`
+로 회수). 그 후 모든 호출에 같은
 view_id forward. BN 은 `.bndb` database 를 자동 저장해서 사용자가 GUI 에서
 확인 가능. delete_view 는 호출 안 함 — 재실행 시 기존 view 재사용 + 사용자
 GUI 검토 영역 위해 유지.
 
 **Tool 사용:**
-- `omp_read_state`, `omp_patch_state`, `omp_append_journal`
+- `mcp__omp-db__read_state`, `mcp__omp-db__patch_state`, `omp_append_journal`
 - `omp_get_template` — research report 템플릿 로드
 - `omp_verify_template_output` — 템플릿 작성물 구조 검증
 - BN MCP view lifecycle: `create_view`, `list_view`, `delete_view`
@@ -213,7 +216,7 @@ Orchestrator
   │      ├─ VH-2 (관점 B) ──┼→ Orchestrator merge/dedup → candidate list
   │      └─ VH-N (관점 N) ──┘
   │
-  ├─── Phase 2: Iterative Rounds (반복 루프, state.json = blackboard)
+  ├─── Phase 2: Iterative Rounds (반복 루프, state.db = blackboard)
   │      Round 1:
   │        ├─ SA-1 (VERIFY candidate A) → Exploiter-1 (session_id=1)
   │        ├─ SA-2 (VERIFY candidate B) → Exploiter-2 (session_id=2)
@@ -243,7 +246,7 @@ Orchestrator
 - **Ensemble consensus:** VulnHunter는 ensemble 병렬로 분석, Orchestrator가 merge/dedup
 - **Sole writer:** Orchestrator만 state를 쓰고 SA/Exploiter는 결과 반환만
 - **Single container + session_id:** pwno-mcp 1개 container, Exploiter마다 다른 session_id로 격리
-- **Shared blackboard:** state.json의 poc_script_path / gives / needs가 라운드 간 지식 이전 수단
+- **Shared blackboard:** state.db의 poc_script_path / gives / needs가 라운드 간 지식 이전 수단
 - **PoC code as knowledge transfer:** Leak 값 저장 안 함 (ASLR). Leak 획득 코드를 합성.
 - **Early-exit:** 임의 SA가 flag 획득 시 나머지 SA 즉시 취소
 
@@ -259,7 +262,7 @@ Orchestrator
   `knowledge/techniques/index.md`를 스캔해서 놓친 패턴을 탐색. 관심
   technique은 개별 상세 MD (e.g., `stack_bof.md`)를 읽어 확인. **Tool이나
   loader 없이 file read로 직접 소비.**
-- **출력:** candidate list를 Orchestrator에 반환 (state 직접 기록 금지 — Orchestrator가 merge/dedup 후 `omp_patch_state` 호출).
+- **출력:** candidate list를 Orchestrator에 반환 (state 직접 기록 금지 — Orchestrator가 merge/dedup 후 `mcp__omp-db__patch_state` 호출).
 
 ### omp-strategist (T14) ✅ — StrategyAgent
 
@@ -268,17 +271,23 @@ Orchestrator
   식의 incremental proof 계획을 수립.
 - **두 가지 task type (Orchestrator가 지정):**
   - **VERIFY:** 단일 primitive를 증명. 하나의 PoC script 작성 + Exploiter로 실행. 성공 시 `poc_script_path` + `gives` 반환. 하나의 SA invocation = 하나의 primitive.
-  - **COMBINE:** 이미 verified된 primitive들을 합산. `omp_read_state`로 blackboard를 읽어 source PoC scripts를 파악하고, leak 획득 **로직(코드)**를 합성. **단일 `io = process()` 연결**로 전체 exploit 실행 (multi-connection 금지 — ASLR).
+  - **COMBINE:** 이미 verified된 primitive들을 합산. `mcp__omp-db__read_state`로 blackboard를 읽어 source PoC scripts를 파악하고, leak 획득 **로직(코드)**를 합성. **단일 `io = process()` 연결**로 전체 exploit 실행 (multi-connection 금지 — ASLR).
 - **Candidate별 병렬 실행:** Orchestrator가 각 라운드에 SA들을 병렬로 spawn. 각 SA는 자기 task에 집중.
 - **SA가 Exploiter spawn:** SA는 자기 plan을 실행할 Exploiter를 직접 sub-agent로 spawn (Orchestrator가 아닌 SA가 부모). Exploiter의 실행 결과를 직접 수집해서 retry 여부 결정.
 - **Retry logic:** Exploiter 실패 시 결과(디버깅 정보, 메모리 상태)를 받아
   plan을 수정. Max N회 재시도 후 Orchestrator에 실패 보고.
 - **TechniqueKB 활용:** `index.md`의 `chain` 필드로 "이 primitive 다음에
   뭘 할 수 있는지" 참조. 상세 MD의 "typical step plan" 섹션 참고.
-- **State 직접 쓰기 제거:** plan 결과를 Orchestrator에 반환. `omp_patch_state` 호출 금지 — state 기록은 Orchestrator(sole writer)가 담당.
+- **State 직접 쓰기 제거:** plan 결과를 Orchestrator에 반환. `mcp__omp-db__patch_state` 호출 금지 — state 기록은 Orchestrator(sole writer)가 담당.
 
-### omp-exploiter (T16) ✅ — Exploiter (+ Verifier 통합)
+### omp-exploiter-mode-{0,1,2,9} (+ mode-{1,2}-gpt) — Exploiter (mode별 분화, Verifier 통합)
 
+- **mode 분화:** 단일 `omp-exploiter` 폐기 → orchestrator 가 SA 의 `recommended_mode` 로 dispatch:
+  - `mode-1` — host pwntools, stdout-only evidence
+  - `mode-2` — pwno-mcp driver + explicit GDB attach (정밀 메모리 write 안착 검증)
+  - `mode-0` — autonomous fallback (unsupported challenge_type — kernel / browser 등)
+  - `mode-9` — user-supplied prompt forwarded
+  - `mode-1-gpt` / `mode-2-gpt` — model / prompt variant 축
 - **역할:** StrategyAgent의 step을 받아 **pwntools script 작성 + 실행
   + pwno-mcp로 관찰 + 결과 검증**. 원래 별도 agent이던 Verifier가 여기 통합됨.
 - **Spawn 관계:** SA의 sub-agent로 spawn됨 (Orchestrator가 아닌 SA가 부모). SA에서 plan steps를 받아 실행.
@@ -286,7 +295,7 @@ Orchestrator
 - **Incremental proof 관찰:** pwno-mcp를 통해 gdb breakpoint 설정, 메모리/
   레지스터/heap 상태를 읽어 step의 성공/실패를 판정. 예: "ret에 0xdeadbeef를
   넣었는데 rip가 실제로 0xdeadbeef인지" 확인.
-- **State 직접 쓰기 제거:** 결과를 SA를 통해 Orchestrator에 반환. `omp_patch_state` 호출 금지. `omp_read_state`는 시작 시 context 파악용으로 허용.
+- **State 직접 쓰기 제거:** 결과를 SA를 통해 Orchestrator에 반환. `mcp__omp-db__patch_state` 호출 금지. `mcp__omp-db__read_state`는 시작 시 context 파악용으로 허용.
 - **결과 보고:** 성공 시 step passed → SA에 보고 (SA가 `poc_script_path` + `gives` 결과로 Orchestrator에 반환). 실패 시 observed state (레지스터, 메모리 덤프)를 포함한 상세 보고 → SA.
 - **Leak 값 저장 안 함:** libc_base, canary 등 런타임 주소는 ASLR로 실행마다 달라짐 → state에 저장하지 않음. 대신 leak을 **획득하는 코드**(PoC script)가 지식 단위. COMBINE SA가 source PoC를 읽어 단일 connection 안에서 합성.
 - **부수 발견 보고:** 예상 못한 leak / heap 상태 / 추가 primitive 발견 시 → 새 candidate로 SA를 통해 Orchestrator에 보고 (Orchestrator가 다음 라운드 cascading 재진입 결정).
@@ -354,37 +363,37 @@ Max depth = 3 (OmO 기본값). Orchestrator → SA → Exploiter.
 
 ### State 동시성 — Sole Writer 패턴 + Blackboard
 
-병렬 agent들이 동시에 `state.json` 또는 candidate detail 파일을 쓰면 충돌.
+병렬 agent들이 동시에 `state.db` 또는 candidate detail 파일을 쓰면 충돌.
 해결 (spec: `.omc/specs/state-split-vuln-candidates.md` D6):
 
-- **SA/Exploiter/VH 는 state 를 직접 쓰지 않음** — `omp_patch_state` /
-  `omp_create_candidate` / `omp_patch_candidate` / `omp_delete_candidate` 다
-  ACL-denied. `omp_read_state` + `omp_read_candidate` 로 읽기만.
+- **SA/Exploiter/VH 는 state 를 직접 쓰지 않음** — `mcp__omp-db__patch_state` /
+  `mcp__omp-db__create_candidate` / `mcp__omp-db__patch_candidate` / `mcp__omp-db__delete_candidate` 다
+  ACL-denied. `mcp__omp-db__read_state` + `mcp__omp-db__read_candidate` 로 읽기만.
 - **SA/Exploiter/VH 는 결과를 반환** — session return 의 structured JSON
   으로 `{candidate_id, status, primitive, gives, needs, poc_script_path,
   verification_blockers, …}` 전달.
 - **Orchestrator 만 write tool 호출** — sub-agent 결과 수집 후 분기:
   - *Summary fields only* (verification_result / description / has_poc /
-    counts / agent / combined_from) → `omp_patch_state({vuln_candidates:
+    counts / agent / combined_from) → `mcp__omp-db__patch_state({vuln_candidates:
     [{id, …summary}]})`
-  - *Detail fields* (or summary + detail together) → `omp_patch_candidate(
-    {id, patch: {summary?, detail?}})` — state.json row + detail file
-    atomic
+  - *Detail fields* (or summary + detail together) → `mcp__omp-db__patch_candidate(
+    {id, patch: {summary?, detail?}})` — summary row + detail array 한
+    transaction
   - *New candidate* (VH 의 produce / SA combine derived) →
-    `omp_create_candidate({candidate})`
-  - *Invalidate* → `omp_delete_candidate({id})`
+    `mcp__omp-db__create_candidate({candidate})`
+  - *Invalidate* → `mcp__omp-db__delete_candidate({id})`
 
-`omp_patch_state` 는 `patch.vuln_candidates[]` 의 *detail field* (rationale
+`mcp__omp-db__patch_state` 는 `patch.vuln_candidates[]` 의 *detail field* (rationale
 / verification_blockers / gives / needs / poc_script_path / location /
 libc_range / origin_type / derived_from / confidence) 박힘 시 `error:
 "vuln_candidates_detail_in_summary_patch"` 로 reject — 채널 분리 강제.
 
 **Blackboard 활용:** 각 라운드 후 Orchestrator 가 verified primitive 의
 summary (verification_result / has_poc / gives_count / needs_count /
-description) 를 state.json 에 기록, detail (poc_script_path / gives / needs
-/ combined_from / rationale / verification_blockers) 을
-`.omp/candidates/<id>.json` 에 기록. 다음 라운드 SA 는 `omp_read_state` 로
-summary array 를 읽어 전체 영역 파악, `omp_read_candidate(id)` 로 자기
+description) 를 `state.db` 의 summary row 에 기록, detail (poc_script_path /
+gives / needs / combined_from / rationale / verification_blockers) 을
+candidates detail array 에 기록. 다음 라운드 SA 는 `mcp__omp-db__read_state` 로
+summary array 를 읽어 전체 영역 파악, `mcp__omp-db__read_candidate(id)` 로 자기
 verify target 또는 combine source 의 detail 만 lazy load — agent prompt
 context 영역 크기 컨트롤.
 
@@ -422,13 +431,13 @@ LLM이 "VH 필요"를 인지해도 즉시 launch하지 않고 flag만 set, SA lo
 **Wait 루프 iteration 순서 (CRITICAL):**
 
 ```
-parse first result → omp_patch_state (record)
+parse first result → mcp__omp-db__patch_state (record)
                   → maybe omp_task_launch (extra SA / 그냥 둠)
                   → maybe set vh_pending = true
                   → omp_task_wait_any (next iteration)
 ```
 
-`record-then-launch` 순서가 핵심. SA는 자기 task 시작 시 `omp_read_state`로
+`record-then-launch` 순서가 핵심. SA는 자기 task 시작 시 `mcp__omp-db__read_state`로
 blackboard를 읽는데, launch 전에 record를 안 하면 새 SA가 outdated state
 보고 같은 primitive 중복 verify 가능. patch_state는 local file write ~수ms로
 빠르므로 latency penalty 무시 가능.
@@ -475,18 +484,18 @@ exploitation 언어 허용, Reverser는 금지).
 
 ### 3. State management 강제
 
-모든 OmP agent는 `state.json`과 `journal.md`를 **절대 직접 편집하지
+모든 OmP agent는 `state.db`과 `journal.md`를 **절대 직접 편집하지
 않음**. 대신 tool 경유:
 
 ```
 | Tool | When |
 |---|---|
-| omp_read_state      | Start of every session or stage |
-| omp_patch_state     | After completing any work |
+| mcp__omp-db__read_state      | Start of every session or stage |
+| mcp__omp-db__patch_state     | After completing any work |
 | omp_append_journal  | After every significant step |
 ```
 
-프롬프트에 "Never write state.json directly" 같은 금지 문구를 명시하고,
+프롬프트에 "Never write state.db directly" 같은 금지 문구를 명시하고,
 tool 사용 순서를 **required sequence**로 박아서 LLM이 빼먹지 않게.
 
 ### 4. Required sequence
@@ -498,13 +507,13 @@ tool 사용 순서를 **required sequence**로 박아서 LLM이 빼먹지 않게
 ## Required sequence
 
 0. BN binary setup (step 0: get_binary_status → load_binary if needed)
-1. omp_read_state(challenge_dir)
+1. mcp__omp-db__read_state(challenge_id)   // challenge_id 는 spawn 시 주입, read_challenge(id)로 dir 회수
 2. Check cache
 3. Check source-present mode
 4. Run analysis (steps below)
 5. Self-review (Pass A + B + C)
 6. Write artifact
-7. omp_patch_state(...)
+7. mcp__omp-db__patch_state(...)
 8. omp_append_journal(...)
 ```
 
@@ -518,7 +527,7 @@ tool 사용 순서를 **required sequence**로 박아서 LLM이 빼먹지 않게
 - decompile_function fails for specific function → skip it, note in journal,
   continue
 - BN MCP unreachable → stop, report
-- Any partial failure → still call omp_patch_state with partial results
+- Any partial failure → still call mcp__omp-db__patch_state with partial results
 ```
 
 ### 6. Key principles (맨 아래)
@@ -618,12 +627,13 @@ Agent가 "특정 형태의 markdown"을 작성해야 할 때, structure와 local
 | 파일 | 역할 |
 |---|---|
 | `src/agents/types.ts` | `AgentConfig`, `AgentFactory` 타입 |
-| `src/agents/definitions.ts` | `ompAgentConfigs` registry, 기본 모델 |
+| `src/agents/definitions.ts` | `ompAgentConfigs` registry (11 agents), `CLAUDE_MODEL` / `GPT_MODEL` 차등 |
 | `src/agents/omp-orchestrator.ts` | Orchestrator factory + prompt |
+| `src/agents/omp-setup.ts` | Setup factory + prompt (envsetup Phase 0-6) |
 | `src/agents/omp-reverser.ts` | Reverser factory + prompt |
-| `src/agents/omp-vulnhunter.ts` | VulnHunter factory + prompt (T10) |
-| `src/agents/omp-strategist.ts` | StrategyAgent factory + prompt (T14) |
-| `src/agents/omp-exploiter.ts` | Exploiter factory + prompt (T16, 가장 복잡) |
+| `src/agents/omp-vulnhunter.ts` | VulnHunter factory + prompt |
+| `src/agents/omp-strategist.ts` | StrategyAgent factory + prompt |
+| `src/agents/omp-exploiter-mode-{0,1,2,9}.ts` (+ `mode-{1,2}-gpt.ts`) | Exploiter factory + prompt (mode별 분화, 가장 복잡) |
 | `src/agents/*.test.ts` | Agent 단위 테스트 (프롬프트 핵심 문자열 검증) |
 
 다음 문서에서 **state와 artifact 레이아웃**을 다룹니다 →
