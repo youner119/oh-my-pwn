@@ -4,8 +4,9 @@
 
 CTF 챌린지의 binary 와 Dockerfile 한 쌍만 주면 envsetup → 역분석 → 취약점 헌팅
 → exploit 단계를 LLM agent 들이 자동으로 돌립니다. 사람은 언제든 prompt
-채널로 개입해서 교정 가능. 결과물은 `<challenge-dir>/.omp/` 안에
-`state.json`, `journal.md`, 역분석 보고서, PoC 스크립트로 누적됩니다.
+채널로 개입해서 교정 가능. 결과물은 repo-root `state.db` (ChallengeState,
+DB MCP) 와 `<challenge-dir>/.omp/` (`journal.md`, 역분석 보고서, PoC 스크립트)
+에 누적됩니다.
 
 > [!IMPORTANT]
 > Reverser agent 는 **Binary Ninja** GUI + BN MCP plugin 을 사용합니다.
@@ -48,9 +49,9 @@ exec zsh
 # 3. Binary Ninja GUI 실행 → Plugins → BN MCP 활성 → port 9009 listen 확인
 curl -sf http://localhost:9009/status
 
-# 4. (선택) pwno-mcp container — Exploiter Mode 2 (GDB inspection) 가 필요할 때
-#    fork build 가 prerequisite: cd ~/Tools/pwno-mcp && ./docker-build.local.sh
-docker run -d --name pwno-mcp pwno-mcp:latest
+# 4. (선택) pwno-mcp fork build — Exploiter Mode 2 (GDB inspection) 용.
+#    빌드만 해두면 opencode 가 stdio MCP 로 자동 spawn (수동 docker run 불필요).
+cd ~/Tools/pwno-mcp && ./docker-build.local.sh
 
 # 5. challenge 폴더 안에서 OmP 전용 opencode TUI 실행
 cd /path/to/challenge   # 안에 binary + Dockerfile 이 있어야 함
@@ -61,7 +62,7 @@ opencode agent picker 에서 `omp-orchestrator` 선택 → prompt 로 "challenge
 
 ## 한 번 돌릴 때의 흐름
 
-1. **Load** — `omp_load_challenge` 가 binary + Dockerfile 을 검증하고 `.omp/{state.json, journal.md}` 를 만든다.
+1. **Load** — `omp_load_challenge` 가 폴더를 검증하고 `.omp/` (journal/artifacts/logs/exploit) 를 만든다. binary/Dockerfile 식별은 omp-setup Phase 0, state row 는 db-mcp `register_challenge` 책무 (non-DB load).
 2. **Setup** — `omp-setup` agent 가 docker build, NEEDED libs 추출, patchelf, host/container runtime verify 까지 6 phase 를 진행. `setup_complete: true` 가 게이트.
 3. **Reverse** — `omp-reverser` agent 가 BN MCP 로 함수별 pseudocode + 의미 분석 + 구조체 타입 추론 → `reverser-analysis.md` + `reverser-research.{en,ko}.md` + `pseudocode/*.txt` 산출.
 4. **VulnHunt (ensemble)** — VulnHunter N개 instance 가 병렬로 후보를 뽑고 orchestrator 가 dedup → `vuln_candidates[]`.
@@ -70,9 +71,10 @@ opencode agent picker 에서 `omp-orchestrator` 선택 → prompt 로 "challenge
 
 ## 산출물 (`<challenge-dir>/.omp/`)
 
+> state / vuln_candidates 는 repo-root `state.db` (DB MCP `omp-db`) — 아래 `.omp/` 는 산출물 전용
+
 ```
 .omp/
-├── state.json                # ChallengeState — 모든 agent 의 single source of truth
 ├── journal.md                # append-only 진행 보고
 ├── artifacts/
 │   ├── prob                  # patched binary
@@ -93,13 +95,14 @@ opencode agent picker 에서 `omp-orchestrator` 선택 → prompt 로 "challenge
 >
 > ![omp TUI](assets/screenshots/omp-tui.png)
 
-## 현재 상태 (2026-05-28)
+## 현재 상태 (2026-06-24)
 
 - ✅ **BN 전환** 완료 — Ghidra → Binary Ninja MCP. 모든 reverser flow 가 BN HLIL 기반.
 - ✅ **병렬 orchestration** 완료 (2026-05-18 cutover). 4-tool subagent surface (`omp_task_launch` / `wait_all` / `wait_any` / `cancel`) 사용.
 - ✅ **envsetup 재설계** 완료 (2026-05-20). `omp-setup` agent 가 classification + envsetup + stage + pwno sanity + runtime verify 전 phase 를 담당. Legacy `runEnvSetup` 라이브러리 삭제.
 - ✅ **Mode 0/9 분리** (2026-05-23) — Exploiter 4 mode agent (mode-1 host pwntools / mode-2 pwno-mcp GDB / mode-0 자율 fallback / mode-9 사용자 prompt forward). kernel-pwn / arm-userland / multi-binary / browser / library-only / source-only 영역 = Mode 0 best-effort 자율.
-- ✅ **VulnCandidate state split** (2026-05-24) — summary array (state.json) + detail per-file (`.omp/candidates/<id>.json`). LLM context 영역 축소 + sub-agent ACL 강화 (write tool Orchestrator sole).
+- ✅ **VulnCandidate state split** (2026-05-24) — summary array + detail 분리 (이후 database-mcp cutover 로 `state.db` 의 summary row + detail array FK 로 이전). LLM context 영역 축소 + sub-agent ACL 강화 (write tool Orchestrator sole).
+- ✅ **database-mcp cutover Phase 1** (2026-06) — state / candidate / challenge 가 글로벌 single SQLite `state.db` + 별개 DB MCP server `omp-db` (11 tool, Drizzle ORM) + ACL 2 layer 로 이전. 옛 `.omp/state.json` + per-file candidate 폐기. 사용자 대회 실측 검증.
 - ✅ **contract-load-detect-split** (2026-05-24) — `omp_load_challenge` = 폴더 경로 전용 부트스트랩. binary / dockerfile / source 식별은 omp-setup Phase 0 (Detect) 책임.
 - ✅ **Rev 8 multi-omp events.log isolation** (2026-05-24) — per-instance event log + retention prune. 한 머신에서 여러 omp 인스턴스 동시 실행 시 instance_id 격리.
 - ✅ **T18 실측 통과** — `test_challenge/Object_Object` (Ubuntu 24.04 / glibc 2.39 / NEEDED 5) 4차 통과.
@@ -118,7 +121,7 @@ opencode agent picker 에서 `omp-orchestrator` 선택 → prompt 로 "challenge
 - [docs/architecture.md](docs/architecture.md) — plugin 구조, config/tool hook, 빌드/배포
 - [docs/agents.md](docs/agents.md) — agent 설계, factory 패턴, prompt 구성 원칙
 - [docs/state-and-io.md](docs/state-and-io.md) — `.omp/` 레이아웃, 상태 관리, human intervention
-- [docs/tools.md](docs/tools.md) — `omp_*` tool 14개 (load/state·io 6 + subagent surface 4 + omp-setup atomic 4)
+- [docs/tools.md](docs/tools.md) — plugin tool 12개 + DB MCP `omp-db` tool 11개
 - [docs/templates.md](docs/templates.md) — 재사용 가능 템플릿 시스템
 - [docs/development.md](docs/development.md) — 개발 환경 / 빌드 / 테스트 workflow
 
