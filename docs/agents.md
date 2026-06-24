@@ -536,7 +536,7 @@ exploitation 언어 허용, Reverser는 금지).
 
 ### 3. State management 강제
 
-모든 OmP agent는 `state.db`과 `journal.md`를 **절대 직접 편집하지
+모든 OmP agent는 `state.db`와 `journal.md`를 **절대 직접 편집하지
 않음**. 대신 tool 경유:
 
 ```
