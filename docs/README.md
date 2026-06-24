@@ -32,7 +32,7 @@ agent에게 말로).
   SA가 직접 spawn. 단일 pwno-mcp container, session_id로 격리.
 
 Phase 2는 **반복 라운드 모델**: 각 라운드에서 SA들이 병렬로 VERIFY/COMBINE 실행.
-`state.json`이 shared blackboard — verified primitives (poc_script_path, gives, needs)가
+`state.db`가 shared blackboard — verified primitives (poc_script_path, gives, needs)가
 라운드 간에 누적되며 다음 라운드 SA가 참조. Orchestrator가 임의 SA의 flag 획득 시
 나머지 즉시 취소 (early-exit). **Leak 값은 저장 안 함** (ASLR으로 무의미) —
 PoC code가 knowledge transfer 메커니즘.
@@ -59,7 +59,7 @@ PoC code가 knowledge transfer 메커니즘.
   병렬 분석하여 합의 기반 candidate list 생성. StrategyAgent는 반복 라운드
   모델로 병렬 실행. Orchestrator만 state를 쓰는 sole-writer 패턴으로 동시
   쓰기 충돌 회피.
-- **Shared blackboard.** `state.json`이 라운드 간 공유 blackboard.
+- **Shared blackboard.** `state.db`가 라운드 간 공유 blackboard.
   verified primitive의 `poc_script_path` / `gives` / `needs` 필드가
   다음 라운드 SA에게 노출되어 COMBINE 전략 수립에 활용.
 - **PoC code as knowledge transfer.** Leak 값(libc_base, canary 등)은
@@ -136,20 +136,21 @@ omp
 2. **[agents.md](agents.md)** — 각 agent의 역할과 프롬프트 구성 원칙.
    factory pattern, `AgentConfig` 타입, 현재/미래 agent 목록,
    cross-cutting vs template-local 규칙 분리.
-3. **[state-and-io.md](state-and-io.md)** — `<challenge-dir>/.omp/` 레이아웃.
-   `state.json` (ChallengeState Zod schema), `journal.md` (append-only),
-   `artifacts/` (reverser-analysis, research reports, libc/ld, patched
-   binary). 상태 mutation 원칙.
-4. **[tools.md](tools.md)** — 현재 18개 `omp_*` tool의 역할과 시그니처.
-   왜 tool로 뽑았는지 (deterministic ops는 LLM이 아닌 library).
+3. **[state-and-io.md](state-and-io.md)** — state/IO 레이아웃. repo-root
+   `state.db` (ChallengeState, DB MCP) + `<challenge-dir>/.omp/`
+   (`journal.md` append-only, `artifacts/` reverser-analysis / research
+   reports / libc·ld / patched binary). 상태 mutation 원칙 + sole writer.
+4. **[tools.md](tools.md)** — plugin tool 12개 + DB MCP `omp-db` tool 11개의
+   역할과 시그니처. 왜 tool로 뽑았는지 (deterministic ops는 LLM이 아닌 library).
 5. **[templates.md](templates.md)** — 템플릿 시스템. Reverser research
    report가 어떻게 template 파일 + tool을 통해 생성되는지. 향후
    VulnHunter/Exploiter도 같은 패턴 재사용 예정.
 6. **[development.md](development.md)** — 개발 환경 전제, 빌드,
    테스트, 코드 변경 후 workflow, 프로젝트 디렉토리 구조.
-7. **[database.md](database.md)** — Phase 1 DB 영역 (state/candidate →
-   SQLite + 별개 stdio MCP server + Drizzle ORM + 2 layer ACL).
-   현 `state-and-io.md` 영역의 미래 대체. Spec:
+7. **[database.md](database.md)** — DB 영역 (state/candidate/challenge →
+   글로벌 single SQLite `state.db` + 별개 stdio MCP server `omp-db` +
+   Drizzle ORM + 2 layer ACL). **Phase 1 적용 완료** — `state-and-io.md`
+   의 state/candidate 저장 매체를 대체. Spec:
    `.omc/specs/deep-interview-database-mcp.md`.
 
 ### 심화 자료
