@@ -97,22 +97,18 @@ opencode agent picker 에서 `omp-orchestrator` 선택 → prompt 로 "challenge
 
 ## 현재 상태 (2026-06-24)
 
-- ✅ **BN 전환** 완료 — Ghidra → Binary Ninja MCP. 모든 reverser flow 가 BN HLIL 기반.
-- ✅ **병렬 orchestration** 완료 (2026-05-18 cutover). 4-tool subagent surface (`omp_task_launch` / `wait_all` / `wait_any` / `cancel`) 사용.
-- ✅ **envsetup 재설계** 완료 (2026-05-20). `omp-setup` agent 가 classification + envsetup + stage + pwno sanity + runtime verify 전 phase 를 담당. Legacy `runEnvSetup` 라이브러리 삭제.
-- ✅ **Mode 0/9 분리** (2026-05-23) — Exploiter 4 mode agent (mode-1 host pwntools / mode-2 pwno-mcp GDB / mode-0 자율 fallback / mode-9 사용자 prompt forward). kernel-pwn / arm-userland / multi-binary / browser / library-only / source-only 영역 = Mode 0 best-effort 자율.
-- ✅ **VulnCandidate state split** (2026-05-24) — summary array + detail 분리 (이후 database-mcp cutover 로 `state.db` 의 summary row + detail array FK 로 이전). LLM context 영역 축소 + sub-agent ACL 강화 (write tool Orchestrator sole).
+> 시간순. 모든 항목 구현 완료 — 일부는 single-challenge 검증까지만 (회귀 폭은 future work).
+
+- ✅ **BN 전환** — Ghidra → Binary Ninja MCP. 모든 reverser flow 가 BN HLIL 기반.
+- ✅ **병렬 orchestration** (2026-05-18 cutover) — 4-tool subagent surface (`omp_task_launch` / `wait_all` / `wait_any` / `cancel`).
+- ✅ **envsetup 재설계** (2026-05-20) — `omp-setup` agent 가 classification + envsetup + stage + runtime verify 전 phase 담당. Legacy `runEnvSetup` 라이브러리 삭제.
+- ✅ **Exploiter Mode 2 wedge resolved** (2026-05-21) — pwndbg debuginfod default on + URL 미설정 → attach 시 build-id fetch 가 GDB MI timeout 초과가 원인. Fix = pwno-mcp fork (`youner119/pwno-mcp`) `3794c4f`(debuginfod off) + `78219f7`(URL chain) + `bb7ebf9`(cache chown). opencode 가 stdio 로 자동 spawn. 상세: `.omc/research/pwno-mcp-debugging-investigation.md`.
+- ✅ **Mode 0/9 분리** (2026-05-23) — Exploiter 4 mode agent (mode-1 host pwntools / mode-2 pwno-mcp GDB / mode-0 자율 fallback / mode-9 사용자 prompt forward). kernel-pwn / arm-userland / multi-binary / browser / library-only / source-only = Mode 0 best-effort 자율 (sample 회귀 미진행).
+- ✅ **VulnCandidate state split** (2026-05-24) — summary array + detail 분리 (이후 database-mcp cutover 로 `state.db` 의 summary row + detail array FK 로 이전). LLM context 축소 + sub-agent ACL 강화.
+- ✅ **contract-load-detect-split** (2026-05-24) — `omp_load_challenge` = 폴더 부트스트랩. binary / dockerfile / source 식별은 omp-setup Phase 0 (Detect) 책임.
+- ✅ **Rev 8 multi-omp events.log isolation** (2026-05-24) — per-instance event log + retention prune. (단 pwno-mcp container + BN MCP port 9009 는 한 머신 한 instance — 다중 challenge 동시 실행은 backlog #6.)
+- ✅ **single-challenge 실측 통과** (2026-05) — `test_challenge/Object_Object` (Ubuntu 24.04 / glibc 2.39 / NEEDED 5) envsetup→exploit 4차 통과. 다른 binary 형태 / static / Mode 0 회귀는 future work.
 - ✅ **database-mcp cutover Phase 1** (2026-06) — state / candidate / challenge 가 글로벌 single SQLite `state.db` + 별개 DB MCP server `omp-db` (11 tool, Drizzle ORM) + ACL 2 layer 로 이전. 옛 `.omp/state.json` + per-file candidate 폐기. 사용자 대회 실측 검증.
-- ✅ **contract-load-detect-split** (2026-05-24) — `omp_load_challenge` = 폴더 경로 전용 부트스트랩. binary / dockerfile / source 식별은 omp-setup Phase 0 (Detect) 책임.
-- ✅ **Rev 8 multi-omp events.log isolation** (2026-05-24) — per-instance event log + retention prune. 한 머신에서 여러 omp 인스턴스 동시 실행 시 instance_id 격리.
-- ✅ **T18 실측 통과** — `test_challenge/Object_Object` (Ubuntu 24.04 / glibc 2.39 / NEEDED 5) 4차 통과.
-
-### 알려진 한계
-
-- ✅ **Exploiter Mode 2 (pwno-mcp GDB inspection) wedge resolved (2026-05-21)** — 진짜 원인은 pwndbg debuginfod default on + URL 미설정 → attach 시 build-id fetch 가 GDB MI timeout 초과. Fix = fork (`youner119/pwno-mcp`) commit `3794c4f` (debuginfod off by default) + `78219f7` (URL chain) + `bb7ebf9` (cache dir chown). opencode 가 stdio 로 자동 spawn (이전 HTTP remote 영역 폐기). 상세: `.omc/research/pwno-mcp-debugging-investigation.md`.
-- ⚠️ **Mode 0 fallback (kernel-pwn / arm-userland / multi-binary / browser / library-only / source-only)** — Mode 0 Exploiter 가 자율 시도하지만 sample challenge 회귀 미진행. kind-specific knowledge files (`knowledge/ctf-pwn/<unsupported_kind>.md`) 도 lazy add 영역 (backlog graduate, T11-T16). 정합 보장 X.
-- ⚠️ **Multi-omp pwno-mcp / BN MCP port 단일** — Rev 8 events.log 는 instance 격리됐지만 pwno-mcp container (stdio 단일 + workspace mount) + BN MCP (port 9009 단일) 는 한 머신에 한 instance. 다중 challenge 동시 실행은 backlog #6.
-- ⚠️ **다른 챌린지 실측 미진행** — Object_Object 외 회귀 안 됨. NEEDED set / static / 다양한 binary 형태 / Mode 0 영역 재현은 future work.
 
 ## 문서
 
