@@ -121,21 +121,14 @@ config: async (cfg) => {
   (이전 HTTP remote `http://127.0.0.1:5500/mcp` 영역 폐기) + debuginfod
   wedge resolved (fork commit `3794c4f`).
 
-### 2. `tool` map — OmP 전용 tool 18개 등록
+### 2. `tool` map — OmP plugin tool 12개 등록 (+ 별개 DB MCP 11개)
 
 ```ts
 tool: {
-  omp_load_challenge: ompLoadChallengeTool,        // workspace_root 시드 포함
-  omp_read_state: ompReadStateTool,
-  omp_patch_state: ompPatchStateTool,              // vuln_candidates[] = summary-only
+  omp_load_challenge: ompLoadChallengeTool,        // workspace_root 시드 (non-DB, T20)
   omp_append_journal: ompAppendJournalTool,
   omp_get_template: ompGetTemplateTool,
   omp_verify_template_output: ompVerifyTemplateOutputTool,
-  // Candidate per-file (state split P3 2026-05-24):
-  omp_read_candidate: ompReadCandidateTool,        // all agents
-  omp_create_candidate: ompCreateCandidateTool,    // Orchestrator 전용 (ACL deny sub-agent)
-  omp_patch_candidate: ompPatchCandidateTool,      // Orchestrator 전용 (ACL deny sub-agent)
-  omp_delete_candidate: ompDeleteCandidateTool,    // Orchestrator 전용 (ACL deny sub-agent)
   // 4-tool 병렬 인프라 (2026-05-18 cutover):
   omp_task_launch: ompTaskLaunchTool,             // fire-and-forget sub-agent spawn → {task_id, session_id}
   omp_task_wait_all: ompTaskWaitAllTool,          // 모두 terminal까지 block, 입력 순서 results[]
@@ -149,12 +142,19 @@ tool: {
 }
 ```
 
+**state / candidate / challenge tool 은 plugin 이 아님** — database-mcp cutover
+(2026-06) 로 별개 DB MCP server `omp-db` (stdio) 의 `mcp__omp-db__*` 11 tool
+(read/patch_state + read/create/patch/delete_candidate + register/lookup/read/
+update/delete_challenge) 로 이전. 옛 plugin `omp_{read,patch}_state` /
+`omp_*_candidate` 6개 폐기. opencode 가 `opencode.json` 의 `mcp.omp-db` entry 로
+자동 spawn (`docs/database.md`).
+
 폐지된 legacy tool (T12-T14 — `omp_run_envsetup` / `omp_pwno_status` /
 `omp_stage_challenge`) 의 책임은 omp-setup agent (Phase 1-5) 가 흡수.
 
-이 tool들은 **session 레벨**로 등록됩니다 — 즉 모든 agent가 접근 가능.
-Per-agent tool 제한은 T18 Orchestrator 구현 시 `session.prompt tools`
-파라미터로 처리 예정 (현재는 freedom > safety).
+plugin tool 은 **session 레벨**로 등록됩니다. Per-agent tool 제한은 **ACL 2 layer**
+로 구현 — (L1) `agent-tool-restrictions.ts` 가 sub-agent 의 write tool surface
+제거 + (L2) `db-mcp/acl.ts` 의 `agent_id` allowlist server-side 강제.
 
 > **병렬 인프라 tool (계획 중):** OmO의 `delegate-task` tool 패턴을 포팅하여
 > Orchestrator가 병렬로 sub-agent를 spawn하는 `task` tool + background output
@@ -212,10 +212,10 @@ opencode (omp alias, XDG_CONFIG_HOME=~/.config/omp)
   ↓ file:// 로 dist/plugin.js 로드
   ↓ OmpPlugin() 호출
   ↓
-  ├── config hook → cfg.agent에 9 agent 주입 (orchestrator + setup + reverser + vulnhunter + strategist + exploiter-mode-{1,2,0,9})
-  │                 cfg.mcp에 binja MCP 등록 (pwno-mcp 는 opencode.json 정적 entry — opencode 가 stdio spawn)
+  ├── config hook → cfg.agent에 11 agent 주입 (orchestrator + setup + reverser + vulnhunter + strategist + exploiter-mode-{0,1,2,9} + mode-{1,2}-gpt)
+  │                 cfg.mcp에 binja MCP 등록 (pwno-mcp / omp-db 는 opencode.json 정적 entry — opencode 가 stdio spawn)
   │
-  └── tool map → 18개 omp_* tool을 session 레벨로 노출 (state IO 6 + candidate 4 + task 4 + omp_setup_* 4)
+  └── tool map → 12개 plugin omp_* tool을 session 레벨로 노출 (load + journal + template 2 + task 4 + omp_setup_* 4). state/candidate/challenge 는 별개 DB MCP omp-db (mcp__omp-db__* 11)
   ↓
 TUI agent picker → 사용자가 omp-orchestrator 선택
   ↓
@@ -228,7 +228,7 @@ Stage 2: VulnHunter ensemble (병렬)
   ├─ VH-2 ──┼→ Orchestrator merge/dedup → candidate list → state 기록
   └─ VH-N ──┘
   ↓
-Stage 3: Strategy+Exploit (iterative rounds, state.json = blackboard)
+Stage 3: Strategy+Exploit (iterative rounds, state.db = blackboard)
   Round 1:
   ├─ SA-1 (VERIFY A) → Exploiter-1 (session_id=1) ──┐
   ├─ SA-2 (VERIFY B) → Exploiter-2 (session_id=2) ──┼→ Orchestrator 수집 → state 기록
@@ -275,10 +275,10 @@ Orchestrator (LLM)
 
 ### Sole Writer 패턴
 
-병렬 agent들의 state 동시 쓰기 충돌 방지:
-- SA/Exploiter는 `omp_patch_state` **호출 금지** — 결과만 반환
+병렬 agent들의 state 동시 쓰기 충돌 방지 (+ ACL 2 layer server-side 강제):
+- SA/Exploiter는 `mcp__omp-db__patch_state` **호출 금지** — 결과만 반환 (ACL deny)
 - Orchestrator가 결과를 수집하여 **순차적으로** state 기록
-- SA/Exploiter는 `omp_read_state`로 읽기만 가능
+- SA/Exploiter는 `mcp__omp-db__read_state`로 읽기만 가능
 
 ### opencode-managed pwno-mcp stdio container + session_id
 
@@ -453,7 +453,8 @@ one-shot 스크립트입니다. Repo 위치가 바뀌었거나 새 머신에서 
 | `src/agents/definitions.ts` | Agent registry (`ompAgentConfigs`). |
 | `src/agents/omp-orchestrator.ts` | Orchestrator agent factory + prompt. |
 | `src/agents/omp-reverser.ts` | Reverser agent factory + prompt. |
-| `src/tools/*.ts` | 18개 OmP tool 구현 (state IO 6 + candidate 4 + task 4 + omp_setup_* 4). |
+| `src/tools/*.ts` | plugin tool 12개 구현 (load + journal + template 2 + task 4 + omp_setup_* 4). |
+| `src/db/` + `src/db-mcp/` | Drizzle schema + 별개 DB MCP server `omp-db` (state/candidate/challenge 11 tool + ACL 2 layer). |
 | `src/templates/*.ts` | Agent가 tool로 로드하는 템플릿 string. |
 | `scripts/setup-omp.sh` | 머신 세팅 one-shot 스크립트. |
 | `~/.config/omp/opencode/opencode.json` | 플러그인 등록 파일 (사용자 config). |
