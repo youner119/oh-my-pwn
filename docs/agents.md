@@ -143,6 +143,54 @@ correction을 받아 state를 고치고 재계획.
 
 **파일:** `src/agents/omp-orchestrator.ts`
 
+### omp-setup
+
+**역할:** challenge 환경 구축. challenge 폴더를 스캔해 **분류**(`challenge_type`)하고,
+`user-mode-elf` 이면 docker build → libc/ld 추출 → patchelf → runtime verify
+파이프라인을 돌려 Reverser/Exploiter 가 쓸 실행 환경을 만든다. 옛 단일 tool
+`omp_run_envsetup` 폐기 → **agent + atomic tool 4개**(`omp_setup_*`) 로 재설계
+(envsetup 재설계 spec). orchestrator 가 Phase 0 setup gate 에서 spawn.
+
+**Challenge identity (가장 먼저):** 다른 tool 호출 전에 challenge identity 를 resolve.
+fresh → `mcp__omp-db__register_challenge({dir, workspace_root, agent_id:"setup"})`
+로 surrogate `challenge_id` mint + 초기 state row. 재진입 → orchestrator 가 주입한
+`challenge_id` 로 `read_challenge`. register/patch_state 를 setup 이 직접 쓰는 건
+**Phase 0 한정 D1 relaxation** — Phase 1 부터 sole-writer-Orchestrator 재적용.
+
+**Phase 구조:**
+- **Phase 0 — Detect & Classify (read-only, fully agentic):** `challenge_dir` 스캔 →
+  `challenge_type` 결정 + input-contract 필드 시드(`binary_input_path` /
+  `binary_input_sha256` / `dockerfile_path` / `source_present` / `source_paths`).
+  - ELF 후보 **2+** → `setup_blocker.kind:"ambiguous-binary"` 박고 **stop** →
+    orchestrator 가 사용자 disambig 받아 `binary_input_path` 박고 blocker clear 후 재launch (D5).
+  - **unsupported** (kernel / browser / ARM / library-only / multi-binary / source-only)
+    → `unsupported_kind`(`kernel-pwn` / `browser` / `arm-userland` / …) + `setup_unsupported_reason`
+    시드 후 stop → Mode 0/9 Exploiter dispatch (Exploiter 가 `knowledge/ctf-pwn/<unsupported_kind>.md` lazy-read).
+  - `user-mode-elf` (rule 7) 만 Phase 1–5 진행.
+- **Phase 1 — docker build:** `omp_setup_docker_build` (`image_tag_hint` **필수** =
+  `omp-<sha8>`, `force_rebuild`→`--no-cache`, docker layer cache 위임).
+- **Phase 2 — ldd map:** `docker run --rm <image> ldd <bin>` 로 라이브러리 의존성 파악.
+  **static-linked branch:** "not a dynamic executable" 이면 Phase 3 추출/patchelf skip,
+  Phase 4 host verify 는 input binary 직접, Phase 5 는 binary 만 stage.
+- **Phase 3 — extract + patchelf:** `omp_setup_extract_file`(image → `.omp/artifacts/`)
+  로 libc/ld 추출 + `omp_setup_patch_elf`(binary: `interpreter`+`replacements` / library:
+  in-place) 로 SONAME → 절대경로 rewrite.
+- **Phase 4 — host verify:** `omp_setup_verify_runtime`(`mode=host`) — process spawn +
+  missing-lib 검사.
+- **Phase 5 — workspace stage + container verify:** artifacts → `workspace/<challenge_id>/`
+  patchelf(fresh-source) + `omp_setup_verify_runtime`(`mode=container`, CET enforce probe 포함).
+
+**Tool 사용:**
+- `mcp__omp-db__register_challenge` / `lookup_challenge` / `read_challenge` (identity)
+- `mcp__omp-db__patch_state` (Phase 0 D1 relaxation — `agent_id:"setup"`)
+- `omp_setup_docker_build` / `omp_setup_extract_file` / `omp_setup_patch_elf` / `omp_setup_verify_runtime`
+- `omp_append_journal`
+- bash (read-only image inspection — `docker run --rm <image> sh -c …` / `ldd` / `ldconfig -p`)
+
+**모델:** `GPT_MODEL` (`openai/gpt-5.5`) — atomic tool 흐름 제어.
+
+**파일:** `src/agents/omp-setup.ts`
+
 ### omp-reverser
 
 **역할:** Challenge binary의 **semantic program understanding**을 생성.
