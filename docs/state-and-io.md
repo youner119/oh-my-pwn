@@ -384,28 +384,36 @@ timestamped 파일로 저장. 빌드 실패 시 사용자가 이 로그를 직�
 
 ## Idempotency & 재실행
 
-모든 loader / envsetup / reverser는 **cache 체크**를 거친 뒤 실행됩니다:
+재실행 시 각 단계가 중복 작업을 어떻게 피하는지:
 
-### `loadChallengeFolder` (T03) — load-or-init
+### Challenge load (`omp_load_challenge`) — init-or-verify
 
-- `.omp/` 이미 존재 → 검증만 (state 는 `state.db`, db-mcp `lookup_challenge` 로 회수)
-- `binary_sha256` 재계산 → drift 감지하면 **state는 건드리지 않고 journal에만
-  `## binary sha drift` 블록 append**. 재시딩은 사용자가 명시적으로 `rm -rf .omp/`
-  하거나 prompt correction으로 지시해야 함.
-- 원칙: 사용자 동의 없이 agent가 state를 mutation하지 않음.
+- `.omp/` 이미 존재 → 디렉토리 검증 + 누락 서브디렉토리만 생성 (`initializeOmpDir`
+  idempotent). **state (DB) 시드는 안 함 (T20)** — state 는 db-mcp
+  `lookup_challenge` 로 회수.
+- `freshlyInitialized` = `.omp/journal.md` 부재 여부 (첫 로드 판정).
+- **binary sha drift 감지는 폐지 (D4).** loader 는 sha 계산 / input-identity drift
+  추적을 더 이상 하지 않음 — binary 식별 + sha 는 omp-setup Phase 0 (Detect) 책임
+  (contract-load-detect-split D1/D2). 재시딩이 필요하면 `rm -rf .omp/` 후 reload 가 정본.
 
-### `runEnvSetup` (T04) — partial commit
+### Envsetup (omp-setup agent + atomic tool) — docker layer cache 위임
 
-- 파이프라인 각 단계 후 `mcp__omp-db__patch_state` 로 commit → 중간 실패해도 진행한
-  만큼 DB 에 반영됨
-- `docker image inspect`로 cache hit이면 build skip, 그 외엔 rebuild
+- 옛 `runEnvSetup` 단일 함수는 폐지 (T19). omp-setup agent 가 Phase 1-6 을 atomic
+  tool (`omp_setup_docker_build` / `extract_file` / `patch_elf` / `verify_runtime`)
+  로 순차 실행하며, 각 phase 결과를 `mcp__omp-db__patch_state` 로 partial commit
+  (중간 실패해도 진행한 만큼 DB 에 반영).
+- docker build cache: **우리 자체 cache 로직 (canReuse / mtime 비교) 없음 (T20)** —
+  docker 의 layer cache 에 위임. `force_rebuild: true` → `--no-cache`.
+- `omp_setup_docker_build` 는 `image_tag_hint` 필수 (옛 sha-derived fallback 폐지).
 
-### `omp_run_reverser` (agent 호출) — sha match skip + force
+### Reverser (omp-reverser agent) — summary cache skip + force
 
-- `state.reverser_summary_path` 존재 + binary sha match → skip 후 cached
-  summary 반환
-- 사용자가 `force: true` 넘기면 강제 재실행. BN mutation은 idempotent
-  (이미 renamed 함수에 대한 rename은 덮어쓰기). BN은 `.bndb` database에 변경사항 저장.
+- `state.reverser_summary_path` 존재 + 파일 실재 + delegation prompt 에 `force: true`
+  미전달 → journal 에 skip entry append 후 stop (재분석 안 함).
+- `force: true` 전달 시 강제 재실행. BN mutation 은 idempotent (이미 renamed 함수
+  재rename = 덮어쓰기, `.bndb` 에 저장).
+- **binary sha match 체크는 없음** — 파일 존재 + force 플래그만으로 판단. 옛
+  `omp_run_reverser` tool 은 폐기 (omp-orchestrator 가 `omp_task_launch` 로 spawn 하는 agent).
 
 ---
 
