@@ -517,6 +517,53 @@ export class BackgroundManager {
     return { cycle, result_path: resultPath }
   }
 
+  /**
+   * Resume an idle worker with a follow-up prompt (submit protocol, T38).
+   * Re-prompts the SAME opencode session so the worker keeps its context —
+   * used by the parent (orchestrator / SA) to drive a reusable worker
+   * (e.g. exploiter retry loop).
+   *
+   * - Rejects unknown ids and terminal tasks (failed / cancelled / terminated).
+   *   Allowed on `idle` OR `running` — the parent may resume right after
+   *   consuming a submit, before the 3s poll has marked the task `idle`.
+   * - Re-acquires a concurrency slot ONLY if the task was `idle` (T37 released
+   *   it). A still-`running` task (poll lag) already holds its slot; acquiring
+   *   again would double-count.
+   * - Re-prompts with the original agent + model; tool restrictions are
+   *   re-derived from the agent.
+   */
+  async resume(taskId: string, prompt: string): Promise<{ task_id: string; session_id: string }> {
+    const task = this.tasks.get(taskId)
+    if (!task) throw new Error(`unknown task_id: ${taskId}`)
+    if (!task.sessionID) throw new Error(`task ${taskId} has no session to resume`)
+    if (isTerminalStatus(task.status)) {
+      throw new Error(`cannot resume terminal task ${taskId} (status: ${task.status})`)
+    }
+
+    // Only re-acquire if the slot was released (idle). Running = still held.
+    if (task.status === "idle") {
+      await this.concurrency.acquire(task.concurrencyKey)
+    }
+    task.status = "running"
+    task.prompt = prompt
+
+    const tools = getAgentToolRestrictions(task.agent)
+    const parts: TextPart[] = [{ type: "text", text: prompt }]
+    await this.client.promptAsync({
+      path: { id: task.sessionID },
+      body: {
+        agent: task.agent,
+        ...(task.model ? { model: task.model } : {}),
+        tools,
+        parts,
+      },
+    })
+
+    this.ensurePolling()
+    ompLog(`Task ${taskId}: resumed session ${task.sessionID}`)
+    return { task_id: taskId, session_id: task.sessionID }
+  }
+
   /** Shut down: cancel all waiters, stop polling. */
   shutdown(): void {
     this.stopPolling()
@@ -542,6 +589,8 @@ export class BackgroundManager {
       status: "queued",
       createdAt: new Date(),
       concurrencyKey,
+      // Stored so `resume` (T38) can re-prompt with the same model.
+      model: input.model,
     }
     this.tasks.set(id, task)
     // T34: queued 는 미로그(session_id 이전) — 첫 이벤트는 startSession 의

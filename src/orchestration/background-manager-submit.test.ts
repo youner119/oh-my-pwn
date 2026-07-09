@@ -122,6 +122,78 @@ describe("BackgroundManager wait resolves on submit (T36, D + consumed)", () => 
   })
 })
 
+describe("BackgroundManager.resume (T38)", () => {
+  test("resume re-prompts the session, returns to running, enables next submit", async () => {
+    const prevDir = process.env.OMP_STATE_DIR
+    const prevInst = process.env.OMP_INSTANCE_ID
+    const stateDir = mkdtempSync(join(tmpdir(), "omp-state-"))
+    const workDir = mkdtempSync(join(tmpdir(), "omp-work-"))
+    process.env.OMP_STATE_DIR = stateDir
+    process.env.OMP_INSTANCE_ID = "test-t38"
+
+    const prompts: string[] = []
+    try {
+      const client: OmpSessionClient = {
+        ...stubClient,
+        promptAsync: async (params) => {
+          const parts = (params.body as { parts?: Array<{ text?: string }> }).parts ?? []
+          if (parts[0]?.text) prompts.push(parts[0].text)
+          return {}
+        },
+      }
+      const manager = new BackgroundManager({ client, directory: workDir, enableEventLog: true })
+      const r = await manager.launchAsync({
+        parentSessionID: "p",
+        agent: "omp-exploiter-mode-1",
+        description: "E",
+        prompt: "attempt1",
+      })
+
+      manager.submitResult(r.session_id, { status: "failed" })
+      await manager.waitAny([r.task_id]) // consume cycle 1
+
+      const rr = await manager.resume(r.task_id, "attempt2")
+      expect(rr.task_id).toBe(r.task_id)
+      expect(manager.getTask(r.task_id)?.status).toBe("running")
+      expect(prompts).toContain("attempt2") // session re-prompted with the follow-up
+
+      // After resume the worker submits cycle 2 → wait returns the new result.
+      manager.submitResult(r.session_id, { status: "success", flag: "DH{y}" })
+      const o2 = await manager.waitAny([r.task_id])
+      expect(o2.result).toEqual({ status: "success", flag: "DH{y}" })
+
+      manager.shutdown()
+    } finally {
+      if (prevDir === undefined) delete process.env.OMP_STATE_DIR
+      else process.env.OMP_STATE_DIR = prevDir
+      if (prevInst === undefined) delete process.env.OMP_INSTANCE_ID
+      else process.env.OMP_INSTANCE_ID = prevInst
+      rmSync(stateDir, { recursive: true, force: true })
+      rmSync(workDir, { recursive: true, force: true })
+    }
+  })
+
+  test("resume rejects unknown and terminal tasks", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "omp-work-"))
+    try {
+      const manager = new BackgroundManager({ client: stubClient, directory: dir })
+      await expect(manager.resume("no-such-task", "x")).rejects.toThrow()
+
+      const r = await manager.launchAsync({
+        parentSessionID: "p",
+        agent: "omp-exploiter-mode-1",
+        description: "E",
+        prompt: "go",
+      })
+      await manager.cancel(r.task_id)
+      await expect(manager.resume(r.task_id, "again")).rejects.toThrow()
+      manager.shutdown()
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+})
+
 describe("BackgroundManager idle judgment (T37)", () => {
   test(
     "submit-then-idle → task marked idle (awaiting resume), not failed",

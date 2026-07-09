@@ -111,6 +111,11 @@ export interface BackgroundTask {
   completedAt?: Date
   error?: string
   concurrencyKey: string
+  /**
+   * Resolved model for the child session. Stored at launch so `resume` (T38)
+   * can re-prompt the same session with the same model.
+   */
+  model?: { providerID: string; modelID: string }
 }
 
 export interface LaunchInput {
