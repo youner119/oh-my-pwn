@@ -194,6 +194,88 @@ describe("BackgroundManager.resume (T38)", () => {
   })
 })
 
+describe("BackgroundManager cancel (T40)", () => {
+  test("cancel client.abort()s the session; terminate does not", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "omp-work-"))
+    const aborted: string[] = []
+    let sessionCounter = 0
+    try {
+      const client: OmpSessionClient = {
+        ...stubClient,
+        create: async () => ({ data: { id: `s${++sessionCounter}` } }),
+        abort: async (params) => {
+          aborted.push(params.path.id)
+          return {}
+        },
+      }
+      const manager = new BackgroundManager({ client, directory: dir })
+
+      const r1 = await manager.launchAsync({
+        parentSessionID: "p",
+        agent: "omp-vulnhunter",
+        description: "cancelled",
+        prompt: "go",
+      })
+      await manager.cancel(r1.task_id)
+      expect(manager.getTask(r1.task_id)?.status).toBe("cancelled")
+      expect(aborted).toContain(r1.session_id) // cancel = emergency abort
+
+      const r2 = await manager.launchAsync({
+        parentSessionID: "p",
+        agent: "omp-vulnhunter",
+        description: "terminated",
+        prompt: "go",
+      })
+      manager.terminate(r2.task_id)
+      expect(manager.getTask(r2.task_id)?.status).toBe("terminated")
+      expect(aborted).not.toContain(r2.session_id) // terminate = graceful, no abort
+
+      manager.shutdown()
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  test(
+    "cancel works on an idle-awaiting worker (user hard stop)",
+    async () => {
+      const prevDir = process.env.OMP_STATE_DIR
+      const prevInst = process.env.OMP_INSTANCE_ID
+      const stateDir = mkdtempSync(join(tmpdir(), "omp-state-"))
+      const workDir = mkdtempSync(join(tmpdir(), "omp-work-"))
+      process.env.OMP_STATE_DIR = stateDir
+      process.env.OMP_INSTANCE_ID = "test-t40"
+
+      try {
+        const client = { ...stubClient, status: async () => ({ x: { type: "idle" } }) }
+        const manager = new BackgroundManager({ client, directory: workDir, enableEventLog: true })
+        const r = await manager.launchAsync({
+          parentSessionID: "p",
+          agent: "omp-exploiter-mode-1",
+          description: "E",
+          prompt: "go",
+        })
+        manager.submitResult(r.session_id, { status: "failed" })
+        await new Promise((res) => setTimeout(res, 3500)) // poll → idle-awaiting
+        expect(manager.getTask(r.task_id)?.status).toBe("idle")
+
+        // cancel is allowed on idle (T40) — a user-requested hard stop.
+        expect(await manager.cancel(r.task_id)).toBe(true)
+        expect(manager.getTask(r.task_id)?.status).toBe("cancelled")
+        manager.shutdown()
+      } finally {
+        if (prevDir === undefined) delete process.env.OMP_STATE_DIR
+        else process.env.OMP_STATE_DIR = prevDir
+        if (prevInst === undefined) delete process.env.OMP_INSTANCE_ID
+        else process.env.OMP_INSTANCE_ID = prevInst
+        rmSync(stateDir, { recursive: true, force: true })
+        rmSync(workDir, { recursive: true, force: true })
+      }
+    },
+    10000,
+  )
+})
+
 describe("BackgroundManager terminate (T39)", () => {
   test("parent-terminate marks terminated, idempotent, blocks resume", async () => {
     const dir = mkdtempSync(join(tmpdir(), "omp-work-"))

@@ -442,9 +442,14 @@ export class BackgroundManager {
   }
 
   /**
-   * Cancel a task by ID. The API surface for the `omp_task_cancel`
-   * tool. Idempotent: returns false for unknown ids or tasks already in
-   * a terminal state.
+   * Cancel a task by ID. The API surface for the `omp_task_cancel` tool —
+   * emergency stop (user-requested / SA-race early-exit, Rule 8). Idempotent:
+   * returns false for unknown ids or already-terminal tasks.
+   *
+   * Works on ANY non-terminal task — running, queued, OR idle-awaiting (T40):
+   * cancel is a user-requested hard stop, so it applies regardless of state.
+   * Distinct from `terminate` (graceful close) purely by MECHANISM: cancel
+   * `client.abort()`s the session; terminate does not.
    *
    * Steps:
    *   1. Best-effort POST /session/{id}/abort (errors swallowed — session
@@ -456,7 +461,9 @@ export class BackgroundManager {
   async cancel(taskId: string): Promise<boolean> {
     const task = this.tasks.get(taskId)
     if (!task) return false
-    if (task.status !== "running" && task.status !== "queued") return false
+    // T40: cancel any non-terminal task (running / queued / idle-awaiting) —
+    // a user-requested hard stop applies regardless of state.
+    if (isTerminalStatus(task.status)) return false
 
     if (task.sessionID) {
       try {
