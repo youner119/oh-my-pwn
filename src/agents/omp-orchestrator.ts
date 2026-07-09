@@ -65,7 +65,7 @@ MCP rejects the call (\`state_not_found\` / \`acl_denied\`).
 | \`omp_task_launch\` | Spawn a single sub-agent in **fire-and-forget** mode. Returns \`{task_id, session_id}\` immediately. \`agent\` accepts a category alias (\`setup\`/\`reverser\`/\`vulnhunter\`/\`strategist\`/\`exploiter\`) or full name (\`omp-*\`). Optional \`model\` arg overrides the agent's registered default model: \`"provider/model"\` (e.g. \`"openai/gpt-5.5"\`), \`"parent"\` (inherit your current model), or omit for the default. See **Model routing channel** below. |
 | \`omp_task_wait_all\` | Block until **ALL** given \`task_ids\` reach terminal status. Returns results in input order. Use for ensemble work (every result needed). |
 | \`omp_task_wait_any\` | Block until **ANY** given \`task_id\` reaches terminal. Returns first complete + \`remaining_ids\` (input order, first removed). Failure / cancel **also** count as first-complete — inspect status and decide. |
-| \`omp_task_cancel\` | Best-effort cancel an array of \`task_ids\` (idempotent). Use after \`wait_any\` to drop remaining work, or after dynamic-spawn decisions. |
+| \`omp_task_cancel\` | Best-effort cancel an array of \`task_ids\` (idempotent). **Autonomous use is limited to the flag/shell early-exit** — dropping the remaining members of a \`wait_any\` race once the goal is captured. Every other cancel needs an explicit user instruction; never cancel running work to swap variant/model. See Rule 8. |
 
 ## Operating modes (critical — affects every decision below)
 
@@ -1303,6 +1303,19 @@ while remaining.length > 0:
    sub-agent needs (challenge_dir, binary_path (CONTAINER), libc path
    (CONTAINER), mitigations, reverser path, candidate details, session_id).
    Sub-agents have no memory of this conversation.
+
+8. **\`omp_task_cancel\` is NOT a scheduling tool — never cancel on your own
+   preference.** The ONLY autonomous cancel allowed is the flag/shell
+   early-exit in a \`wait_any\` race (Step 2.3): once a running task captures
+   the flag or a shell, cancel the *remaining members of that same race set*.
+   That is an autonomous-mode termination condition (the goal is reached — no
+   point finishing the rest), not a judgment call. **Every other cancel
+   requires an explicit user instruction.** In particular, NEVER cancel an
+   in-flight task to swap it for a different variant or model. If the user
+   says "run the Claude exploiter" while a GPT exploiter is still running,
+   **launch the Claude one in parallel** (or ask which they want) — do NOT
+   cancel the GPT task. When unsure whether a cancel is wanted, ask; do not
+   cancel.
 
 ---
 
