@@ -28,14 +28,18 @@ import { getAgentToolRestrictions } from "./agent-tool-restrictions"
 import {
   EVENT_SCHEMA_VERSION,
   appendEventLine,
+  eventsLogPath,
+  foldSubmissions,
   initEventsLog,
   nextInstanceId,
+  readEventsLog,
   type Event,
   type EventType,
   type OrchestratorInfo,
+  type SubmissionLedger,
 } from "./event-log"
 import { EventEmitter } from "node:events"
-import { appendFileSync, mkdirSync, readdirSync, writeFileSync } from "node:fs"
+import { appendFileSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
 
 let logPath: string | undefined
@@ -75,25 +79,12 @@ function isIdleStatus(status: string): boolean {
 
 /** Task is in a terminal state (completed / failed / cancelled). */
 function isTerminalStatus(status: TaskStatus): boolean {
-  return status === "completed" || status === "failed" || status === "cancelled"
-}
-
-function extractAssistantText(
-  messages: Array<{
-    info?: { role: string }
-    parts?: Array<{ type: string; text?: string }>
-  }>,
-): string {
-  const texts: string[] = []
-  for (const msg of messages) {
-    if (msg.info?.role !== "assistant") continue
-    for (const part of msg.parts ?? []) {
-      if (part.type === "text" && part.text) {
-        texts.push(part.text)
-      }
-    }
-  }
-  return texts.join("\n\n")
+  return (
+    status === "completed" ||
+    status === "terminated" ||
+    status === "failed" ||
+    status === "cancelled"
+  )
 }
 
 /**
@@ -292,11 +283,16 @@ export class BackgroundManager {
    * - State-first: if all tasks are already terminal, returns immediately.
    */
   async waitAll(taskIds: string[]): Promise<WaitAllResult> {
-    // Identify pending tasks (known + not-yet-terminal).
+    // Identify pending tasks: known, not-yet-terminal, AND without an already-
+    // waiting unconsumed submit (submit protocol — a submit resolves the wait
+    // just like a terminal status).
+    const ledgers = this.submissionLedgers()
     const pending = new Set<string>()
     for (const id of taskIds) {
       const t = this.tasks.get(id)
-      if (t && !isTerminalStatus(t.status)) pending.add(id)
+      if (t && !isTerminalStatus(t.status) && !this.hasUnconsumedSubmit(id, ledgers)) {
+        pending.add(id)
+      }
     }
 
     if (pending.size > 0) {
@@ -330,7 +326,9 @@ export class BackgroundManager {
    * - Cancellation and failure both count as first-complete (C, spec L75).
    */
   async waitAny(taskIds: string[]): Promise<WaitAnyResult> {
-    // State-first: scan for already-terminal (or unknown) in input order.
+    // State-first: scan for already-resolved (terminal OR unconsumed submit) or
+    // unknown, in input order.
+    const ledgers = this.submissionLedgers()
     for (const id of taskIds) {
       const t = this.tasks.get(id)
       if (!t) {
@@ -341,7 +339,7 @@ export class BackgroundManager {
           remaining_ids: taskIds.filter((x) => x !== id),
         }
       }
-      if (isTerminalStatus(t.status)) {
+      if (isTerminalStatus(t.status) || this.hasUnconsumedSubmit(id, ledgers)) {
         const outcome = await this.buildOutcome(id)
         return { ...outcome, remaining_ids: taskIds.filter((x) => x !== id) }
       }
@@ -363,12 +361,28 @@ export class BackgroundManager {
     return { ...outcome, remaining_ids: taskIds.filter((x) => x !== firstId) }
   }
 
+  /** Read the per-session submission ledger from events.log (submit protocol). */
+  private submissionLedgers(): Map<string, SubmissionLedger> {
+    return foldSubmissions(readEventsLog(eventsLogPath()))
+  }
+
   /**
-   * Internal: build a TaskOutcome for a single id (T6 helper).
-   * - Completed → fetches assistant text via fetchSessionOutput.
-   * - Failed / cancelled → returns error text without fetch.
-   * - Unknown id → synthetic failed outcome (A1).
-   * - Fetch failure → marks as completed with error message.
+   * True if the task's session has a submit the parent has not consumed yet.
+   * `ledgers` may be passed to reuse a single fold across a batch.
+   */
+  private hasUnconsumedSubmit(taskId: string, ledgers?: Map<string, SubmissionLedger>): boolean {
+    const task = this.tasks.get(taskId)
+    if (!task?.sessionID) return false
+    const ledger = (ledgers ?? this.submissionLedgers()).get(task.sessionID)
+    return !!ledger && ledger.submissions.length > ledger.consumedCount
+  }
+
+  /**
+   * Internal: build a TaskOutcome for a single id (submit protocol, D).
+   * - Unconsumed submit → read+parse the submission file, inline as `result`,
+   *   carry `result_path`, and append `task_consumed` (stale-resolve guard).
+   * - No unconsumed submit → terminal outcome (crash fallback = failed, etc.).
+   * - Unknown id → synthetic failed outcome.
    */
   private async buildOutcome(taskId: string): Promise<TaskOutcome> {
     const task = this.tasks.get(taskId)
@@ -379,18 +393,33 @@ export class BackgroundManager {
         error: `unknown task_id: ${taskId}`,
       }
     }
-    if (task.status === "completed" && task.sessionID) {
-      try {
-        const output = await this.fetchSessionOutput(task.sessionID)
-        return { task_id: taskId, status: task.status, output }
-      } catch (err) {
-        return {
-          task_id: taskId,
-          status: task.status,
-          error: `output fetch failed: ${String(err)}`,
+
+    if (task.sessionID) {
+      const ledger = this.submissionLedgers().get(task.sessionID)
+      if (ledger && ledger.submissions.length > ledger.consumedCount) {
+        const next = ledger.submissions[ledger.consumedCount]
+        // Mark consumed FIRST so a racing poll / re-wait never re-resolves this
+        // submit (even if the file read below fails on a poison file).
+        this.appendEvent("task_consumed", { session_id: task.sessionID, cycle: next.cycle })
+        try {
+          const result = JSON.parse(readFileSync(next.result_path, "utf-8"))
+          return {
+            task_id: taskId,
+            status: task.status,
+            result_path: next.result_path,
+            result,
+          }
+        } catch (err) {
+          return {
+            task_id: taskId,
+            status: task.status,
+            result_path: next.result_path,
+            error: `submission read failed: ${String(err)}`,
+          }
         }
       }
     }
+
     return {
       task_id: taskId,
       status: task.status,
@@ -685,9 +714,21 @@ export class BackgroundManager {
     try {
       const rawStatuses = await this.client.status()
       const statuses = unwrapData<Record<string, { type: string }>>(rawStatuses)
+      // Submit protocol (T36): fold events.log once per tick so a submit from a
+      // sub-agent's own plugin closure is detected cross-closure.
+      const ledgers = this.submissionLedgers()
 
       for (const task of this.tasks.values()) {
         if (task.status !== "running" || !task.sessionID) continue
+
+        // A new unconsumed submit wakes any waiter (task stays running — it is
+        // still alive, possibly idle-awaiting-resume). Harmless no-op if no
+        // waiter; stops once buildOutcome appends task_consumed.
+        const ledger = ledgers.get(task.sessionID)
+        if (ledger && ledger.submissions.length > ledger.consumedCount) {
+          this.taskEvents.emit("done", task.id)
+        }
+
         const sessionStatus = statuses[task.sessionID]
 
         if (!sessionStatus) {
@@ -806,20 +847,5 @@ export class BackgroundManager {
     } catch (err) {
       ompLog(`Task ${task.id}: transcript dump failed: ${String(err)}`)
     }
-  }
-
-  private async fetchSessionOutput(sessionID: string): Promise<string> {
-    const rawResult = await this.client.messages({
-      path: { id: sessionID },
-    })
-    // SDK returns { data: Array<{info, parts}>, request, response }.
-    // unwrapData extracts .data → the messages array.
-    const messages = unwrapData<unknown[]>(rawResult)
-    return extractAssistantText(
-      (Array.isArray(messages) ? messages : []) as Array<{
-        info?: { role: string }
-        parts?: Array<{ type: string; text?: string }>
-      }>,
-    )
   }
 }

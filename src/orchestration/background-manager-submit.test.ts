@@ -71,3 +71,53 @@ describe("BackgroundManager.submitResult (T35)", () => {
     }
   })
 })
+
+describe("BackgroundManager wait resolves on submit (T36, D + consumed)", () => {
+  /**
+   * Full submit→wait→result→consumed chain. Requires a real events.log
+   * (enableEventLog + temp OMP_STATE_DIR) since submit detection is via
+   * events.log fold (cross-closure). Uses a fixed OMP_INSTANCE_ID so the
+   * events file path is deterministic.
+   */
+  test("wait_any returns the submitted result, then consumes it (multi-submit)", async () => {
+    const prevDir = process.env.OMP_STATE_DIR
+    const prevInst = process.env.OMP_INSTANCE_ID
+    const stateDir = mkdtempSync(join(tmpdir(), "omp-state-"))
+    const workDir = mkdtempSync(join(tmpdir(), "omp-work-"))
+    process.env.OMP_STATE_DIR = stateDir
+    process.env.OMP_INSTANCE_ID = "test-t36"
+
+    try {
+      const client = { ...stubClient }
+      const manager = new BackgroundManager({ client, directory: workDir, enableEventLog: true })
+      const r = await manager.launchAsync({
+        parentSessionID: "p",
+        agent: "omp-exploiter-mode-1",
+        description: "E",
+        prompt: "go",
+      })
+
+      // Child submits attempt 1 (cycle 1) — parent wait should return it.
+      manager.submitResult(r.session_id, { status: "failed", reason: "no leak" })
+      const o1 = await manager.waitAny([r.task_id])
+      expect(o1.task_id).toBe(r.task_id)
+      expect(o1.result).toEqual({ status: "failed", reason: "no leak" })
+      expect(o1.result_path).toContain("submissions")
+
+      // Child submits attempt 2 (cycle 2) after a resume — wait must return the
+      // NEW submit, not re-resolve the already-consumed cycle 1 (stale guard).
+      manager.submitResult(r.session_id, { status: "success", flag: "DH{x}" })
+      const o2 = await manager.waitAny([r.task_id])
+      expect(o2.result).toEqual({ status: "success", flag: "DH{x}" })
+
+      manager.shutdown()
+    } finally {
+      if (prevDir === undefined) delete process.env.OMP_STATE_DIR
+      else process.env.OMP_STATE_DIR = prevDir
+      if (prevInst === undefined) delete process.env.OMP_INSTANCE_ID
+      else process.env.OMP_INSTANCE_ID = prevInst
+      rmSync(stateDir, { recursive: true, force: true })
+      rmSync(workDir, { recursive: true, force: true })
+    }
+  })
+})

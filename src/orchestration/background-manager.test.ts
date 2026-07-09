@@ -493,8 +493,9 @@ describe("BackgroundManager", () => {
     expect(result.results[1].task_id).toBe(r2.task_id)
     expect(result.results[2].task_id).toBe(r3.task_id)
     expect(result.results.every((r) => r.status === "completed")).toBe(true)
-    expect(result.results[0].output).toContain("p1")
-    expect(result.results[2].output).toContain("p3")
+    // Submit protocol (T36): results carry `result` from submission files, not
+    // scraped assistant text. These tasks never submit → no `result`. The
+    // submit→result flow is covered in background-manager-submit.test.ts.
 
     manager.shutdown()
   }, 15000)
