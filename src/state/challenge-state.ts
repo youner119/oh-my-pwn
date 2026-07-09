@@ -146,11 +146,10 @@ export const VulnCandidateSummarySchema = z.object({
   /** For combined / derived candidates: source candidate ids. */
   combined_from: z.array(z.string()).optional(),
   /**
-   * 2-3 line short claim of *what* this candidate is (≤400 chars). VH / SA
-   * produces, Orchestrator forwards. Distinct from `rationale` (detail file —
-   * full reasoning of *why*).
+   * Short claim of *what* this candidate is. VH / SA produces, Orchestrator
+   * forwards. Distinct from `rationale` (detail file — full reasoning of *why*).
    */
-  description: z.string().max(400).optional(),
+  description: z.string().optional(),
   /** Derived counters — Orchestrator syncs from detail at patch time. */
   gives_count: z.number().int().min(0).optional(),
   needs_count: z.number().int().min(0).optional(),
