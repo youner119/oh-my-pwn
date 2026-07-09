@@ -121,3 +121,44 @@ describe("BackgroundManager wait resolves on submit (T36, D + consumed)", () => 
     }
   })
 })
+
+describe("BackgroundManager idle judgment (T37)", () => {
+  test(
+    "submit-then-idle → task marked idle (awaiting resume), not failed",
+    async () => {
+      const prevDir = process.env.OMP_STATE_DIR
+      const prevInst = process.env.OMP_INSTANCE_ID
+      const stateDir = mkdtempSync(join(tmpdir(), "omp-state-"))
+      const workDir = mkdtempSync(join(tmpdir(), "omp-work-"))
+      process.env.OMP_STATE_DIR = stateDir
+      process.env.OMP_INSTANCE_ID = "test-t37"
+
+      try {
+        // status() reports the session (stubClient.create's id "x") as idle so
+        // the poll hits the idle branch.
+        const client = { ...stubClient, status: async () => ({ x: { type: "idle" } }) }
+        const manager = new BackgroundManager({ client, directory: workDir, enableEventLog: true })
+        const r = await manager.launchAsync({
+          parentSessionID: "p",
+          agent: "omp-exploiter-mode-1",
+          description: "E",
+          prompt: "go",
+        })
+        // Submit before the poll observes idle → idle means "awaiting resume".
+        manager.submitResult(r.session_id, { status: "failed" })
+        // Wait one poll tick (3s interval) for the idle judgment to run.
+        await new Promise((res) => setTimeout(res, 3500))
+        expect(manager.getTask(r.task_id)?.status).toBe("idle")
+        manager.shutdown()
+      } finally {
+        if (prevDir === undefined) delete process.env.OMP_STATE_DIR
+        else process.env.OMP_STATE_DIR = prevDir
+        if (prevInst === undefined) delete process.env.OMP_INSTANCE_ID
+        else process.env.OMP_INSTANCE_ID = prevInst
+        rmSync(stateDir, { recursive: true, force: true })
+        rmSync(workDir, { recursive: true, force: true })
+      }
+    },
+    10000,
+  )
+})

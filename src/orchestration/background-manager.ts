@@ -729,40 +729,68 @@ export class BackgroundManager {
           this.taskEvents.emit("done", task.id)
         }
 
+        // T37: has this session ever submitted a result? Discriminates
+        // idle-awaiting-resume (submitted) from crash fallback (never submitted).
+        const hasSubmitted = !!ledger && ledger.submissions.length > 0
         const sessionStatus = statuses[task.sessionID]
 
         if (!sessionStatus) {
-          // Session disappeared from status map.
-          // If task has been running >10s, treat as completed (opencode cleaned up).
+          // Session vanished from the status map (opencode cleaned it up).
+          // Terminal — a gone session cannot be resumed. > 10s guard avoids a
+          // startup race where the session isn't in the map yet.
           if (task.startedAt && Date.now() - task.startedAt.getTime() > 10000) {
-            ompLog(`Task ${task.id}: session disappeared → completed (poll)`)
-            task.status = "completed"
-            task.completedAt = new Date()
-            this.concurrency.release(task.concurrencyKey)
-            void this.dumpTranscript(task)
-            this.taskEvents.emit("done", task.id)
-            this.appendEvent("task_completed", {
-              session_id: task.sessionID!,
-              via: "gone",
-            })
+            if (hasSubmitted) {
+              task.status = "completed"
+              task.completedAt = new Date()
+              this.concurrency.release(task.concurrencyKey)
+              void this.dumpTranscript(task)
+              this.taskEvents.emit("done", task.id)
+              this.appendEvent("task_completed", { session_id: task.sessionID!, via: "gone" })
+              ompLog(`Task ${task.id}: session gone (had submitted) → completed`)
+            } else {
+              task.status = "failed"
+              task.error = "session gone without submitting"
+              task.completedAt = new Date()
+              this.concurrency.release(task.concurrencyKey)
+              void this.dumpTranscript(task)
+              this.taskEvents.emit("done", task.id)
+              this.appendEvent("task_failed", {
+                session_id: task.sessionID!,
+                error: "session gone without submitting",
+              })
+              ompLog(`Task ${task.id}: session gone without submit → failed`)
+            }
           }
           continue
         }
 
-        // Session is idle → sub-agent finished. Mark completed.
-        // Any other status (busy, retry) → still running, keep waiting.
+        // Any non-idle status (busy, retry) → still working, keep waiting.
         if (!isIdleStatus(sessionStatus.type)) continue
 
-        ompLog(`Task ${task.id}: session idle → completed (poll)`)
-        task.status = "completed"
-        task.completedAt = new Date()
-        this.concurrency.release(task.concurrencyKey)
-        void this.dumpTranscript(task)
-        this.taskEvents.emit("done", task.id)
-        this.appendEvent("task_completed", {
-          session_id: task.sessionID!,
-          via: "idle",
-        })
+        // T37: idle judgment. Submit-then-idle is NOT terminal — the worker is
+        // alive, awaiting parent resume/terminate. Idle-without-submit is the
+        // crash fallback.
+        if (hasSubmitted) {
+          // Awaiting resume: release the slot (not computing), but do NOT emit
+          // done / dump — the submit already resolved the parent, and the
+          // session must stay alive for a possible resume.
+          task.status = "idle"
+          this.concurrency.release(task.concurrencyKey)
+          ompLog(`Task ${task.id}: submitted → idle (awaiting resume)`)
+        } else {
+          // Crash fallback — finished a turn without ever submitting.
+          task.status = "failed"
+          task.error = "session idle without submitting"
+          task.completedAt = new Date()
+          this.concurrency.release(task.concurrencyKey)
+          void this.dumpTranscript(task)
+          this.taskEvents.emit("done", task.id)
+          this.appendEvent("task_failed", {
+            session_id: task.sessionID!,
+            error: "session idle without submitting",
+          })
+          ompLog(`Task ${task.id}: idle without submit → failed`)
+        }
       }
 
       // Orchestrator status 추적 (Rev 7) — 변동 시만 event 박음.

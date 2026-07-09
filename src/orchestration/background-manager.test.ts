@@ -492,10 +492,10 @@ describe("BackgroundManager", () => {
     expect(result.results[0].task_id).toBe(r1.task_id)
     expect(result.results[1].task_id).toBe(r2.task_id)
     expect(result.results[2].task_id).toBe(r3.task_id)
-    expect(result.results.every((r) => r.status === "completed")).toBe(true)
-    // Submit protocol (T36): results carry `result` from submission files, not
-    // scraped assistant text. These tasks never submit → no `result`. The
-    // submit→result flow is covered in background-manager-submit.test.ts.
+    // T37: these tasks go idle WITHOUT ever submitting → crash fallback =
+    // failed. (A worker that submits stays alive/idle; the submit→result flow
+    // is covered in background-manager-submit.test.ts.)
+    expect(result.results.every((r) => r.status === "failed")).toBe(true)
 
     manager.shutdown()
   }, 15000)
