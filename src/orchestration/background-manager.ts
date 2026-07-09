@@ -35,7 +35,7 @@ import {
   type OrchestratorInfo,
 } from "./event-log"
 import { EventEmitter } from "node:events"
-import { appendFileSync, mkdirSync, writeFileSync } from "node:fs"
+import { appendFileSync, mkdirSync, readdirSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
 
 let logPath: string | undefined
@@ -444,6 +444,48 @@ export class BackgroundManager {
     // T34: session_id 키. queued 취소(session 없음)는 이벤트 미로그.
     if (task.sessionID) this.appendEvent("task_cancelled", { session_id: task.sessionID })
     return true
+  }
+
+  /**
+   * Submit a result from a sub-agent (submit protocol, T35). Write-side
+   * backing for the `omp_task_submit` tool (T41) — runs in the CHILD's manager
+   * instance, which only knows the child's `sessionId` (no task_id / tasks-map
+   * entry, since the task was created in the PARENT's manager).
+   *
+   * - `cycle` = (existing submission files for this session) + 1. File-count
+   *   based (NOT event-based) so it is independent of `enableEventLog`.
+   *   Submits within one session are sequential (agent submits once per turn,
+   *   then idles), so no intra-session race.
+   * - Result is written as pretty-printed JSON (Read line-cap safe) to an
+   *   absolute path `<dir>/.omp/submissions/<sessionId>-<cycle>.json`.
+   * - Appends a `task_submitted` event so the parent detects it cross-closure
+   *   (the parent polls/folds events.log — T36).
+   */
+  submitResult(sessionId: string, result: unknown): { cycle: number; result_path: string } {
+    const submissionsDir = join(this.directory, ".omp", "submissions")
+    mkdirSync(submissionsDir, { recursive: true })
+
+    let existing = 0
+    try {
+      const prefix = `${sessionId}-`
+      existing = readdirSync(submissionsDir).filter(
+        (name) => name.startsWith(prefix) && name.endsWith(".json"),
+      ).length
+    } catch {
+      existing = 0
+    }
+    const cycle = existing + 1
+    const resultPath = join(submissionsDir, `${sessionId}-${cycle}.json`)
+    writeFileSync(resultPath, JSON.stringify(result, null, 2))
+
+    this.appendEvent("task_submitted", {
+      session_id: sessionId,
+      cycle,
+      result_path: resultPath,
+    })
+
+    ompLog(`submit: session ${sessionId} cycle ${cycle} → ${resultPath}`)
+    return { cycle, result_path: resultPath }
   }
 
   /** Shut down: cancel all waiters, stop polling. */
