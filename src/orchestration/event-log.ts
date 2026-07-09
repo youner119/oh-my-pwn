@@ -84,58 +84,86 @@ export interface OrchestratorStatusEvent extends EventCommon {
   status: "running" | "idle"
 }
 
-/** `createTask()` — task queued. */
-export interface TaskCreatedEvent extends EventCommon {
-  type: "task_created"
+/**
+ * `startSession()` 성공 — task 가 session 에 배정되어 running 진입. **첫 이벤트**
+ * (T34: `task_created` 폐기 — queued 는 미로그, session 이전이라 상관 키 없음).
+ *
+ * **이벤트 상관 키 = `session_id`** (T34 통일). 자식(submit/self-terminate)은
+ * 자기 `ctx.sessionID`만 알고 `task_id`(부모 핸들)를 모르므로 모든 task 이벤트를
+ * session_id 로 통일. `task_id`는 부모 API 핸들로 노드에 표시만 (fold →
+ * `TreeNode.task_id`).
+ */
+export interface TaskStartedEvent extends EventCommon {
+  type: "task_started"
+  session_id: string
   task_id: string
   parent_session_id: string
   agent: string
   description: string
 }
 
-/** `startSession()` 성공 — task transitioned to running. */
-export interface TaskStartedEvent extends EventCommon {
-  type: "task_started"
-  task_id: string
-  session_id: string
-}
-
-/** `launchAsync()` 실패 — session create / prompt failed. */
+/**
+ * 크래시 fallback — running session 이 submit 없이 종료 (T37 배선 예정).
+ * launch-실패(pre-session, 부모가 task_id 도 못 받음)는 이벤트 미로그.
+ */
 export interface TaskFailedEvent extends EventCommon {
   type: "task_failed"
-  task_id: string
+  session_id: string
   error: string
 }
 
-/** `cancel()` — user / orchestrator aborted. */
+/** `cancel()` — submit 안 한 running 강제 중단 (긴급). */
 export interface TaskCancelledEvent extends EventCommon {
   type: "task_cancelled"
-  task_id: string
+  session_id: string
 }
 
 /**
- * Polling detected terminal state. `via` distinguishes the two completion
- * paths in `pollRunningTasks`: `"idle"` = session status went idle,
- * `"gone"` = session disappeared from status map (opencode cleaned up).
+ * Polling detected terminal state. `via`: `"idle"` = session status went idle,
+ * `"gone"` = session disappeared from status map. 레거시 — T37 에서 idle≠terminal
+ * 재작성 시 terminated/failed 로 대체 예정 (submit 프로토콜).
  */
 export interface TaskCompletedEvent extends EventCommon {
   type: "task_completed"
-  task_id: string
+  session_id: string
   via: "idle" | "gone"
 }
 
+/** 자식 submit — 결과 파일(`result_path`) 준비. `cycle` = 이 세션의 몇 번째 submit. */
+export interface TaskSubmittedEvent extends EventCommon {
+  type: "task_submitted"
+  session_id: string
+  cycle: number
+  result_path: string
+}
+
+/** 부모 회수 — wait resolve 시 append. submitted vs consumed count 로 stale 방지. */
+export interface TaskConsumedEvent extends EventCommon {
+  type: "task_consumed"
+  session_id: string
+  cycle: number
+}
+
+/** 정상 종료 (self 또는 부모) — submit 이후. terminate=graceful, cancel 과 별개. */
+export interface TaskTerminatedEvent extends EventCommon {
+  type: "task_terminated"
+  session_id: string
+}
+
 /**
- * Discriminated union of all event types. `switch (event.type) { ... }`
- * for exhaustive narrowing in T28 fold.
+ * Discriminated union of all event types. `switch (event.type) { ... }` in fold.
+ * T34: 모든 task 이벤트가 `session_id` 상관 키.
  */
 export type Event =
   | OrchestratorRegisteredEvent
   | OrchestratorStatusEvent
-  | TaskCreatedEvent
   | TaskStartedEvent
   | TaskFailedEvent
   | TaskCancelledEvent
   | TaskCompletedEvent
+  | TaskSubmittedEvent
+  | TaskConsumedEvent
+  | TaskTerminatedEvent
 
 /** Discriminator literal type. */
 export type EventType = Event["type"]
@@ -284,16 +312,19 @@ export function foldEvents(events: Event[]): TreeJson {
    * from events.
    */
   type FoldTask = {
+    /** task_id — 부모 API 핸들, TreeNode 표시용. */
     id: string
-    sessionID?: string
+    /** = Map key (T34: session_id keying). */
+    sessionID: string
     agent: string
     parentSessionID: string
     status: TaskStatus
-    /** task_started 이전엔 task_created.ts, 이후엔 task_started.ts. */
     startedAt: Date
     completedAt?: Date
   }
 
+  // T34: tasks keyed by session_id (이벤트 상관 키). task_created 폐기 →
+  // task_started 가 첫 이벤트, queued 는 미로그.
   const tasks = new Map<string, FoldTask>()
   const orchestrators = new Map<string, OrchestratorInfo>()
   /**
@@ -318,26 +349,18 @@ export function foldEvents(events: Event[]): TreeJson {
       case "orchestrator_status":
         orchestratorStatuses.set(e.session_id, e.status)
         break
-      case "task_created":
-        tasks.set(e.task_id, {
+      case "task_started":
+        tasks.set(e.session_id, {
           id: e.task_id,
+          sessionID: e.session_id,
           parentSessionID: e.parent_session_id,
           agent: e.agent,
-          status: "queued",
+          status: "running",
           startedAt: new Date(e.ts),
         })
         break
-      case "task_started": {
-        const task = tasks.get(e.task_id)
-        if (task) {
-          task.sessionID = e.session_id
-          task.status = "running"
-          task.startedAt = new Date(e.ts)
-        }
-        break
-      }
       case "task_failed": {
-        const task = tasks.get(e.task_id)
+        const task = tasks.get(e.session_id)
         if (task) {
           task.status = "failed"
           task.completedAt = new Date(e.ts)
@@ -345,7 +368,7 @@ export function foldEvents(events: Event[]): TreeJson {
         break
       }
       case "task_cancelled": {
-        const task = tasks.get(e.task_id)
+        const task = tasks.get(e.session_id)
         if (task) {
           task.status = "cancelled"
           task.completedAt = new Date(e.ts)
@@ -353,13 +376,23 @@ export function foldEvents(events: Event[]): TreeJson {
         break
       }
       case "task_completed": {
-        const task = tasks.get(e.task_id)
+        const task = tasks.get(e.session_id)
         if (task) {
           task.status = "completed"
           task.completedAt = new Date(e.ts)
         }
         break
       }
+      case "task_terminated": {
+        const task = tasks.get(e.session_id)
+        if (task) {
+          task.status = "terminated"
+          task.completedAt = new Date(e.ts)
+        }
+        break
+      }
+      // task_submitted / task_consumed: tree status 무변경 —
+      // foldSubmissions ledger 전용 (매니저 wait-resolve).
     }
   }
 
@@ -410,6 +443,53 @@ export function foldEvents(events: Event[]): TreeJson {
     updated_at: new Date().toISOString(),
     nodes,
   }
+}
+
+/**
+ * Per-session submission ledger — the manager's read-model for wait-resolve
+ * (T34, submit protocol). Distinct from `foldEvents` (TUI TreeJson): this
+ * folds only `task_submitted` / `task_consumed` into per-session counts so the
+ * manager can decide "is there an unconsumed submit?" cross-closure.
+ */
+export interface SubmissionLedger {
+  /** Submissions for this session, sorted by cycle. */
+  submissions: Array<{ cycle: number; result_path: string }>
+  /** How many submits the parent has already consumed (wait-resolved). */
+  consumedCount: number
+}
+
+/**
+ * Fold events into a per-session submission ledger (T34). Pure reducer.
+ *
+ * Judgment (manager, T36): an UNCONSUMED submit exists when
+ * `submissions.length > consumedCount`; the next unconsumed submission's file
+ * is `submissions[consumedCount].result_path`. Counts are order-independent
+ * (submit/consume are 1:1), and `cycle`-sorting makes file selection
+ * deterministic even if events interleave across appends.
+ */
+export function foldSubmissions(events: Event[]): Map<string, SubmissionLedger> {
+  const ledgers = new Map<string, SubmissionLedger>()
+  const get = (sessionId: string): SubmissionLedger => {
+    let ledger = ledgers.get(sessionId)
+    if (!ledger) {
+      ledger = { submissions: [], consumedCount: 0 }
+      ledgers.set(sessionId, ledger)
+    }
+    return ledger
+  }
+
+  for (const e of events) {
+    if (e.type === "task_submitted") {
+      get(e.session_id).submissions.push({ cycle: e.cycle, result_path: e.result_path })
+    } else if (e.type === "task_consumed") {
+      get(e.session_id).consumedCount += 1
+    }
+  }
+
+  for (const ledger of ledgers.values()) {
+    ledger.submissions.sort((a, b) => a.cycle - b.cycle)
+  }
+  return ledgers
 }
 
 /**

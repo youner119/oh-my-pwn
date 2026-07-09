@@ -273,10 +273,8 @@ export class BackgroundManager {
       this.concurrency.release(task.concurrencyKey)
       task.status = "failed"
       task.error = String(err)
-      this.appendEvent("task_failed", {
-        task_id: task.id,
-        error: String(err),
-      })
+      // T34: launch-실패는 pre-session(session_id 없음)이고 부모가 task_id 도
+      // 못 받음(throw) → 이벤트 미로그. task_failed 는 T37 크래시 fallback 용.
       throw err
     }
 
@@ -443,7 +441,8 @@ export class BackgroundManager {
     task.completedAt = new Date()
     this.concurrency.release(task.concurrencyKey)
     this.taskEvents.emit("done", task.id)
-    this.appendEvent("task_cancelled", { task_id: taskId })
+    // T34: session_id 키. queued 취소(session 없음)는 이벤트 미로그.
+    if (task.sessionID) this.appendEvent("task_cancelled", { session_id: task.sessionID })
     return true
   }
 
@@ -474,12 +473,8 @@ export class BackgroundManager {
       concurrencyKey,
     }
     this.tasks.set(id, task)
-    this.appendEvent("task_created", {
-      task_id: id,
-      parent_session_id: input.parentSessionID,
-      agent: input.agent,
-      description: input.description,
-    })
+    // T34: queued 는 미로그(session_id 이전) — 첫 이벤트는 startSession 의
+    // task_started(모든 필드 병합).
     return task
   }
 
@@ -597,8 +592,11 @@ export class BackgroundManager {
     task.status = "running"
     task.startedAt = new Date()
     this.appendEvent("task_started", {
-      task_id: task.id,
       session_id: sessionID,
+      task_id: task.id,
+      parent_session_id: task.parentSessionID,
+      agent: task.agent,
+      description: task.description,
     })
 
     // Build tool restrictions
@@ -661,7 +659,7 @@ export class BackgroundManager {
             void this.dumpTranscript(task)
             this.taskEvents.emit("done", task.id)
             this.appendEvent("task_completed", {
-              task_id: task.id,
+              session_id: task.sessionID!,
               via: "gone",
             })
           }
@@ -679,7 +677,7 @@ export class BackgroundManager {
         void this.dumpTranscript(task)
         this.taskEvents.emit("done", task.id)
         this.appendEvent("task_completed", {
-          task_id: task.id,
+          session_id: task.sessionID!,
           via: "idle",
         })
       }

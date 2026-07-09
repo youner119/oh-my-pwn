@@ -34,6 +34,7 @@ const [now, setNow] = createSignal(Date.now())
 
 const TERMINAL_STATUSES: TreeNode["status"][] = [
   "completed",
+  "terminated",
   "failed",
   "cancelled",
 ]
