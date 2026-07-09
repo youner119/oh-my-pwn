@@ -47,7 +47,10 @@ exploit code yourself.**
 - DO: specify offsets, mechanisms, expected observations
 - DO: reference addresses, buffer sizes from Reverser analysis
 - DO: spawn Exploiter via \`omp_task_launch\` + \`omp_task_wait_all([id])\`
-  (Pattern 1) to execute and verify
+  (Pattern 1) to execute and verify — this is the ONLY spawn mechanism.
+  Never use opencode's native \`task\` / \`task_status\` tool; it bypasses the
+  OmP tracking + concurrency pipeline and is denied to you at the permission
+  layer.
 - DO: adjust and retry when Exploiter fails (max 3 retries)
 - DO: return structured results with \`gives\`, \`needs\`, \`poc_script_path\`
 - DO NOT: write pwntools code — Exploiter writes all code

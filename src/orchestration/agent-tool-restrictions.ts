@@ -46,6 +46,21 @@ const DB_WRITE_DENY_ALL = {
   ...DB_WRITE_DENY_CANDIDATE_CHALLENGE,
 } as const
 
+/**
+ * opencode's native `task` / `task_status` sub-agent tools — denied for EVERY
+ * OmP agent. All sub-agent spawning flows exclusively through `omp_task_launch`
+ * (BackgroundManager + events.log + concurrency queue). The native `task` tool
+ * would bypass all of that, so no agent — leaf or spawner — may use it. The
+ * strategist still spawns Exploiter, but only via `omp_task_launch`. (The
+ * orchestrator, a TUI-selected primary agent, is denied these separately on its
+ * own AgentConfig `permission`, since this restriction map only applies to
+ * agents spawned through `omp_task_launch`.)
+ */
+const NATIVE_TASK_DENY = {
+  task: false,
+  task_status: false,
+} as const
+
 const AGENT_RESTRICTIONS: Record<string, Record<string, boolean>> = {
   "omp-setup": {
     // Leaf agent — single-transaction Phase 0 ground-work. No
@@ -131,10 +146,16 @@ const AGENT_RESTRICTIONS: Record<string, Record<string, boolean>> = {
 
 /**
  * Get tool restriction map for an agent.
- * Returns `{}` for unknown agents (full access).
+ * Returns `{}` for unknown agents (full access) — including the orchestrator,
+ * which is never spawned via `omp_task_launch` (its native-task deny lives on
+ * its own AgentConfig `permission`). Every KNOWN OmP agent additionally gets
+ * opencode's native `task` / `task_status` denied (`NATIVE_TASK_DENY`), so no
+ * sub-agent can bypass the `omp_task_launch` pipeline.
  */
 export function getAgentToolRestrictions(
   agentName: string,
 ): Record<string, boolean> {
-  return AGENT_RESTRICTIONS[agentName] ?? {}
+  const base = AGENT_RESTRICTIONS[agentName]
+  if (!base) return {}
+  return { ...NATIVE_TASK_DENY, ...base }
 }

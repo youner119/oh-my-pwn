@@ -1247,6 +1247,14 @@ while remaining.length > 0:
 
 ### Rules
 
+0. **\`omp_task_launch\` is the ONLY way you spawn sub-agents.** Never call
+   opencode's native \`task\` (or \`task_status\`) tool — it bypasses the
+   BackgroundManager, the events.log tracking, the concurrency queue, and
+   the tool/DB-write restrictions every OmP sub-agent runs under. Those
+   native tools are denied to you at the permission layer; do not attempt
+   them. Every VulnHunter / Strategist / Reverser / Exploiter spawn goes
+   through \`omp_task_launch\` + \`omp_task_wait_all\`/\`wait_any\`.
+
 1. **Launch is fire-and-forget.** \`omp_task_launch\` returns
    \`{task_id, session_id}\` immediately. Hold task_ids — wait_*/cancel
    need them. The session_id is mostly for logging / pwno-mcp
@@ -1372,5 +1380,20 @@ export function createOmpOrchestratorAgent(model: string): AgentConfig {
     prompt: ORCHESTRATOR_PROMPT,
     model,
     mode: "all",
+    // Deny opencode's native `task`/`task_status` tools so the orchestrator can
+    // only spawn sub-agents through `omp_task_launch` (BackgroundManager +
+    // events.log tracking + concurrency queue + per-agent tool/DB restrictions).
+    // The orchestrator is a TUI-selected primary agent, so the sub-agent
+    // restriction map (getAgentToolRestrictions, applied only at omp_task_launch
+    // spawn time) never governs it — the deny must live on its own config.
+    // Plugin-injected agents skip opencode's `tools`→`permission` normalize
+    // (config/agent.ts runs at file load, before the plugin config hook fires),
+    // and the agent loader reads only `value.permission`, so we set permission
+    // directly. `Permission.fromConfig` accepts arbitrary tool-id keys at
+    // runtime even though the SDK type only whitelists a few — hence the cast.
+    permission: {
+      task: "deny",
+      task_status: "deny",
+    } as AgentConfig["permission"],
   }
 }
