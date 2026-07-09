@@ -7,6 +7,9 @@ export {
   createOmpTaskWaitAllTool,
   createOmpTaskWaitAnyTool,
   createOmpTaskCancelTool,
+  createOmpTaskSubmitTool,
+  createOmpTaskResumeTool,
+  createOmpTaskTerminateTool,
 } from "./task-tool"
 // omp_pwno_status (container-tool.ts) retired by T14 — omp-setup agent
 // absorbs the sanity-check into Phase 5 (bash docker ps + curl).

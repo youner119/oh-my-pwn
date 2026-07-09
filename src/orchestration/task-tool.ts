@@ -212,3 +212,94 @@ Use after wait_any when you want to drop the remaining tasks (e.g., SA race earl
     },
   })
 }
+
+/**
+ * omp_task_submit — a sub-agent delivers its result (submit protocol, T41).
+ *
+ * Runs in the CHILD's session: the manager writes the result JSON to
+ * `.omp/submissions/<session>-<cycle>.json` and appends a `task_submitted`
+ * event. The parent harvests it via omp_task_wait_all / wait_any (which return
+ * the parsed result). Submit is result-delivery only — it does NOT end the
+ * worker (use omp_task_terminate when done).
+ */
+export function createOmpTaskSubmitTool(manager: BackgroundManager): ToolDefinition {
+  return tool({
+    description: `Submit your result (submit protocol). Deliver a JSON object; the parent harvests it via wait_all/wait_any.
+Call once per turn when your result is ready. Submit is result delivery only — it does NOT end you. To end, call omp_task_terminate (or, if reusable, stay idle for the parent to resume/terminate).
+You may submit multiple times across resumes (each is a distinct cycle).`,
+    args: {
+      result: tool.schema
+        .record(tool.schema.string(), tool.schema.any())
+        .describe("The result as a JSON object (e.g. { candidates: [...] } or { status, reason }). Success or failure both go here."),
+    },
+    async execute(args: { result: Record<string, unknown> }, ctx: { sessionID: string }) {
+      try {
+        const { cycle, result_path } = manager.submitResult(ctx.sessionID, args.result)
+        return JSON.stringify({ ok: true, cycle, result_path })
+      } catch (err) {
+        return JSON.stringify({ ok: false, error: "submit_failed", message: String(err) })
+      }
+    },
+  })
+}
+
+/**
+ * omp_task_resume — re-prompt an idle worker with a follow-up (submit protocol,
+ * T41). Parent-only (orchestrator / SA). The worker keeps its session context.
+ */
+export function createOmpTaskResumeTool(manager: BackgroundManager): ToolDefinition {
+  return tool({
+    description: `Resume an idle sub-agent with a follow-up prompt (submit protocol). The worker keeps its context.
+Use to drive a reusable worker (e.g. an exploiter retry loop): after harvesting its submit, resume it with new instructions. Rejects terminal (terminated/failed/cancelled) tasks.`,
+    args: {
+      task_id: tool.schema.string().describe("Task ID of the idle worker to resume."),
+      prompt: tool.schema.string().describe("Follow-up prompt for the worker."),
+    },
+    async execute(args: { task_id: string; prompt: string }) {
+      try {
+        const result = await manager.resume(args.task_id, args.prompt)
+        return JSON.stringify({ ok: true, ...result })
+      } catch (err) {
+        return JSON.stringify({ ok: false, error: "resume_failed", message: String(err) })
+      }
+    },
+  })
+}
+
+/**
+ * omp_task_terminate — graceful close (submit protocol, T41). One tool, two
+ * callers:
+ *   - SELF-terminate (a sub-agent, no `task_id`): "I'm done." Appends a
+ *     `task_terminated` event for its own session; the parent's poll teardown.
+ *   - PARENT-terminate (orchestrator / SA, with `task_id`): end a reusable
+ *     worker it's done with (e.g. exploiter after the retry budget).
+ *
+ * Distinct from omp_task_cancel (emergency abort): terminate does NOT abort the
+ * session — it dies naturally.
+ */
+export function createOmpTaskTerminateTool(manager: BackgroundManager): ToolDefinition {
+  return tool({
+    description: `Gracefully end a worker (submit protocol). Two uses:
+- SELF: call with NO task_id when you (a sub-agent) are done — after your final submit and any background work.
+- PARENT: call with a task_id (orchestrator/SA) to end a reusable worker you're finished with (e.g. exploiter after retries).
+Unlike omp_task_cancel (emergency abort), terminate lets the session end naturally.`,
+    args: {
+      task_id: tool.schema
+        .string()
+        .optional()
+        .describe("Parent-terminate: the task to end. Omit for self-terminate (uses your own session)."),
+    },
+    async execute(args: { task_id?: string }, ctx: { sessionID: string }) {
+      try {
+        if (args.task_id) {
+          const ok = manager.terminate(args.task_id)
+          return JSON.stringify({ ok, mode: "parent", task_id: args.task_id })
+        }
+        manager.terminateSelf(ctx.sessionID)
+        return JSON.stringify({ ok: true, mode: "self", session_id: ctx.sessionID })
+      } catch (err) {
+        return JSON.stringify({ ok: false, error: "terminate_failed", message: String(err) })
+      }
+    },
+  })
+}

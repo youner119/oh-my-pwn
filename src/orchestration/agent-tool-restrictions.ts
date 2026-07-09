@@ -61,6 +61,20 @@ const NATIVE_TASK_DENY = {
   task_status: false,
 } as const
 
+/**
+ * Submit protocol tool ACL (T42). Every sub-agent delivers its result via
+ * `omp_task_submit` and may self-terminate via `omp_task_terminate` (called
+ * with no task_id). `omp_task_resume` + parent-`terminate` (with a task_id) are
+ * parent-only — leaf agents deny `resume` here; the strategist (which drives an
+ * exploiter retry loop) gets `resume: true` in its own map. `submit` /
+ * `terminate` are one shared surface, so they stay allowed for all.
+ */
+const SUBMIT_LEAF = {
+  omp_task_submit: true,
+  omp_task_terminate: true,
+  omp_task_resume: false,
+} as const
+
 const AGENT_RESTRICTIONS: Record<string, Record<string, boolean>> = {
   "omp-setup": {
     // Leaf agent — single-transaction Phase 0 ground-work. No
@@ -69,6 +83,7 @@ const AGENT_RESTRICTIONS: Record<string, Record<string, boolean>> = {
     omp_task_wait_all: false,
     omp_task_wait_any: false,
     omp_task_cancel: false,
+    ...SUBMIT_LEAF,
     ...DB_WRITE_DENY_CANDIDATE_CHALLENGE,
   },
   "omp-reverser": {
@@ -77,6 +92,7 @@ const AGENT_RESTRICTIONS: Record<string, Record<string, boolean>> = {
     omp_task_wait_all: false,
     omp_task_wait_any: false,
     omp_task_cancel: false,
+    ...SUBMIT_LEAF,
     ...DB_WRITE_DENY_CANDIDATE_CHALLENGE,
   },
   "omp-vulnhunter": {
@@ -84,6 +100,7 @@ const AGENT_RESTRICTIONS: Record<string, Record<string, boolean>> = {
     omp_task_wait_all: false,
     omp_task_wait_any: false,
     omp_task_cancel: false,
+    ...SUBMIT_LEAF,
     ...DB_WRITE_DENY_ALL,
   },
   "omp-strategist": {
@@ -91,6 +108,11 @@ const AGENT_RESTRICTIONS: Record<string, Record<string, boolean>> = {
     omp_task_wait_all: true,
     omp_task_wait_any: true,
     omp_task_cancel: true,
+    // Submit protocol: SA submits its own result AND drives exploiters
+    // (resume + parent-terminate).
+    omp_task_submit: true,
+    omp_task_resume: true,
+    omp_task_terminate: true,
     ...DB_WRITE_DENY_ALL,
   },
   // Exploiter — 4 mode agents (post `mode-0-9-setup` T8 cutover). All
@@ -102,6 +124,7 @@ const AGENT_RESTRICTIONS: Record<string, Record<string, boolean>> = {
     omp_task_wait_all: false,
     omp_task_wait_any: false,
     omp_task_cancel: false,
+    ...SUBMIT_LEAF,
     ...DB_WRITE_DENY_ALL,
   },
   "omp-exploiter-mode-2": {
@@ -109,6 +132,7 @@ const AGENT_RESTRICTIONS: Record<string, Record<string, boolean>> = {
     omp_task_wait_all: false,
     omp_task_wait_any: false,
     omp_task_cancel: false,
+    ...SUBMIT_LEAF,
     ...DB_WRITE_DENY_ALL,
   },
   "omp-exploiter-mode-0": {
@@ -116,6 +140,7 @@ const AGENT_RESTRICTIONS: Record<string, Record<string, boolean>> = {
     omp_task_wait_all: false,
     omp_task_wait_any: false,
     omp_task_cancel: false,
+    ...SUBMIT_LEAF,
     ...DB_WRITE_DENY_ALL,
   },
   "omp-exploiter-mode-9": {
@@ -123,6 +148,7 @@ const AGENT_RESTRICTIONS: Record<string, Record<string, boolean>> = {
     omp_task_wait_all: false,
     omp_task_wait_any: false,
     omp_task_cancel: false,
+    ...SUBMIT_LEAF,
     ...DB_WRITE_DENY_ALL,
   },
   // GPT/principle-driven prompt variants of mode-1 / mode-2. Same leaf
@@ -133,6 +159,7 @@ const AGENT_RESTRICTIONS: Record<string, Record<string, boolean>> = {
     omp_task_wait_all: false,
     omp_task_wait_any: false,
     omp_task_cancel: false,
+    ...SUBMIT_LEAF,
     ...DB_WRITE_DENY_ALL,
   },
   "omp-exploiter-mode-2-gpt": {
@@ -140,6 +167,7 @@ const AGENT_RESTRICTIONS: Record<string, Record<string, boolean>> = {
     omp_task_wait_all: false,
     omp_task_wait_any: false,
     omp_task_cancel: false,
+    ...SUBMIT_LEAF,
     ...DB_WRITE_DENY_ALL,
   },
 }

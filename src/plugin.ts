@@ -39,6 +39,9 @@ import {
   createOmpTaskWaitAllTool,
   createOmpTaskWaitAnyTool,
   createOmpTaskCancelTool,
+  createOmpTaskSubmitTool,
+  createOmpTaskResumeTool,
+  createOmpTaskTerminateTool,
 } from "./orchestration"
 import type { OmpSessionClient } from "./orchestration"
 
@@ -82,6 +85,9 @@ const OmpPlugin: Plugin = async (input) => {
   const ompTaskWaitAllTool = manager ? createOmpTaskWaitAllTool(manager) : undefined
   const ompTaskWaitAnyTool = manager ? createOmpTaskWaitAnyTool(manager) : undefined
   const ompTaskCancelTool = manager ? createOmpTaskCancelTool(manager) : undefined
+  const ompTaskSubmitTool = manager ? createOmpTaskSubmitTool(manager) : undefined
+  const ompTaskResumeTool = manager ? createOmpTaskResumeTool(manager) : undefined
+  const ompTaskTerminateTool = manager ? createOmpTaskTerminateTool(manager) : undefined
 
   // omp_load_challenge — factory so we can wire OMP_WORKSPACE_PATH into
   // state.workspace_root (T01.6). Downstream agents read this for
@@ -207,6 +213,10 @@ const OmpPlugin: Plugin = async (input) => {
       ...(ompTaskWaitAllTool ? { omp_task_wait_all: ompTaskWaitAllTool } : {}),
       ...(ompTaskWaitAnyTool ? { omp_task_wait_any: ompTaskWaitAnyTool } : {}),
       ...(ompTaskCancelTool ? { omp_task_cancel: ompTaskCancelTool } : {}),
+      // Submit protocol surface (T41-T43) — result delivery + resumable workers.
+      ...(ompTaskSubmitTool ? { omp_task_submit: ompTaskSubmitTool } : {}),
+      ...(ompTaskResumeTool ? { omp_task_resume: ompTaskResumeTool } : {}),
+      ...(ompTaskTerminateTool ? { omp_task_terminate: ompTaskTerminateTool } : {}),
       // omp-setup agent atomic tools (Phase B — T04/T06/T07/T08).
       // inspect_folder / probe_image deferred — Phase 0 is fully agentic.
       omp_setup_docker_build: ompSetupDockerBuildTool,

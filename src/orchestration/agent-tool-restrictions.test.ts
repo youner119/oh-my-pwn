@@ -65,6 +65,33 @@ describe("getAgentToolRestrictions", () => {
   })
 })
 
+describe("submit protocol ACL (T42)", () => {
+  const LEAF = [
+    "omp-setup",
+    "omp-reverser",
+    "omp-vulnhunter",
+    "omp-exploiter-mode-0",
+    "omp-exploiter-mode-1",
+    "omp-exploiter-mode-2",
+    "omp-exploiter-mode-9",
+  ]
+
+  test("every sub-agent may submit + self-terminate", () => {
+    for (const agent of [...LEAF, "omp-strategist"]) {
+      const r = getAgentToolRestrictions(agent)
+      expect(r.omp_task_submit).toBe(true)
+      expect(r.omp_task_terminate).toBe(true)
+    }
+  })
+
+  test("resume is parent-only — leaf agents denied, strategist allowed", () => {
+    for (const agent of LEAF) {
+      expect(getAgentToolRestrictions(agent).omp_task_resume).toBe(false)
+    }
+    expect(getAgentToolRestrictions("omp-strategist").omp_task_resume).toBe(true)
+  })
+})
+
 describe("DB write ACL Layer 1 (corrected 2026-06-05)", () => {
   const PS = "mcp__omp-db__patch_state"
   const CANDIDATE_CHALLENGE = [
