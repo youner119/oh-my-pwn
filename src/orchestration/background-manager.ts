@@ -526,9 +526,8 @@ export class BackgroundManager {
    * - Rejects unknown ids and terminal tasks (failed / cancelled / terminated).
    *   Allowed on `idle` OR `running` — the parent may resume right after
    *   consuming a submit, before the 3s poll has marked the task `idle`.
-   * - Re-acquires a concurrency slot ONLY if the task was `idle` (T37 released
-   *   it). A still-`running` task (poll lag) already holds its slot; acquiring
-   *   again would double-count.
+   * - No slot juggling: the slot is hold-until-terminate (never released on
+   *   idle), so resume just re-prompts — the worker already holds its slot.
    * - Re-prompts with the original agent + model; tool restrictions are
    *   re-derived from the agent.
    */
@@ -540,10 +539,6 @@ export class BackgroundManager {
       throw new Error(`cannot resume terminal task ${taskId} (status: ${task.status})`)
     }
 
-    // Only re-acquire if the slot was released (idle). Running = still held.
-    if (task.status === "idle") {
-      await this.concurrency.acquire(task.concurrencyKey)
-    }
     task.status = "running"
     task.prompt = prompt
 
@@ -562,6 +557,47 @@ export class BackgroundManager {
     this.ensurePolling()
     ompLog(`Task ${taskId}: resumed session ${task.sessionID}`)
     return { task_id: taskId, session_id: task.sessionID }
+  }
+
+  /**
+   * Parent-terminate a worker — graceful end, "this worker is done, no longer
+   * used" (submit protocol, T39). The parent has the task and marks it
+   * directly (works on `idle` OR `running`). Used to end a reusable worker
+   * (e.g. exploiter after the retry budget is spent).
+   *
+   * Distinct from `cancel` (emergency abort of UNSUBMITTED running work):
+   * terminate does NOT `client.abort()` — the idle session dies naturally
+   * (teardown (나)). The slot is released here (hold-until-terminate: it was
+   * never released on idle). Idempotent — false for unknown / already-terminal.
+   *
+   * Self-terminate (a running VH/SA/reverser appending a task_terminated event)
+   * is detected by the poll, not this method.
+   */
+  terminate(taskId: string): boolean {
+    const task = this.tasks.get(taskId)
+    if (!task) return false
+    if (isTerminalStatus(task.status)) return false
+
+    task.status = "terminated"
+    task.completedAt = new Date()
+    this.concurrency.release(task.concurrencyKey)
+    void this.dumpTranscript(task)
+    this.taskEvents.emit("done", task.id)
+    if (task.sessionID) this.appendEvent("task_terminated", { session_id: task.sessionID })
+    ompLog(`Task ${taskId}: terminated (parent)`)
+    return true
+  }
+
+  /**
+   * Self-terminate backing (submit protocol, T39) — a sub-agent declaring it is
+   * done. Runs in the CHILD's manager instance (no task-map entry), so it just
+   * appends a `task_terminated` event for its own session. The parent's poll
+   * detects it and does the actual teardown (mark terminated, release slot,
+   * dump). Backing for the `omp_task_terminate` self-call (T41).
+   */
+  terminateSelf(sessionId: string): void {
+    this.appendEvent("task_terminated", { session_id: sessionId })
+    ompLog(`session ${sessionId}: self-terminate event appended`)
   }
 
   /** Shut down: cancel all waiters, stop polling. */
@@ -763,12 +799,33 @@ export class BackgroundManager {
     try {
       const rawStatuses = await this.client.status()
       const statuses = unwrapData<Record<string, { type: string }>>(rawStatuses)
-      // Submit protocol (T36): fold events.log once per tick so a submit from a
-      // sub-agent's own plugin closure is detected cross-closure.
-      const ledgers = this.submissionLedgers()
+      // Submit protocol: fold events.log once per tick so submits (T36) and
+      // self-terminate events (T39) from a sub-agent's own plugin closure are
+      // detected cross-closure.
+      const events = readEventsLog(eventsLogPath())
+      const ledgers = foldSubmissions(events)
+      const terminatedSessions = new Set<string>()
+      for (const e of events) {
+        if (e.type === "task_terminated") terminatedSessions.add(e.session_id)
+      }
 
       for (const task of this.tasks.values()) {
         if (task.status !== "running" || !task.sessionID) continue
+
+        // T39: self-terminate (a running worker — VH/SA/reverser — appended a
+        // task_terminated event as its last action). Graceful done: mark
+        // terminated, release the slot (held until now), dump, wake any waiter.
+        // Checked BEFORE idle so a submit-then-self-terminate lands as
+        // terminated, not idle. buildOutcome still returns any unconsumed submit.
+        if (terminatedSessions.has(task.sessionID)) {
+          task.status = "terminated"
+          task.completedAt = new Date()
+          this.concurrency.release(task.concurrencyKey)
+          void this.dumpTranscript(task)
+          this.taskEvents.emit("done", task.id)
+          ompLog(`Task ${task.id}: self-terminated → terminated`)
+          continue
+        }
 
         // A new unconsumed submit wakes any waiter (task stays running — it is
         // still alive, possibly idle-awaiting-resume). Harmless no-op if no
@@ -820,11 +877,12 @@ export class BackgroundManager {
         // alive, awaiting parent resume/terminate. Idle-without-submit is the
         // crash fallback.
         if (hasSubmitted) {
-          // Awaiting resume: release the slot (not computing), but do NOT emit
-          // done / dump — the submit already resolved the parent, and the
-          // session must stay alive for a possible resume.
+          // Awaiting resume — mark idle but do NOT emit done / dump / release
+          // the slot. Slot is hold-until-terminate: idle-awaiting is an
+          // exploiter-only, brief window (between SA resume decisions), so
+          // releasing + re-acquiring the slot is pointless churn. The slot is
+          // released once, at terminate (T39).
           task.status = "idle"
-          this.concurrency.release(task.concurrencyKey)
           ompLog(`Task ${task.id}: submitted → idle (awaiting resume)`)
         } else {
           // Crash fallback — finished a turn without ever submitting.

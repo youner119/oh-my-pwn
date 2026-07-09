@@ -194,6 +194,67 @@ describe("BackgroundManager.resume (T38)", () => {
   })
 })
 
+describe("BackgroundManager terminate (T39)", () => {
+  test("parent-terminate marks terminated, idempotent, blocks resume", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "omp-work-"))
+    try {
+      const manager = new BackgroundManager({ client: stubClient, directory: dir })
+      const r = await manager.launchAsync({
+        parentSessionID: "p",
+        agent: "omp-exploiter-mode-1",
+        description: "E",
+        prompt: "go",
+      })
+      expect(manager.terminate(r.task_id)).toBe(true)
+      expect(manager.getTask(r.task_id)?.status).toBe("terminated")
+      // Idempotent + unknown.
+      expect(manager.terminate(r.task_id)).toBe(false)
+      expect(manager.terminate("no-such-task")).toBe(false)
+      // A terminated worker cannot be resumed.
+      await expect(manager.resume(r.task_id, "x")).rejects.toThrow()
+      manager.shutdown()
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  test(
+    "self-terminate event → poll marks the running task terminated",
+    async () => {
+      const prevDir = process.env.OMP_STATE_DIR
+      const prevInst = process.env.OMP_INSTANCE_ID
+      const stateDir = mkdtempSync(join(tmpdir(), "omp-state-"))
+      const workDir = mkdtempSync(join(tmpdir(), "omp-work-"))
+      process.env.OMP_STATE_DIR = stateDir
+      process.env.OMP_INSTANCE_ID = "test-t39"
+
+      try {
+        const manager = new BackgroundManager({ client: stubClient, directory: workDir, enableEventLog: true })
+        const r = await manager.launchAsync({
+          parentSessionID: "p",
+          agent: "omp-reverser",
+          description: "R",
+          prompt: "go",
+        })
+        // Child self-terminates (appends task_terminated for its session).
+        manager.terminateSelf(r.session_id)
+        // Poll tick (3s) detects the terminated event on the running task.
+        await new Promise((res) => setTimeout(res, 3500))
+        expect(manager.getTask(r.task_id)?.status).toBe("terminated")
+        manager.shutdown()
+      } finally {
+        if (prevDir === undefined) delete process.env.OMP_STATE_DIR
+        else process.env.OMP_STATE_DIR = prevDir
+        if (prevInst === undefined) delete process.env.OMP_INSTANCE_ID
+        else process.env.OMP_INSTANCE_ID = prevInst
+        rmSync(stateDir, { recursive: true, force: true })
+        rmSync(workDir, { recursive: true, force: true })
+      }
+    },
+    10000,
+  )
+})
+
 describe("BackgroundManager idle judgment (T37)", () => {
   test(
     "submit-then-idle → task marked idle (awaiting resume), not failed",
