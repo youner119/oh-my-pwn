@@ -14,7 +14,7 @@ const OMP_REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..")
  *   2. Spawns Exploiter as sub-agent (Pattern 1 — omp_task_launch +
  *      omp_task_wait_all([id])) per step
  *   3. Handles retry/adjustment on failure
- *   4. Returns structured result to Orchestrator (sole writer)
+ *   4. Submits structured result via omp_task_submit, then self-terminates
  *
  * Knowledge base consumption: read knowledge/ctf-pwn/SKILL.md (catalog
  * index) before Reverser/pseudocode → analyze → lazy-read detail md /
@@ -36,7 +36,7 @@ const OMP_REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..")
 const STRATEGIST_PROMPT = `You are the OmP StrategyAgent.
 
 Your job is to **verify ONE primitive** or **combine verified primitives**
-into a bigger one, then **return the result** to Orchestrator.
+into a bigger one, then **submit the result** to the Orchestrator (then self-terminate).
 
 ## Scope — READ THIS FIRST
 
@@ -52,9 +52,9 @@ exploit code yourself.**
   OmP tracking + concurrency pipeline and is denied to you at the permission
   layer.
 - DO: adjust and retry when Exploiter fails (max 3 retries)
-- DO: return structured results with \`gives\`, \`needs\`, \`poc_script_path\`
+- DO: submit structured results (via \`omp_task_submit\`) with \`gives\`, \`needs\`, \`poc_script_path\`
 - DO NOT: write pwntools code — Exploiter writes all code
-- DO NOT: call \`mcp__omp-db__patch_state\` / \`mcp__omp-db__create_candidate\` / \`mcp__omp-db__patch_candidate\` / \`mcp__omp-db__delete_candidate\` / \`omp_append_journal\` — Orchestrator is the sole writer (ACL-denied; calling these tools returns an error). Return your result via the structured JSON in Step 8; the Orchestrator persists.
+- DO NOT: call \`mcp__omp-db__patch_state\` / \`mcp__omp-db__create_candidate\` / \`mcp__omp-db__patch_candidate\` / \`mcp__omp-db__delete_candidate\` / \`omp_append_journal\` — Orchestrator is the sole writer (ACL-denied; calling these tools returns an error). Submit your result via the structured JSON in Step 8 (omp_task_submit), then self-terminate; the Orchestrator persists.
 - DO NOT: try to build the full exploit chain — Orchestrator manages cross-round strategy
 - DO NOT: rewrite paths. Forward Orchestrator's values to Exploiter as-is.
 - DO NOT: invent a \`session_id\`. Orchestrator assigns it; forward it.
@@ -633,7 +633,7 @@ value (information gain — VH's hypothesis, your evidence). Two rules:
   Orchestrator can route it; do not silently overwrite the candidate's
   identity.
 
-### Step 8: Return structured result
+### Step 8: Submit result, then self-terminate
 
 \`\`\`json
 {
@@ -659,6 +659,13 @@ value (information gain — VH's hypothesis, your evidence). Two rules:
   "retries_used": 0
 }
 \`\`\`
+
+Submit this object via \`omp_task_submit({ result: <the object above> })\`,
+then call \`omp_task_terminate\` (no \`task_id\` = self). **Always submit** —
+\`confirmed\` / \`failed\` / \`inconclusive\` all submit; only a crash leaves no
+submission. Your Exploiter (Step 6–7) is already terminal by this point, so
+self-terminating here is clean. The Orchestrator harvests via
+\`omp_task_wait_any\` / \`omp_task_wait_all\`; **stdout is not read**.
 
 **Status mapping (Mode 0/9 dispatch).** Exploiter Mode 0/9 returns
 \`status: "passed" | "failed" | "inconclusive"\`. Map 1:1 to SA's status:

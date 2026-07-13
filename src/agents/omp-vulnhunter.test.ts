@@ -124,14 +124,18 @@ describe("createOmpVulnhunterAgent", () => {
     expect(p).toContain('"rationale"')
   })
 
-  test("prompt returns a JSON array on stdout (no markdown artifact)", () => {
+  test("prompt submits candidates then self-terminates (no markdown artifact)", () => {
     // Ensemble paradigm: VH produces no on-disk artifact. The single
-    // output channel is a JSON array on stdout that the Orchestrator
-    // merges across ensemble instances.
+    // output channel is omp_task_submit({ result: { candidates: [...] } }),
+    // after which the instance self-terminates. The Orchestrator harvests
+    // the submitted result and merges across ensemble instances (stdout
+    // is not read).
     const agent = createOmpVulnhunterAgent("test-model")
     const p = agent.prompt ?? ""
-    expect(p).toContain("JSON array")
-    expect(p).toContain("stdout")
+    expect(p).toContain("omp_task_submit")
+    expect(p).toContain("candidates")
+    expect(p).toContain("omp_task_terminate")
+    expect(p).toContain("self-terminate")
     // Markdown artifact + per-VH state field references are gone.
     expect(p).not.toContain("vulnhunter-analysis.md")
     expect(p).not.toContain("vulnhunter_analysis_path")
@@ -147,13 +151,13 @@ describe("createOmpVulnhunterAgent", () => {
     expect(p).toContain("failed")
   })
 
-  test("prompt signals stagnation via empty JSON array", () => {
+  test("prompt signals stagnation via empty candidates submission", () => {
     // VH no longer appends a journal "no more candidates" entry — the
-    // Orchestrator records stagnation when ensemble outputs collapse to
-    // empty arrays.
+    // Orchestrator records stagnation when ensemble submissions collapse
+    // to empty candidate arrays.
     const agent = createOmpVulnhunterAgent("test-model")
     const p = agent.prompt ?? ""
-    expect(p).toContain("[]")
+    expect(p).toContain("{ candidates: [] }")
     expect(p).toContain("stagnation")
   })
 
@@ -177,7 +181,7 @@ describe("createOmpVulnhunterAgent", () => {
     expect(p).toContain("Cross-reference mitigations")
     expect(p).toContain("Consult the extended knowledge base")
     expect(p).toContain("Rank candidates")
-    expect(p).toContain("Return a JSON array")
+    expect(p).toContain("Submit your result")
   })
 
   test("prompt defines default vs explorer mode dispatch", () => {

@@ -41,7 +41,7 @@ const OMP_REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..")
  * `define_types`, `make_function_at`, `patch_bytes`, `save_bndb`).
  * The Reverser's `.bndb` stays neutral for user review.
  *
- * Output: a JSON array of vulnerability candidates returned on stdout.
+ * Output: submitted via omp_task_submit({ result: { candidates: [...] } }), then self-terminate.
  * The Orchestrator (sole state writer per parallel-orchestration spec)
  * receives the array from every ensemble instance, dedups/merges across
  * them, and writes the merged list into `state.vuln_candidates[]`.
@@ -97,8 +97,9 @@ Reverser ran main-rooted BFS and missed thread workers,
 \`state.source_present === true\` and the Reverser took the
 stub-artifact path; or the user explicitly asked for a wider scan.
 
-**Both modes** still emit the JSON candidate array on stdout (Step 11),
-obey the same forbidden-words / scope rules, and respect read-only
+**Both modes** still submit the JSON candidate array (Step 10) via
+\`omp_task_submit\` then self-terminate, obey the same forbidden-words /
+scope rules, and respect read-only
 BN MCP (no mutation tools — see Step 5b).
 
 **Blind flag (orthogonal to mode).** If your delegation prompt tells you
@@ -381,7 +382,13 @@ are unchanged.
    - Indirect evidence (suspicious pattern, needs verification) → medium
    - Speculative (pattern matches but unclear) → low
 
-10. **Return a JSON array on stdout.** That is your ONLY output channel.
+10. **Submit your result, then self-terminate.** Call
+    \`omp_task_submit({ result: { candidates: [...] } })\` with the candidate
+    array under \`candidates\`, then call \`omp_task_terminate\` (no \`task_id\` =
+    self). This is your ONLY output channel — the Orchestrator harvests the
+    submitted result via \`omp_task_wait_all\` / \`omp_task_wait_any\`; **stdout is
+    not read**. **Always submit**: even when you found nothing, submit
+    \`{ candidates: [] }\` before terminating. Only a crash leaves no submission.
     Do NOT call \`mcp__omp-db__patch_state\` / \`mcp__omp-db__patch_candidate\` /
     \`mcp__omp-db__create_candidate\` / \`mcp__omp-db__delete_candidate\` / \`omp_append_journal\` or
     write any markdown artifact (ACL-denied). You run as one instance of an
@@ -389,8 +396,8 @@ are unchanged.
     across them, and is the sole writer of \`state.vuln_candidates[]\` (summary)
     and \`.omp/candidates/<id>.json\` (detail) via \`mcp__omp-db__create_candidate\`.
 
-    Format — JSON array, each element a candidate with **summary + detail
-    fields** in one object (Orchestrator splits when persisting):
+    Format — the \`candidates\` array holds one element per candidate, each with
+    **summary + detail fields** in one object (Orchestrator splits when persisting):
 
     \`\`\`json
     [
@@ -424,7 +431,7 @@ are unchanged.
       lives here. There is no separate markdown.
     - \`libc_range\` — \`"2.31-2.35"\` etc., or \`null\`.
 
-    Empty array (\`[]\`) is a valid response when no candidates are found.
+    Empty candidates (\`{ candidates: [] }\`) is a valid submission when no candidates are found.
 
 ## Updating after verification (2nd+ pass — CRITICAL)
 
@@ -432,9 +439,9 @@ When the Orchestrator relaunches you after StrategyAgent + Exploiter
 have run, the prior \`vuln_candidates[]\` (with \`verified\` /
 \`verification_result\` / SA observations) is visible in
 \`mcp__omp-db__read_state\`. Your job is to **derive new candidates from those
-observations** — your output is still a JSON array on stdout, and you
-emit only NEW candidates (not duplicates of prior entries — the
-Orchestrator dedups by id).
+observations** — your output is still submitted via \`omp_task_submit\`
+(then self-terminate), and you emit only NEW candidates (not duplicates
+of prior entries — the Orchestrator dedups by id).
 
 1. Read state — check \`vuln_candidates[]\` for \`verified\`,
    \`verification_result\`, and SA observations (\`observed_leaks\`,
@@ -457,13 +464,13 @@ Orchestrator dedups by id).
    trigger/input did not produce a tcache-sized chunk. It does NOT mean
    tcache poisoning is impossible. Check pseudocode for conditional
    allocation sizes before treating the candidate as finished.
-4. Emit derived candidates as a JSON array (same shape as the 1st pass);
+4. Submit derived candidates under \`{ candidates: [...] }\` (same element shape as the 1st pass);
    each \`rationale\` should link SA observation to pseudocode evidence
    (\`origin_type: "derived"\` + \`derived_from: <prior id>\` if you want
    the Orchestrator to chain them — those fields are recognised by the
    schema but optional).
 5. If all candidates have \`verification_result: "failed"\` or are
-   exhausted and you find nothing new, return \`[]\`. The Orchestrator
+   exhausted and you find nothing new, submit \`{ candidates: [] }\`. The Orchestrator
    records the stagnation and decides whether to relaunch with broader
    knowledge base consultation or to stop the loop.
 
@@ -509,7 +516,7 @@ When C source is available:
 export function createOmpVulnhunterAgent(model: string): AgentConfig {
   return {
     description:
-      "Vulnerability candidate finder (ensemble instance) — reads Reverser output (or C source), identifies bugs with primitive tags and confidence scores, returns the ranked candidate list as a JSON array on stdout. The Orchestrator dedups across ensemble outputs and is the sole writer of state.vuln_candidates[]. Does NOT design exploit steps (StrategyAgent's job) and does NOT call mcp__omp-db__patch_state / omp_append_journal or produce any markdown artifact.",
+      "Vulnerability candidate finder (ensemble instance) — reads Reverser output (or C source), identifies bugs with primitive tags and confidence scores, submits the ranked candidate list via omp_task_submit ({ candidates: [...] }) then self-terminates. The Orchestrator dedups across ensemble outputs and is the sole writer of state.vuln_candidates[]. Does NOT design exploit steps (StrategyAgent's job) and does NOT call mcp__omp-db__patch_state / omp_append_journal or produce any markdown artifact.",
     prompt: VULNHUNTER_PROMPT,
     model,
     mode: "all",
