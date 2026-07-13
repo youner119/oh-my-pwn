@@ -82,11 +82,13 @@ describe("createOmpStrategistAgent", () => {
     expect(p).toContain("skip silently")
   })
 
-  test("prompt spawns Exploiter via launch + wait_all (Pattern 1)", () => {
+  test("prompt drives Exploiter as resumable worker (launch + resume + terminate)", () => {
     const agent = createOmpStrategistAgent("test-model")
     const p = agent.prompt ?? ""
     expect(p).toContain("omp_task_launch")
     expect(p).toContain("omp_task_wait_all")
+    expect(p).toContain("omp_task_resume")
+    expect(p).toContain("omp_task_terminate")
     expect(p).toContain("exploiter")
     expect(p).not.toContain("run_in_background")
   })
@@ -102,10 +104,11 @@ describe("createOmpStrategistAgent", () => {
     expect(p).toContain('"status"')
   })
 
-  test("prompt specifies retry with max 3", () => {
+  test("prompt caps Exploiter commands at max_retries_per_candidate (default 3)", () => {
     const agent = createOmpStrategistAgent("test-model")
     const p = agent.prompt ?? ""
-    expect(p).toContain("3 retries")
+    expect(p).toContain("max_retries_per_candidate")
+    expect(p).toContain("up to 2 resumes")
     expect(p).toContain("inconclusive")
   })
 
@@ -282,10 +285,10 @@ describe("createOmpStrategistAgent", () => {
     // Round table — round 1 lazy, round 2-3 escalation ON
     expect(p).toContain("Round 1")
     expect(p).toContain("retries_used == 0")
-    expect(p).toContain("retries_used == 1")
+    expect(p).toContain("resume #1")
     expect(p).toContain("Escalation ON")
-    // Step 7 retry triggers revisit of Step 4 with escalation
-    expect(p).toContain("escalation on retry")
+    // Step 7 resume triggers revisit of Step 4 with escalation
+    expect(p).toContain("escalation on resume")
     // User hint takes priority over the round mode
     expect(p).toContain("User hint")
   })
