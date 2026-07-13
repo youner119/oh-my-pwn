@@ -224,6 +224,7 @@ read -r -d '' OPENCODE_CONFIG_JSON <<EOF || true
 {
   "\$schema": "https://opencode.ai/config.json",
   "plugin": ["file://$PLUGIN_PATH"],
+  "tool_output": { "max_lines": 4000, "max_bytes": 102400 },
   "mcp": {
     "pwno-mcp": {
       "type": "local",
