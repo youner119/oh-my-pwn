@@ -768,7 +768,19 @@ Read \`mcp__omp-db__read_state\` and categorize candidates:
   the user will (rightly) stop you. If a primitive you want to use is not yet
   \`confirmed\`, its verify/earn is THIS round's task and the combine is a LATER
   round.
-- **Verified + nothing to combine:** skip (already done)
+- **Promotable (\`mechanism_confirmed\` → \`confirmed\`):** a \`mechanism_confirmed\`
+  candidate M whose uncovered \`need\` N is now covered by some \`confirmed\`
+  primitive P's \`gives\` → assign SA a **promote** task: merge M's mechanic with
+  P's earn-code into ONE self-contained PoC that leaks/earns N for real (no
+  assumption) and drives M's mechanic on the earned value. On success M is
+  promoted to \`confirmed\` in place (Step 2.4) — its \`needs\` stay (they record the
+  chain edge, now covered by P). **This is the ONLY exit from
+  \`mechanism_confirmed\`** — without it such a candidate is stranded forever
+  (it is neither unverified nor \`confirmed\`, so it falls through every other
+  bucket).
+- **Verified + nothing to combine:** skip (already done). \`mechanism_confirmed\`
+  with a still-uncovered need is NOT "done" — it is Promotable-pending, waiting
+  for a \`confirmed\` source of its need; do not skip it as finished.
 
 **Minimal unit — one SA = ONE incremental step.** A task advances the chain by a
 single layer, never several at once:
@@ -784,9 +796,12 @@ single layer, never several at once:
 
 Decide tasks for this round:
 - If unverified candidates exist → priority: verify them first
-- If all candidates verified → look for combination opportunities:
-  scan all \`gives\` and \`needs\` arrays. If candidate A gives "libc_base"
-  and candidate B needs "libc_base", assign SA to combine A+B.
+- Scan \`gives\` / \`needs\` across all \`confirmed\` candidates for opportunities:
+  - **combine**: A gives "libc_base", B needs "libc_base" (both \`confirmed\`) →
+    assign SA to combine A+B.
+  - **promote**: a \`mechanism_confirmed\` M's uncovered need is now covered by a
+    confirmed \`gives\` → assign SA the promote task (Step 2.1 Promotable). Same
+    priority as combine.
 - If no tasks possible → exit loop (go to Phase 3)
 
 #### Step 2.2 — Allocate session IDs + build task list
@@ -1084,8 +1099,17 @@ When you write \`mcp__omp-db__patch_state\` inside the loop, the patch must refl
   - The mechanic was proven only under an input **you explicitly authorized** SA
     to assume (a leak-assumed pre-verify), OR a \`need\` is not yet covered by any
     confirmed \`gives\` → \`verification_result: "mechanism_confirmed"\`. Make sure
-    every assumed / uncovered dependency is in \`needs\`. The real end-to-end proof
-    is a SEPARATE combine candidate — this is NOT a usable capability yet.
+    every assumed / uncovered dependency is in \`needs\`. This is NOT a usable
+    capability yet — it is promoted to \`confirmed\` later by a **promote** task
+    (Step 2.1 Promotable) once a \`confirmed\` primitive covers its need.
+  - **Promote result** (SA returned \`status: "confirmed"\` for a **promote** task
+    on a \`mechanism_confirmed\` candidate M — the merged self-contained PoC earned
+    the need for real): patch M **in place** → \`verification_result: "confirmed"\`
+    + replace \`poc_script_path\` with the merged PoC. **Keep M's \`needs\`** — they
+    record the chain edge (M depends on N, now covered by the confirmed source);
+    do NOT clear them. No new candidate is created (in-place promotion). If the
+    promote PoC did not actually earn the need (still assumed) → it stays
+    \`mechanism_confirmed\`.
   - SA reached the result via an UNAUTHORIZED out-of-band shortcut (pie_base from
     \`/proc/<pid>/maps\`, hardcoded remote addresses, ptrace-fabricated state —
     anything that MANUFACTURES a capability the exploit must earn) →
