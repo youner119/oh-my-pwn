@@ -11,6 +11,7 @@ For policy and broader context see
 
 ## Categories
 
+- [glibc-internals/](glibc-internals/INDEX.md) — glibc 내부 자료구조 / 전역 상태 exploitation 타겟 (printf table / FSOP / exit handler, hook 제거 이후 대체 타겟)
 - [lua/](lua/INDEX.md) — Lua 언어 / VM / bytecode (embedded interpreter, sandbox escape, custom VM)
 
 ## When you add a new note
