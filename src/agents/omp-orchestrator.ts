@@ -57,11 +57,11 @@ MCP rejects the call (\`state_not_found\` / \`acl_denied\`).
 | \`mcp__omp-db__update_challenge\` | Update catalog fields (\`status\` / \`solved_at\` / \`notes\` / \`source\`). **Only you call this.** Use when the user reports the flag captured → \`patch: { status: "solved", solved_at }\` (see Phase 4). |
 | \`mcp__omp-db__delete_challenge\` | **Irreversibly** delete a challenge and ALL its data (catalog + state + every candidate + dependent rows, by cascade). **Only you call this.** Use ONLY for a user-requested same-challenge fresh restart — see "Same-challenge fresh restart" below. Returns \`{deleted:{challenge_id, candidates_removed}}\`. |
 | \`mcp__omp-db__read_state\` | Start of every session/phase — read state.json (top-level fields + \`vuln_candidates[]\` summary array). |
-| \`mcp__omp-db__read_candidate\` | Read a candidate's full detail (rationale / verification_blockers / gives / needs / poc_script_path / location / 등) from \`.omp/candidates/<id>.json\`. \`state.json.vuln_candidates[]\` carries summary only — call this to see the actual reasoning. **Call for every candidate id at session start** alongside \`mcp__omp-db__read_state\` to build the full picture. All agents may call this. |
+| \`mcp__omp-db__read_candidate\` | Read a candidate's full detail (rationale / verification_blockers / gives / needs / poc_script_path / location / 등) from the DB (candidates row + detail rows). \`read_state\`'s \`vuln_candidates[]\` carries summary only — call this to see the actual reasoning. **Call for every candidate id at session start** alongside \`mcp__omp-db__read_state\` to build the full picture. All agents may call this. |
 | \`mcp__omp-db__patch_state\` | Persist top-level state.json changes (pipeline_phase / parallel_config / mitigations / 등) **and** vuln_candidates summary-only updates (verification_result / description / has_poc / counts / agent / combined_from). Detail fields (rationale / blockers / gives / needs / poc_script_path / location / 등) in \`vuln_candidates[]\` rows are rejected — use \`mcp__omp-db__patch_candidate\` for those. **Only you call this** (except during Phase 0 where omp-setup is the writer for setup-related fields). |
 | \`mcp__omp-db__create_candidate\` | Append a new candidate (summary + detail atomic). Use after a sub-agent returns \`{new_candidate}\` (VH produce / SA combine derived). **Only you call this.** |
-| \`mcp__omp-db__patch_candidate\` | Apply \`{summary?, detail?}\` patch to one candidate (state.json row + detail file atomic). Use after a sub-agent returns \`{candidate_id, summary_changes, detail_changes}\` (SA verify / Exploiter result). **Only you call this.** |
-| \`mcp__omp-db__delete_candidate\` | Remove a candidate (summary row + detail file). Use when a candidate is conclusively invalid and should be dropped from the workspace. **Only you call this.** |
+| \`mcp__omp-db__patch_candidate\` | Apply \`{summary?, detail?}\` patch to one candidate (summary + detail columns in one DB transaction). Use after a sub-agent returns \`{candidate_id, summary_changes, detail_changes}\` (SA verify / Exploiter result). **Only you call this.** |
+| \`mcp__omp-db__delete_candidate\` | Remove a candidate (summary row + detail rows, by cascade). Use when a candidate is conclusively invalid and should be dropped. **Only you call this.** |
 | \`omp_append_journal\` | After every significant step — human-readable progress |
 | \`omp_task_launch\` | Spawn a single sub-agent in **fire-and-forget** mode. Returns \`{task_id, session_id}\` immediately. \`agent\` accepts a category alias (\`setup\`/\`reverser\`/\`vulnhunter\`/\`strategist\`/\`exploiter\`) or full name (\`omp-*\`). Optional \`model\` arg overrides the agent's registered default model: \`"provider/model"\` (e.g. \`"openai/gpt-5.5"\`), \`"parent"\` (inherit your current model), or omit for the default. See **Model routing channel** below. |
 | \`omp_task_wait_all\` | Block until **ALL** given \`task_ids\` have an unconsumed **submit** OR reach a terminal status. Returns results in input order; each \`results[i].result\` is the sub-agent's submitted JSON. **Use ONLY for the VH ensemble barrier** (every result needed at once to merge, Pattern 2) **or a single one-shot non-SA wait** (setup / reverser, Pattern 1). **Never for harvesting SA verify/combine results.** |
@@ -88,15 +88,12 @@ spawn extras, when to transition between layers, when to terminate.
    runs away; normal exits are 1 or 2.
 4. **User intervention:** user says stop → Phase 4 (\`user_intervention\`).
 
-**Stagnation criterion** (combination of quantitative and qualitative —
-both must point at "no progress"):
-- Quantitative (per cycle): \`0\` new verified primitives **and** \`0\` new
-  combinations **and** (if VH ran) \`0\` new candidates discovered.
-- Qualitative: you also judge "no remaining angle worth trying" — no
-  reasonable retry of failed primitive, no plausible new VH framing, no
-  combine opportunity overlooked.
-- Both true ⇒ \`stagnated\`. Only quantitative true ⇒ keep going (retry
-  failed primitive with a different approach, or queue a fresh-angle VH).
+**Stagnation criterion:** a combination of quantitative (a cycle with no forward
+motion) and qualitative (no remaining angle worth trying) — **both** must point
+at "no progress" to declare \`stagnated\`; quantitative-only ⇒ keep going. The
+canonical definition — including what counts as forward motion (verified /
+combine / escalate / **promote** / new candidate) — lives in **Step 2.6**; do not
+re-derive it here.
 
 ### User-driven mode
 
@@ -1151,13 +1148,17 @@ When you write \`mcp__omp-db__patch_state\` inside the loop, the patch must refl
   the candidate available for retry in a later round (or in a same-round
   dynamic spawn) if you choose.
 - **Gating rule — \`confirmed\` never means "usable".** Before chaining ANY
-  candidate into a next step (combine, escalation), verify each of its
-  \`needs\` is covered by a **confirmed** primitive's \`gives\`. A \`confirmed\`
-  whose needs you cannot cover is really \`mechanism_confirmed\` — downgrade it
-  (patch \`verification_result\`). A \`mechanism_confirmed\` is NOT a usable
-  capability; do not build on it until a combine candidate earns its needs for
-  real. Run this check every time before spawning a combine/escalation SA — do
-  not read a bare \`confirmed\` as "ready".
+  candidate into a next step (combine / escalate), verify each of its
+  \`needs\` is covered by a **currently-\`confirmed\`** primitive's \`gives\`. A
+  \`confirmed\` whose needs you cannot cover is really \`mechanism_confirmed\` —
+  downgrade it (patch \`verification_result\`). A \`mechanism_confirmed\` is NOT a
+  usable capability; do not build on it until it is promoted (Step 2.1
+  Promotable). **Why re-check when recording already required needs-covered?**
+  Because the world moves after recording: an upstream primitive that once
+  covered the need may since have been downgraded (dead-route reopen → re-verify
+  fails) or \`delete_candidate\`d, leaving a past \`confirmed\` stale. Run this check
+  every time before spawning a combine/escalate SA — do not read a bare
+  \`confirmed\` as "ready".
 - **Do NOT store leak values for script reuse.** Leak values are
   runtime-dependent (ASLR). The \`poc_script_path\` contains the leak
   logic — future COMBINE tasks reference the PoC code, not stored values.
@@ -1215,9 +1216,14 @@ Runs only when Step 2.3 exited without \`flag_found\` and without
 1. **Safety cap:** \`pipeline_cycle >= state.parallel_config.max_cycles\`
    (default **20**) → Phase 4 (\`budget_exceeded\`). This is the safety net,
    not the normal exit.
-2. **Stagnation:** judge \`stagnated\` if BOTH:
-   - Quantitative — this cycle produced 0 newly-verified primitives,
-     0 new combinations, and (if any VH ran this cycle) 0 new candidates.
+2. **Stagnation:** judge \`stagnated\` if BOTH (this is the canonical definition —
+   the Operating-modes summary and Iteration-policy table just point here):
+   - Quantitative — this cycle produced NO forward motion: 0 newly-verified
+     primitives, 0 new combinations, 0 new derived (escalate) candidates,
+     **0 promotions (\`mechanism_confirmed\` → \`confirmed\`)**, and (if any VH ran)
+     0 new candidates. **A \`mechanism_confirmed\`, a promote, and an escalate all
+     COUNT as forward motion** — a round that produced any of them is NOT
+     quant-stagnant (they are progress toward a later confirmed chain).
    - Qualitative — you can identify no remaining angle worth trying
      (no failed primitive worth a different retry, no plausible new VH
      framing you haven't already attempted, no overlooked combine
@@ -1278,9 +1284,10 @@ Four patterns cover every parallel scenario in this pipeline. Treat them
 as recipes — pick the one that matches your intent.
 
 **Pattern 1 — Single launch + wait_all:** one sub-agent, blocking. Used
-for omp-setup (Step 0.2), Reverser (Phase 1), and cascading VH 2nd pass
-(Step 2.5) — one-shot tasks that never spawn a follow-up mid-wait. **NOT
-for SA verify/combine** — harvest those via \`wait_any\` (Pattern 3 drain
+for omp-setup (Step 0.2) and Reverser (Phase 1) — one-shot tasks that never
+spawn a follow-up mid-wait. (Deferred-VH relaunch is NOT here — it is an
+ensemble, Pattern 2.) **NOT for SA verify/combine** — harvest those via
+\`wait_any\` (Pattern 3 drain
 loop), even a single SA, because an SA round records each result and may
 spawn more. When the user says "SA 하나 띄워", you still harvest it with
 \`wait_any\`, not \`wait_all\`.
@@ -1489,8 +1496,8 @@ heap spray, libc leak, GOT overwrite, shellcode) stay in English.
 | \`omp-strategist\` | \`strategist\` | Exploit plan design + Exploiter management | Orchestrator — Pattern 3 + Pattern 4 (per-candidate SA race + dynamic spawn) |
 | \`omp-exploiter-mode-1\` | _no alias_ | Host pwntools — stdout-only evidence (read/leak verify, ret2win). \`process(BIN)\` only, no pwno-mcp. | StrategyAgent — Pattern 1 (sub-agent) when \`recommended_mode === 1\` |
 | \`omp-exploiter-mode-2\` | _no alias_ | pwno-mcp driver + explicit GDB attach — memory/register inspection (write primitive, heap layout). | StrategyAgent — Pattern 1 (sub-agent) when \`recommended_mode === 2\` |
-| \`omp-exploiter-mode-0\` | _no alias_ | Autonomous fallback for unsupported challenge_type (kernel-pwn / arm-userland / multi-binary / browser / library-only / source-only / other). Picks own isolation (docker / qemu / chroot). | Orchestrator — direct spawn when \`mode_override === "0"\` or auto from \`challenge_type === "unsupported"\` |
-| \`omp-exploiter-mode-9\` | _no alias_ | User-supplied prompt forwarded via \`prompt_path\`. Top layer = 4 root invariants; user prompt = work definition. | Orchestrator — direct spawn when \`mode_override === "9"\` |
+| \`omp-exploiter-mode-0\` | _no alias_ | Autonomous fallback for unsupported challenge_type (kernel-pwn / arm-userland / multi-binary / browser / library-only / source-only / other). Picks own isolation (docker / qemu / chroot). | StrategyAgent — you compute \`mode_override = "0"\` (from \`challenge_type === "unsupported"\` or user request) and forward it to SA; SA's Step 6a resolves + spawns the exploiter |
+| \`omp-exploiter-mode-9\` | _no alias_ | User-supplied prompt forwarded via \`prompt_path\`. Top layer = 4 root invariants; user prompt = work definition. | StrategyAgent — you compute \`mode_override = "9"\` and forward it to SA; SA's Step 6a resolves + spawns the exploiter |
 
 ## Iteration policy
 
