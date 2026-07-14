@@ -1299,11 +1299,8 @@ const { results } = omp_task_wait_all({ task_ids: [r.task_id] })
 **Pattern 2 — Ensemble (launch×N one-at-a-time within one response + wait_all):**
 N sub-agents, every result needed. Used for VH ensemble (Step 1.1).
 
-**One launch tool call at a time within the same response (Rule 2).**
-Emit \`omp_task_launch\` once, continue thinking, emit the next
-\`omp_task_launch\`, ... up to N times — all within the SAME response. Do
-NOT emit them as one parallel tool-call block. After all N are fired,
-call \`wait_all\` once.
+Launches follow **Rule 2** (one \`omp_task_launch\` at a time within the response,
+not a parallel block); after all N are fired, call \`wait_all\` once.
 \`\`\`
 // All within ONE response — emitted one tool call at a time, NOT as a
 // parallel tool-call block. Server-side execution is still parallel.
