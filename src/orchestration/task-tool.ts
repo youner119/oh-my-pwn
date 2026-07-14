@@ -99,7 +99,7 @@ Use for ensemble patterns where every result is needed (e.g., VH ensemble → me
         .array(tool.schema.string())
         .describe("Task IDs from prior omp_task_launch calls."),
     },
-    async execute(args: { task_ids: string[] }) {
+    async execute(args: { task_ids: string[] }, ctx: { abort?: AbortSignal }) {
       try {
         if (!Array.isArray(args.task_ids) || args.task_ids.length === 0) {
           return JSON.stringify({
@@ -108,7 +108,10 @@ Use for ensemble patterns where every result is needed (e.g., VH ensemble → me
             message: "task_ids must be a non-empty array of strings",
           })
         }
-        const result = await manager.waitAll(args.task_ids)
+        // Forward ctx.abort so an interrupted wait releases its manager-side
+        // `done` listener instead of orphaning it (an orphan later eats a
+        // task's submit — consumes + discards it — starving the next wait).
+        const result = await manager.waitAll(args.task_ids, ctx?.abort)
         return JSON.stringify({ ok: true, ...result })
       } catch (err) {
         return JSON.stringify({
@@ -140,7 +143,7 @@ Use for SA race + dynamic spawn patterns: launch×N → wait_any → analyze →
         .array(tool.schema.string())
         .describe("Task IDs from prior omp_task_launch calls."),
     },
-    async execute(args: { task_ids: string[] }) {
+    async execute(args: { task_ids: string[] }, ctx: { abort?: AbortSignal }) {
       try {
         if (!Array.isArray(args.task_ids) || args.task_ids.length === 0) {
           return JSON.stringify({
@@ -149,7 +152,9 @@ Use for SA race + dynamic spawn patterns: launch×N → wait_any → analyze →
             message: "task_ids must be a non-empty array of strings",
           })
         }
-        const result = await manager.waitAny(args.task_ids)
+        // Forward ctx.abort — see wait_all: an orphaned listener from an
+        // interrupted wait would consume + discard a later submit.
+        const result = await manager.waitAny(args.task_ids, ctx?.abort)
         return JSON.stringify({ ok: true, ...result })
       } catch (err) {
         return JSON.stringify({

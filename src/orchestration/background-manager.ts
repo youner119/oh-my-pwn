@@ -77,6 +77,19 @@ function isIdleStatus(status: string): boolean {
   return IDLE_STATUSES.has(status)
 }
 
+/**
+ * Thrown when a wait_all / wait_any is interrupted via its AbortSignal
+ * (opencode `ctx.abort`). Signals the wait was torn down before delivering —
+ * the caller (tool) turns it into a graceful `{ ok: false }` and, crucially,
+ * the wait releases its `done` listener without consuming any submit.
+ */
+class WaitAbortedError extends Error {
+  constructor() {
+    super("wait aborted")
+    this.name = "WaitAbortedError"
+  }
+}
+
 /** Task is in a terminal state (completed / failed / cancelled). */
 function isTerminalStatus(status: TaskStatus): boolean {
   return (
@@ -281,8 +294,15 @@ export class BackgroundManager {
    * - Outputs for completed tasks are fetched in parallel via Promise.all
    *   (B1).
    * - State-first: if all tasks are already terminal, returns immediately.
+   * - `signal` (opencode `ctx.abort`) — if the wait tool is interrupted
+   *   (user sends a new message mid-wait), abort the wait: remove the `done`
+   *   listener and throw WITHOUT calling buildOutcome. Critical: an orphaned
+   *   listener (from an aborted wait whose promise was abandoned) would later
+   *   fire on the task's submit, consume it (append task_consumed, discard the
+   *   result), and starve the next legitimate wait. buildOutcome must run only
+   *   for a wait that actually delivers to its caller.
    */
-  async waitAll(taskIds: string[]): Promise<WaitAllResult> {
+  async waitAll(taskIds: string[], signal?: AbortSignal): Promise<WaitAllResult> {
     // Identify pending tasks: known, not-yet-terminal, AND without an already-
     // waiting unconsumed submit (submit protocol — a submit resolves the wait
     // just like a terminal status).
@@ -296,17 +316,27 @@ export class BackgroundManager {
     }
 
     if (pending.size > 0) {
-      await new Promise<void>((resolve) => {
+      if (signal?.aborted) throw new WaitAbortedError()
+      await new Promise<void>((resolve, reject) => {
+        const cleanup = () => {
+          this.taskEvents.off("done", handler)
+          signal?.removeEventListener("abort", onAbort)
+        }
         const handler = (taskId: string) => {
           if (pending.has(taskId)) {
             pending.delete(taskId)
             if (pending.size === 0) {
-              this.taskEvents.off("done", handler)
+              cleanup()
               resolve()
             }
           }
         }
+        const onAbort = () => {
+          cleanup()
+          reject(new WaitAbortedError())
+        }
         this.taskEvents.on("done", handler)
+        signal?.addEventListener("abort", onAbort, { once: true })
       })
     }
 
@@ -324,8 +354,11 @@ export class BackgroundManager {
    * - Unknown task_ids (A1) become synthetic failed outcomes. If
    *   encountered first in iteration order, they "win" as first complete.
    * - Cancellation and failure both count as first-complete (C, spec L75).
+   * - `signal` (opencode `ctx.abort`) — see waitAll: on interrupt, drop the
+   *   `done` listener and throw before buildOutcome so an orphaned listener
+   *   can't later consume (and discard) a task's submit.
    */
-  async waitAny(taskIds: string[]): Promise<WaitAnyResult> {
+  async waitAny(taskIds: string[], signal?: AbortSignal): Promise<WaitAnyResult> {
     // State-first: scan for already-resolved (terminal OR unconsumed submit) or
     // unknown, in input order.
     const ledgers = this.submissionLedgers()
@@ -346,15 +379,25 @@ export class BackgroundManager {
     }
 
     // All running — subscribe.
+    if (signal?.aborted) throw new WaitAbortedError()
     const watching = new Set(taskIds)
-    const firstId = await new Promise<string>((resolve) => {
+    const firstId = await new Promise<string>((resolve, reject) => {
+      const cleanup = () => {
+        this.taskEvents.off("done", handler)
+        signal?.removeEventListener("abort", onAbort)
+      }
       const handler = (taskId: string) => {
         if (watching.has(taskId)) {
-          this.taskEvents.off("done", handler)
+          cleanup()
           resolve(taskId)
         }
       }
+      const onAbort = () => {
+        cleanup()
+        reject(new WaitAbortedError())
+      }
       this.taskEvents.on("done", handler)
+      signal?.addEventListener("abort", onAbort, { once: true })
     })
 
     const outcome = await this.buildOutcome(firstId)

@@ -430,3 +430,62 @@ describe("BackgroundManager idle judgment (T37)", () => {
     20000,
   )
 })
+
+// Regression: an interrupted (aborted) wait must release its manager-side
+// `done` listener. A leaked listener from an aborted wait later fires on the
+// task's submit, consumes it (appends task_consumed, discards the result), and
+// starves the next legitimate wait. Observed in a real run: the user
+// interrupted a wait_all mid-block; 13 min later the task submitted, the orphan
+// ate it, and the orchestrator's real wait got a bare terminal outcome.
+describe("BackgroundManager wait abort cleanup", () => {
+  test(
+    "aborted wait releases its listener → later submit is NOT consumed by the orphan",
+    async () => {
+      const prevDir = process.env.OMP_STATE_DIR
+      const prevInst = process.env.OMP_INSTANCE_ID
+      const stateDir = mkdtempSync(join(tmpdir(), "omp-state-"))
+      const workDir = mkdtempSync(join(tmpdir(), "omp-work-"))
+      process.env.OMP_STATE_DIR = stateDir
+      process.env.OMP_INSTANCE_ID = "test-wait-abort"
+
+      try {
+        // Session "x" stays busy → task stays running + polled, so a leaked
+        // orphan listener WOULD fire on the poll's unconsumed-submit `done`.
+        const client = { ...stubClient, status: async () => ({ x: { type: "busy" } }) }
+        const manager = new BackgroundManager({ client, directory: workDir, enableEventLog: true })
+        const r = await manager.launchAsync({
+          parentSessionID: "p",
+          agent: "omp-exploiter-mode-1",
+          description: "E",
+          prompt: "go",
+        })
+
+        // Start a wait that blocks (task running, no submit yet), then abort it.
+        const controller = new AbortController()
+        const waitP = manager.waitAll([r.task_id], controller.signal)
+        await new Promise((res) => setTimeout(res, 50)) // let it subscribe
+        controller.abort()
+        await expect(waitP).rejects.toThrow(/aborted/i)
+
+        // The task submits after the abort.
+        manager.submitResult(r.session_id, { status: "confirmed", flag: "DH{x}" })
+        // Let a poll tick pass — an orphan listener would consume+discard here.
+        await new Promise((res) => setTimeout(res, 3500))
+
+        // A fresh wait must still deliver the submit (proves no orphan ate it).
+        const res = await manager.waitAny([r.task_id])
+        expect(res.result).toEqual({ status: "confirmed", flag: "DH{x}" })
+        expect(res.result_path).toContain(`${r.session_id}-1.json`)
+        manager.shutdown()
+      } finally {
+        if (prevDir === undefined) delete process.env.OMP_STATE_DIR
+        else process.env.OMP_STATE_DIR = prevDir
+        if (prevInst === undefined) delete process.env.OMP_INSTANCE_ID
+        else process.env.OMP_INSTANCE_ID = prevInst
+        rmSync(stateDir, { recursive: true, force: true })
+        rmSync(workDir, { recursive: true, force: true })
+      }
+    },
+    15000,
+  )
+})
