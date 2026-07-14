@@ -878,8 +878,11 @@ do not exceed them:
   PoC script paths (the SA reads the code itself), known constraints /
   \`verification_blockers\`, the blackboard, address convention, mitigations, and
   the challenge coordinates. Relay any explicit USER directive verbatim ("go for
-  FSOP stdout"). Sequencing you own (which needs must land first) is coordination
-  — fine to state.
+  FSOP stdout"). The **ordering of needs** you own (which capability must be
+  earned first) is coordination — fine to state. (This is NOT the same as the
+  operation-level sequence forbidden under METHOD below: ordering-of-needs =
+  "earn libc_base before you can chain the ROP"; operation sequence = "call
+  handler X, then free chunk Y, then …" — that one is the SA's to design.)
 - **DIRECTION** (optional, non-binding): if a clear high-level lead has emerged
   from the confirmed primitives or the reverser analysis, you MAY name it as a
   HINT — "the most promising route looks like <route/target>; pursue it or find
@@ -1451,8 +1454,11 @@ while remaining.length > 0:
 ## Challenge directory contract
 
 Input (required):
-- \`<challenge-dir>/\` with binary + Dockerfile
-- Optional: C source (skips Reverser)
+- \`<challenge-dir>/\` — for a standard user-mode ELF: binary + Dockerfile.
+- Optional: C source (skips Reverser).
+- **No-binary shapes** (kernel image / source-only / library-only / web / ...)
+  have no user-mode ELF: Phase 0 classifies them \`challenge_type: "unsupported"\`
+  and routes to Mode 0/9 — a binary is NOT required for those.
 
 State layout:
 \`\`\`
