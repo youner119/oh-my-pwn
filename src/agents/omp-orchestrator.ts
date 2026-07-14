@@ -759,15 +759,24 @@ shell captured (success), LLM-judged stagnation (\`stagnated\`), safety-net
 
 Read \`mcp__omp-db__read_state\` and categorize candidates:
 - **Unverified:** \`verification_result\` is undefined → assign SA to verify
-- **Verified + combinable:** two or more candidates that are **\`confirmed\`**
-  (NOT \`mechanism_confirmed\`, NOT unverified) where one's \`gives\` covers
-  another's \`needs\` → assign SA to combine them. **Combine sources must be
-  genuinely \`confirmed\` — no exceptions.** Do NOT rationalize an unverified /
-  \`mechanism_confirmed\` source into a combine ("its needs are met", "the design
-  is clear", "run it in parallel while it verifies") — that builds on sand and
-  the user will (rightly) stop you. If a primitive you want to use is not yet
-  \`confirmed\`, its verify/earn is THIS round's task and the combine is a LATER
-  round.
+- **Verified + advanceable (combine / escalate):** produce a NEW derived
+  primitive ONE layer up from **\`confirmed\`** source(s) (NOT
+  \`mechanism_confirmed\`, NOT unverified). Two shapes, same bucket:
+  - **combine** (2+ sources): candidates where one's \`gives\` covers another's
+    \`needs\` (e.g. \`libc_base\` + \`heap_base\` → a dual-leak).
+  - **escalate** (1 source): a single \`confirmed\` primitive advanced into a
+    stronger one whose extra \`needs\` (if any) are already covered by other
+    \`confirmed\` gives — or need nothing more (e.g. a \`confirmed\` write to a
+    known static address → \`rip_control\` on a non-PIE target). If it needs
+    another primitive's gives, that other primitive must ALSO be \`confirmed\`
+    (then it is really a 2-source combine).
+  Result = a new derived candidate (\`new_candidate\`, Step 2.4) — the source(s)
+  stay unchanged. **Sources must be genuinely \`confirmed\` — no exceptions.** Do
+  NOT rationalize an unverified / \`mechanism_confirmed\` source in ("its needs are
+  met", "the design is clear", "run it in parallel while it verifies") — that
+  builds on sand and the user will (rightly) stop you. If a primitive you want to
+  use is not yet \`confirmed\`, its verify/earn/promote is THIS round's task and
+  the advance is a LATER round.
 - **Promotable (\`mechanism_confirmed\` → \`confirmed\`):** a \`mechanism_confirmed\`
   candidate M whose uncovered \`need\` N is now covered by some \`confirmed\`
   primitive P's \`gives\` → assign SA a **promote** task: merge M's mechanic with
@@ -785,9 +794,10 @@ Read \`mcp__omp-db__read_state\` and categorize candidates:
 **Minimal unit — one SA = ONE incremental step.** A task advances the chain by a
 single layer, never several at once:
 - verify: prove ONE primitive.
-- combine: merge \`confirmed\` primitives into ONE new primitive exactly one layer
-  up (e.g. \`libc_base\` + \`heap_base\` → a dual-leak; \`arbitrary_alloc\` → a write
-  to ONE chosen target).
+- combine / escalate: produce ONE new primitive exactly one layer up from
+  \`confirmed\` source(s) — combine (2+, e.g. \`libc_base\` + \`heap_base\` → dual-leak)
+  or escalate (1, e.g. a \`confirmed\` \`arbitrary_alloc\` + the \`confirmed\` leaks it
+  needs → \`arbitrary_write\` to ONE chosen target).
 - **NEVER a multi-layer goal in a single SA** (e.g. "leak → arbitrary_write → RIP
   → shell"). Each layer is its own \`confirmed\` step in its own round. Red flags
   that you are over-scoping — split the task: a goal that names 3+ capabilities
@@ -797,11 +807,14 @@ single layer, never several at once:
 Decide tasks for this round:
 - If unverified candidates exist → priority: verify them first
 - Scan \`gives\` / \`needs\` across all \`confirmed\` candidates for opportunities:
-  - **combine**: A gives "libc_base", B needs "libc_base" (both \`confirmed\`) →
-    assign SA to combine A+B.
+  - **combine** (2+): A gives "libc_base", B needs "libc_base" (both \`confirmed\`)
+    → assign SA to combine A+B.
+  - **escalate** (1): a single \`confirmed\` primitive can advance one layer up and
+    its extra needs (if any) are covered by other confirmed gives → assign SA the
+    escalate task (Step 2.1 advanceable).
   - **promote**: a \`mechanism_confirmed\` M's uncovered need is now covered by a
-    confirmed \`gives\` → assign SA the promote task (Step 2.1 Promotable). Same
-    priority as combine.
+    confirmed \`gives\` → assign SA the promote task (Step 2.1 Promotable).
+  Combine / escalate / promote all share the same priority.
 - If no tasks possible → exit loop (go to Phase 3)
 
 #### Step 2.2 — Allocate session IDs + build task list
