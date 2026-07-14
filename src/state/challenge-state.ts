@@ -136,10 +136,23 @@ export const VulnCandidateSummarySchema = z.object({
    * Verification outcome set by the Orchestrator after StrategyAgent +
    * Exploiter run. Presence of this field IS the verification flag —
    * `verification_result === undefined` means the candidate has not been
-   * verified yet.
+   * verified yet. States:
+   * - `confirmed` — mechanic demonstrated AND its `needs` were actually
+   *   satisfied by confirmed upstream primitives (real earned values in the
+   *   run, self-contained otherwise). Genuinely usable.
+   * - `mechanism_confirmed` — the mechanic/technique was demonstrated, but only
+   *   under an orchestrator-AUTHORIZED assumed input (a `needs` value injected /
+   *   assumed, not earned end-to-end — e.g. a leak-assumed GDB pre-verify). NOT
+   *   usable until a real chain proves it; the end-to-end proof is a separate
+   *   combine candidate. Every assumed dependency MUST be declared in `needs`.
+   *   An UNauthorized out-of-band shortcut (e.g. reading pie_base from
+   *   /proc/<pid>/maps) is NOT this — it is a rule violation → `inconclusive`.
+   * - `failed` — disproved.
+   * - `inconclusive` — mechanic not demonstrated (couldn't run, harness broke,
+   *   or a needed capability was unavailable and not authorized to assume).
    */
   verification_result: z
-    .enum(["confirmed", "failed", "inconclusive"])
+    .enum(["confirmed", "mechanism_confirmed", "failed", "inconclusive"])
     .optional(),
   /** Producing sub-agent (e.g. "VH-3" / "SA-04"). Trace of provenance. */
   agent: z.string().min(1).optional(),

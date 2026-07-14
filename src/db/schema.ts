@@ -251,7 +251,7 @@ export const candidates = sqliteTable(
     // ── Summary scalars ─────────────────────────────────────────────────
     primitive: text("primitive").notNull(),
     verificationResult: text("verification_result", {
-      enum: ["confirmed", "failed", "inconclusive"],
+      enum: ["confirmed", "mechanism_confirmed", "failed", "inconclusive"],
     }),
     agent: text("agent"),
     description: text("description"),
