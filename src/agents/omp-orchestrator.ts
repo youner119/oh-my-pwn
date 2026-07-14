@@ -1028,10 +1028,28 @@ Sub-agents never call any of the write tools above (ACL-denied). They return cha
 
 When you write \`mcp__omp-db__patch_state\` inside the loop, the patch must reflect:
 
-- If SA returned \`status: "confirmed"\`:
-  - Add/update candidate in \`vuln_candidates[]\` with
-    \`verification_result: "confirmed"\`, \`poc_script_path\`, \`gives\`, \`needs\`
-  - For combinations: set \`combined_from\`, \`origin_type: "derived"\`
+- If SA reported the mechanic PROVEN (\`status: "confirmed"\`) — **YOU** decide the
+  recorded state via the **needs-earned test**. SA proves the mechanic; only you
+  hold the global blackboard of which \`gives\` are actually confirmed, so the
+  \`confirmed\` vs \`mechanism_confirmed\` call is yours, not SA's. Read SA's result
+  for any input it ASSUMED or INJECTED — an honest SA declares every address
+  basis and where it came from:
+  - Every candidate \`need\` is covered by a **confirmed** upstream primitive's
+    \`gives\` AND SA earned those values for real in the run (no assumption) →
+    \`verification_result: "confirmed"\`.
+  - The mechanic was proven only under an input **you explicitly authorized** SA
+    to assume (a leak-assumed pre-verify), OR a \`need\` is not yet covered by any
+    confirmed \`gives\` → \`verification_result: "mechanism_confirmed"\`. Make sure
+    every assumed / uncovered dependency is in \`needs\`. The real end-to-end proof
+    is a SEPARATE combine candidate — this is NOT a usable capability yet.
+  - SA reached the result via an UNAUTHORIZED out-of-band shortcut (pie_base from
+    \`/proc/<pid>/maps\`, hardcoded remote addresses, ptrace-fabricated state —
+    anything that MANUFACTURES a capability the exploit must earn) →
+    \`verification_result: "inconclusive"\`. Add the manufactured capability to
+    \`needs\` and record the shortcut in \`verification_blockers\` (cause = the
+    cheat). Never record a cheated result as confirmed or mechanism_confirmed.
+  - Then also set \`poc_script_path\`, \`gives\`, \`needs\`; for combinations set
+    \`combined_from\`, \`origin_type: "derived"\`.
   - **Primitive specialisation.** If SA's returned \`primitive\` is
     *narrower than* the candidate's existing \`primitive\` string
     (e.g. candidate was broad \`uaf\`, SA proved \`uaf_read\`), overwrite
@@ -1045,13 +1063,20 @@ When you write \`mcp__omp-db__patch_state\` inside the loop, the patch must refl
     via \`verification_blockers\` instead.
 - If \`status: "failed"\` → set \`verification_result: "failed"\`.
   If \`status: "inconclusive"\` → set \`verification_result: "inconclusive"\`.
-  SA's status enum matches the state enum 1:1
-  (\`confirmed\`/\`failed\`/\`inconclusive\`) — forward verbatim. Do not
-  invent any other value (e.g. \`"disproved"\` is not a valid enum
-  member; using it causes \`patch_state\` to reject the write with
-  \`validation_error\` and the candidate stays unchanged). Leave the
-  candidate available for retry in a later round (or in a same-round
+  Valid \`verification_result\` enum members are
+  \`confirmed\` / \`mechanism_confirmed\` / \`failed\` / \`inconclusive\` ONLY —
+  any other value (e.g. \`"disproved"\`) makes \`patch_state\` reject the
+  write with \`validation_error\` and the candidate stays unchanged. Leave
+  the candidate available for retry in a later round (or in a same-round
   dynamic spawn) if you choose.
+- **Gating rule — \`confirmed\` never means "usable".** Before chaining ANY
+  candidate into a next step (combine, escalation), verify each of its
+  \`needs\` is covered by a **confirmed** primitive's \`gives\`. A \`confirmed\`
+  whose needs you cannot cover is really \`mechanism_confirmed\` — downgrade it
+  (patch \`verification_result\`). A \`mechanism_confirmed\` is NOT a usable
+  capability; do not build on it until a combine candidate earns its needs for
+  real. Run this check every time before spawning a combine/escalation SA — do
+  not read a bare \`confirmed\` as "ready".
 - **Do NOT store leak values for script reuse.** Leak values are
   runtime-dependent (ASLR). The \`poc_script_path\` contains the leak
   logic — future COMBINE tasks reference the PoC code, not stored values.
