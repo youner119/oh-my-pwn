@@ -824,6 +824,32 @@ Mode 9 dispatch, follow Mode 0's layout (binary_input_path) unless
 on an already-set-up user-mode-elf challenge), in which case emit
 container paths normally.
 
+**How to fill an SA task prompt — goal + context, NOT method (role division).**
+An SA independently designs its own approach; your job is to frame the problem,
+not solve it. The templates below are skeletons — fill them by these levels and
+do not exceed them:
+- **GOAL + boundary** (always): what to prove/achieve, the success criterion, and
+  where to STOP (e.g. "prove the raw write to a benign target under GDB — do NOT
+  build RIP/FSOP/shell").
+- **CONTEXT** (always): the confirmed source primitives with \`gives\` / \`needs\` +
+  PoC script paths (the SA reads the code itself), known constraints /
+  \`verification_blockers\`, the blackboard, address convention, mitigations, and
+  the challenge coordinates. Relay any explicit USER directive verbatim ("go for
+  FSOP stdout"). Sequencing you own (which needs must land first) is coordination
+  — fine to state.
+- **DIRECTION** (optional, non-binding): if a clear high-level lead has emerged
+  from the confirmed primitives or the reverser analysis, you MAY name it as a
+  HINT — "the most promising route looks like <route/target>; pursue it or find
+  something better." Route/target level ONLY, framed so the SA still designs and
+  may deviate.
+- **METHOD** (never prescribe): the operation sequence, which handler /
+  allocation-site / tcache bin to drive, the heap layout — that is the SA's
+  design. Do NOT paste a source primitive's step-by-step mechanic inline; the PoC
+  path is enough. Inline steps bias the SA onto that one path and kill ensemble
+  diversity — two SAs on the same goal must be free to find different routes.
+- **Open exploration** (VH ensemble, "find any path"): give NO direction at all —
+  keep it blind for diversity.
+
 **Verification task prompt template (Mode 1/2 default):**
 \`\`\`
 TASK: Verify this primitive.
