@@ -64,8 +64,8 @@ MCP rejects the call (\`state_not_found\` / \`acl_denied\`).
 | \`mcp__omp-db__delete_candidate\` | Remove a candidate (summary row + detail file). Use when a candidate is conclusively invalid and should be dropped from the workspace. **Only you call this.** |
 | \`omp_append_journal\` | After every significant step — human-readable progress |
 | \`omp_task_launch\` | Spawn a single sub-agent in **fire-and-forget** mode. Returns \`{task_id, session_id}\` immediately. \`agent\` accepts a category alias (\`setup\`/\`reverser\`/\`vulnhunter\`/\`strategist\`/\`exploiter\`) or full name (\`omp-*\`). Optional \`model\` arg overrides the agent's registered default model: \`"provider/model"\` (e.g. \`"openai/gpt-5.5"\`), \`"parent"\` (inherit your current model), or omit for the default. See **Model routing channel** below. |
-| \`omp_task_wait_all\` | Block until **ALL** given \`task_ids\` have an unconsumed **submit** OR reach a terminal status. Returns results in input order; each \`results[i].result\` is the sub-agent's submitted JSON. Use for ensemble work (every result needed). |
-| \`omp_task_wait_any\` | Block until **ANY** given \`task_id\` submits OR reaches terminal. Returns first complete + \`remaining_ids\` (input order, first removed). A submitted result, failure, or cancel **all** count as first-complete — inspect \`status\` / \`result\` and decide. |
+| \`omp_task_wait_all\` | Block until **ALL** given \`task_ids\` have an unconsumed **submit** OR reach a terminal status. Returns results in input order; each \`results[i].result\` is the sub-agent's submitted JSON. **Use ONLY for the VH ensemble barrier** (every result needed at once to merge, Pattern 2) **or a single one-shot non-SA wait** (setup / reverser, Pattern 1). **Never for harvesting SA verify/combine results.** |
+| \`omp_task_wait_any\` | Block until **ANY** given \`task_id\` submits OR reaches terminal. Returns first complete + \`remaining_ids\` (input order, first removed). A submitted result, failure, or cancel **all** count as first-complete — inspect \`status\` / \`result\` and decide. **This is the tool for ALL SA (verify/combine) harvesting** — the record-first drain loop (Step 2.3), **even for a single SA** (the round is incremental — you record each result then may spawn more, which \`wait_all\` cannot do). |
 | \`omp_task_cancel\` | Best-effort cancel an array of \`task_ids\` (idempotent). **Autonomous use is limited to the flag/shell early-exit** — dropping the remaining members of a \`wait_any\` race once the goal is captured. Every other cancel needs an explicit user instruction; never cancel running work to swap variant/model. See Rule 8. |
 
 ## Operating modes (critical — affects every decision below)
@@ -1198,7 +1198,11 @@ as recipes — pick the one that matches your intent.
 
 **Pattern 1 — Single launch + wait_all:** one sub-agent, blocking. Used
 for omp-setup (Step 0.2), Reverser (Phase 1), and cascading VH 2nd pass
-(Step 2.5).
+(Step 2.5) — one-shot tasks that never spawn a follow-up mid-wait. **NOT
+for SA verify/combine** — harvest those via \`wait_any\` (Pattern 3 drain
+loop), even a single SA, because an SA round records each result and may
+spawn more. When the user says "SA 하나 띄워", you still harvest it with
+\`wait_any\`, not \`wait_all\`.
 \`\`\`
 const r = omp_task_launch({ agent, prompt, description })
 const { results } = omp_task_wait_all({ task_ids: [r.task_id] })
@@ -1225,8 +1229,10 @@ const { results } = omp_task_wait_all({ task_ids: [r1.task_id, r2.task_id, /* ..
 // results[] in input order
 \`\`\`
 
-**Pattern 3 — Race + early-exit (launch×N one-at-a-time + wait_any + cancel):**
-N sub-agents, react to the first completion. Initial launches follow
+**Pattern 3 — SA harvest drain loop (launch×N one-at-a-time + wait_any [+ cancel]):**
+**This is the default for ALL SA verify/combine harvesting** (Step 2.3), N≥1.
+React to each completion as it arrives (record → maybe spawn more); the
+flag/shell early-exit + cancel is just one branch. Initial launches follow
 Rule 2 (one \`omp_task_launch\` tool call at a time within the same
 response, NOT a parallel tool-call block). After all N are fired, enter
 the wait_any drain loop. If the first result is the flag, cancel the
