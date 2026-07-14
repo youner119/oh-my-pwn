@@ -375,10 +375,14 @@ bun run build:plugin
 
 # 2. 타입 체크 + 테스트
 bun run typecheck
-bun test           # 전체 테스트 (전체 ~200 tests)
+bun test           # 전체 테스트 (전체 ~400 tests)
 
-# 3. 플러그인 rebuild
-bun run build:plugin
+# 3. rebuild — bun run build (plugin + db-mcp + cli 전부, 가장 안전)
+bun run build
+# plugin 만 바꿨으면 build:plugin 만으로도 되지만, db-mcp/schema/mapper
+# (src/db-mcp/*, src/db/schema.ts, src/state/challenge-state.ts) 를 건드렸다면
+# 반드시 build:db-mcp 도 실행 — 안 그러면 dist/db-mcp.js 가 stale 로 남아
+# 런타임에서 옛 zod 검증이 돈다 (예: candidate description 400자 제한 잔존).
 
 # 4. omp 재시작 (TUI에 자동 반영 안 됨 — 플러그인 캐싱 때문)
 # TUI 종료 후 다시 `omp` 실행

@@ -435,6 +435,23 @@ Max depth = 3 (OmO 기본값). Orchestrator → SA → Exploiter.
     `mcp__omp-db__create_candidate({candidate})`
   - *Invalidate* → `mcp__omp-db__delete_candidate({id})`
 
+**`verification_result` 판정은 Orchestrator 책무 (#7).** SA 의 `status:"confirmed"`
+는 "mechanic 실증" 만 뜻하고, `confirmed` vs `mechanism_confirmed` 는 global
+blackboard(어떤 `gives` 가 실제 confirmed 인지)를 쥔 Orchestrator 가 **needs-earned
+test** 로 정한다:
+- needs 전부 confirmed 상위의 `gives` 로 실제 충족 + 가정 없음 → `confirmed`
+- authorized 가정 input 하 mechanic 만 성립 / need 미커버 → `mechanism_confirmed`
+  (가정 의존성 `needs` 선언, end-to-end 는 별도 combine 후보)
+- 미승인 out-of-band cheat(`/proc/maps` pie_base, hardcoded addr 등) →
+  `inconclusive` + 조달 capability 를 `needs` 에 + cheat 을 `verification_blockers` 에
+
+**Gating rule:** `confirmed` ≠ usable. chain(combine/escalation) 전에 각 candidate
+의 `needs` 가 confirmed `gives` 로 커버되는지 항상 확인 — 미커버 `confirmed` 는
+`mechanism_confirmed` 로 강등, `mechanism_confirmed` 위엔 build 안 함. 관련 규율:
+sub-agent 는 exploit **payload** 에 들어가는 주소를 반드시 earned(런타임 leak) 또는
+authorized 가정으로만 조달(관찰용 GDB `vmmap`/breakpoint 는 허용), honest-needs 로
+모든 의존성 declare.
+
 `mcp__omp-db__patch_state` 는 `patch.vuln_candidates[]` 의 *detail field* (rationale
 / verification_blockers / gives / needs / poc_script_path / location /
 libc_range / origin_type / derived_from / confidence) 박힘 시 `error:

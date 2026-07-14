@@ -153,7 +153,7 @@ Multi-NEEDED 챌린지 (libm/libz/libbz2/liblzma 등) 의 추가 라이브러리
 |---|---|
 | `id` | Candidate 식별자 (e.g. `vuln_4` / `derived_vuln_4_vuln_16`). alphanumeric + `_` + `-` 만 허용. |
 | `primitive` | Exploitation primitive tag (e.g. `stack_bof`, `tcache_poison`). |
-| `verification_result` | "confirmed" / "failed" / "inconclusive" / undefined. Presence IS the verification flag. |
+| `verification_result` | "confirmed" / "mechanism_confirmed" / "failed" / "inconclusive" / undefined. Presence IS the verification flag. `confirmed` = mechanic 실증 + needs 가 confirmed 상위로 실제 충족(usable); `mechanism_confirmed` = orchestrator-authorized 가정 input 하에 mechanic 만 실증(needs 미충족, end-to-end 는 별도 combine 후보) — 미승인 out-of-band cheat 는 `inconclusive`. |
 | `agent` | Producing sub-agent (e.g. `VH-3` / `SA-04`). Trace of provenance. |
 | `combined_from` | Derived candidate 의 source ids. |
 | `description` | 2-3 줄 short claim of *what* (≤400 chars). 무엇이냐만 — 왜 는 `rationale` (detail). |
