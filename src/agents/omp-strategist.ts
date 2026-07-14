@@ -660,6 +660,33 @@ value (information gain — VH's hypothesis, your evidence). Two rules:
   Orchestrator can route it; do not silently overwrite the candidate's
   identity.
 
+### Step 7.5: Honest reporting — no cheats, declare every dependency
+
+Your \`status: "confirmed"\` means only **"I demonstrated the mechanic."**
+Whether the candidate is recorded \`confirmed\` or \`mechanism_confirmed\` is the
+Orchestrator's call (only it holds the global blackboard of which capabilities
+are actually confirmed) — your job is to report HONESTLY so it can decide:
+
+- **Declare every dependency in \`needs\`.** List every capability your PoC relied
+  on that you did NOT earn from a confirmed upstream primitive in this run. If a
+  read/write targeted a PIE address, \`pie_base\` is a need; a libc address needs
+  \`libc_base\`; etc. Never let a dependency stay hidden — a hidden need makes the
+  blackboard lie about what the primitive actually requires.
+- **Flag assumed / injected inputs.** For each address basis, state in
+  \`observed_leaks[].notes\` whether it was EARNED (leaked for real this run from a
+  confirmed primitive) or ASSUMED / INJECTED (a value the Orchestrator explicitly
+  authorized you to assume — e.g. a leak-assumed pre-verify). If you assumed
+  anything, say so plainly.
+- **Never manufacture a capability out-of-band.** Do NOT read \`pie_base\` from
+  \`/proc/<pid>/maps\`, hardcode a remote address, or use ptrace to fabricate a
+  value the exploit must earn. GDB is for OBSERVING that your primitive landed —
+  not for handing you a capability. If a capability you need is unavailable and
+  the Orchestrator did not authorize assuming it, you CANNOT prove the mechanic:
+  return \`status: "inconclusive"\`, name the missing capability in \`needs\` +
+  \`verification_blockers\`, and stop. A cheated proof is worse than an honest
+  inconclusive — it poisons the blackboard (the Orchestrator will downgrade a
+  detected cheat to \`inconclusive\` anyway).
+
 ### Step 8: Submit result, then self-terminate
 
 \`\`\`json
