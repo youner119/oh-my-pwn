@@ -847,63 +847,47 @@ export class BackgroundManager {
         const hasSubmitted = !!ledger && ledger.submissions.length > 0
         const sessionStatus = statuses[task.sessionID]
 
+        // "Turn over" detection. Real opencode DELETES an idle session from the
+        // /session/status map (SessionStatus.set drops type:"idle" → the session
+        // vanishes from the map), so a finished worker shows up as ABSENT, not
+        // as type:"idle". Absent here means idle — the session is NOT disposed:
+        // its row persists in opencode's session DB and resume() (promptAsync)
+        // revives it. So absent = turn over, guarded by a >10s startup race
+        // window (session not yet listed). We also accept an explicit
+        // type:"idle" defensively (test stubs / any build that reports it).
         if (!sessionStatus) {
-          // Session vanished from the status map (opencode cleaned it up).
-          // Terminal — a gone session cannot be resumed. > 10s guard avoids a
-          // startup race where the session isn't in the map yet.
-          if (task.startedAt && Date.now() - task.startedAt.getTime() > 10000) {
-            if (hasSubmitted) {
-              task.status = "completed"
-              task.completedAt = new Date()
-              this.concurrency.release(task.concurrencyKey)
-              void this.dumpTranscript(task)
-              this.taskEvents.emit("done", task.id)
-              this.appendEvent("task_completed", { session_id: task.sessionID!, via: "gone" })
-              ompLog(`Task ${task.id}: session gone (had submitted) → completed`)
-            } else {
-              task.status = "failed"
-              task.error = "session gone without submitting"
-              task.completedAt = new Date()
-              this.concurrency.release(task.concurrencyKey)
-              void this.dumpTranscript(task)
-              this.taskEvents.emit("done", task.id)
-              this.appendEvent("task_failed", {
-                session_id: task.sessionID!,
-                error: "session gone without submitting",
-              })
-              ompLog(`Task ${task.id}: session gone without submit → failed`)
-            }
-          }
+          if (!(task.startedAt && Date.now() - task.startedAt.getTime() > 10000)) continue
+        } else if (!isIdleStatus(sessionStatus.type)) {
+          // Present with busy / retry → still working, keep waiting.
           continue
         }
 
-        // Any non-idle status (busy, retry) → still working, keep waiting.
-        if (!isIdleStatus(sessionStatus.type)) continue
-
-        // T37: idle judgment. Submit-then-idle is NOT terminal — the worker is
-        // alive, awaiting parent resume/terminate. Idle-without-submit is the
-        // crash fallback.
+        // Turn over (absent-after-guard OR type:"idle"). Submit-then-idle is NOT
+        // terminal — the worker is alive, awaiting parent resume/terminate.
+        // Idle/absent without any submit is the crash fallback.
         if (hasSubmitted) {
           // Awaiting resume — mark idle but do NOT emit done / dump / release
           // the slot. Slot is hold-until-terminate: idle-awaiting is an
           // exploiter-only, brief window (between SA resume decisions), so
           // releasing + re-acquiring the slot is pointless churn. The slot is
-          // released once, at terminate (T39).
+          // released once, at terminate (T39). The poll only processes running
+          // tasks (see loop head), so this running→idle transition fires exactly
+          // once; resume() flips the task back to running before the next submit.
           task.status = "idle"
           ompLog(`Task ${task.id}: submitted → idle (awaiting resume)`)
         } else {
-          // Crash fallback — finished a turn without ever submitting.
+          // Crash fallback — the turn ended without ever submitting.
           task.status = "failed"
-          task.error = "session idle without submitting"
+          task.error = "session ended without submitting"
           task.completedAt = new Date()
           this.concurrency.release(task.concurrencyKey)
           void this.dumpTranscript(task)
           this.taskEvents.emit("done", task.id)
           this.appendEvent("task_failed", {
             session_id: task.sessionID!,
-            error: "session idle without submitting",
+            error: "session ended without submitting",
           })
-          ompLog(`Task ${task.id}: idle without submit → failed`)
+          ompLog(`Task ${task.id}: ended without submit → failed`)
         }
       }
 

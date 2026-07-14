@@ -376,4 +376,57 @@ describe("BackgroundManager idle judgment (T37)", () => {
     },
     10000,
   )
+
+  // Real-opencode regression: a finished session is ABSENT from /session/status
+  // (opencode deletes idle sessions from the status map), never reported as
+  // type:"idle". The old poll misread absent as "gone → completed" (terminal),
+  // which foreclosed resume() and broke the SA↔exploiter reuse loop. Absent =
+  // idle: the session is alive in opencode's DB and resume revives it. The >10s
+  // startup-race guard on the absent branch is why this waits past 10s.
+  test(
+    "submit + session ABSENT from status (real opencode) → idle, and resume succeeds (not terminal)",
+    async () => {
+      const prevDir = process.env.OMP_STATE_DIR
+      const prevInst = process.env.OMP_INSTANCE_ID
+      const stateDir = mkdtempSync(join(tmpdir(), "omp-state-"))
+      const workDir = mkdtempSync(join(tmpdir(), "omp-work-"))
+      process.env.OMP_STATE_DIR = stateDir
+      process.env.OMP_INSTANCE_ID = "test-t37-absent"
+
+      try {
+        // status() returns {} — the finished session is absent, exactly as real
+        // opencode reports it (SessionStatus.set drops idle from the map).
+        const client = { ...stubClient, status: async () => ({}) }
+        const manager = new BackgroundManager({ client, directory: workDir, enableEventLog: true })
+        const r = await manager.launchAsync({
+          parentSessionID: "p",
+          agent: "omp-exploiter-mode-1",
+          description: "E",
+          prompt: "go",
+        })
+        manager.submitResult(r.session_id, { status: "failed" })
+        // Poll ticks every 3s; the absent branch has a >10s startup-race guard,
+        // so idle is first marked at the ~12s tick. Wait past it with margin.
+        await new Promise((res) => setTimeout(res, 14000))
+
+        // Absent + submitted is NON-terminal (idle), NOT completed/gone.
+        expect(manager.getTask(r.task_id)?.status).toBe("idle")
+
+        // The reuse loop's core: resume an idle worker. Must not throw
+        // "cannot resume terminal task" — the old bug's failure mode.
+        const resumed = await manager.resume(r.task_id, "retry with delta")
+        expect(resumed.task_id).toBe(r.task_id)
+        expect(manager.getTask(r.task_id)?.status).toBe("running")
+        manager.shutdown()
+      } finally {
+        if (prevDir === undefined) delete process.env.OMP_STATE_DIR
+        else process.env.OMP_STATE_DIR = prevDir
+        if (prevInst === undefined) delete process.env.OMP_INSTANCE_ID
+        else process.env.OMP_INSTANCE_ID = prevInst
+        rmSync(stateDir, { recursive: true, force: true })
+        rmSync(workDir, { recursive: true, force: true })
+      }
+    },
+    20000,
+  )
 })
