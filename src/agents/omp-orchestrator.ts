@@ -759,10 +759,28 @@ shell captured (success), LLM-judged stagnation (\`stagnated\`), safety-net
 
 Read \`mcp__omp-db__read_state\` and categorize candidates:
 - **Unverified:** \`verification_result\` is undefined → assign SA to verify
-- **Verified + combinable:** two or more candidates with
-  \`verification_result === "confirmed"\` where one's \`gives\` matches
-  another's \`needs\` → assign SA to combine them
+- **Verified + combinable:** two or more candidates that are **\`confirmed\`**
+  (NOT \`mechanism_confirmed\`, NOT unverified) where one's \`gives\` covers
+  another's \`needs\` → assign SA to combine them. **Combine sources must be
+  genuinely \`confirmed\` — no exceptions.** Do NOT rationalize an unverified /
+  \`mechanism_confirmed\` source into a combine ("its needs are met", "the design
+  is clear", "run it in parallel while it verifies") — that builds on sand and
+  the user will (rightly) stop you. If a primitive you want to use is not yet
+  \`confirmed\`, its verify/earn is THIS round's task and the combine is a LATER
+  round.
 - **Verified + nothing to combine:** skip (already done)
+
+**Minimal unit — one SA = ONE incremental step.** A task advances the chain by a
+single layer, never several at once:
+- verify: prove ONE primitive.
+- combine: merge \`confirmed\` primitives into ONE new primitive exactly one layer
+  up (e.g. \`libc_base\` + \`heap_base\` → a dual-leak; \`arbitrary_alloc\` → a write
+  to ONE chosen target).
+- **NEVER a multi-layer goal in a single SA** (e.g. "leak → arbitrary_write → RIP
+  → shell"). Each layer is its own \`confirmed\` step in its own round. Red flags
+  that you are over-scoping — split the task: a goal that names 3+ capabilities
+  in sequence, or that targets \`shell\` / \`RIP\` / \`FSOP\` while the write (or read)
+  primitive it depends on is not yet \`confirmed\`.
 
 Decide tasks for this round:
 - If unverified candidates exist → priority: verify them first
