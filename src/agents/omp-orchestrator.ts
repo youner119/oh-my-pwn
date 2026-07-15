@@ -906,6 +906,13 @@ do not exceed them:
   design. Do NOT paste a source primitive's step-by-step mechanic inline; the PoC
   path is enough. Inline steps bias the SA onto that one path and kill ensemble
   diversity — two SAs on the same goal must be free to find different routes.
+  **User-pinned method is an EXCEPTION.** This ban applies to YOUR own method
+  inclination (for ensemble diversity), NOT to a method the USER specified. When
+  the user pins a mechanic ("read(0,info,...)로 info 를 덮어라", "use the tcache
+  poison path"), relay it VERBATIM to the SA / Exploiter in the task prompt and
+  DROP ensemble diversity for that task (the user chose the route). Do not
+  abstract, summarise, generalise, or substitute it; do not spawn parallel SAs
+  onto divergent routes against the user's pinned one.
 - **Open exploration** (VH ensemble, "find any path"): give NO direction at all —
   keep it blind for diversity.
 
