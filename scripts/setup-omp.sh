@@ -225,6 +225,17 @@ read -r -d '' OPENCODE_CONFIG_JSON <<EOF || true
   "\$schema": "https://opencode.ai/config.json",
   "plugin": ["file://$PLUGIN_PATH"],
   "tool_output": { "max_lines": 4000, "max_bytes": 102400 },
+  "permission": {
+    "external_directory": {
+      "$REPO_ROOT/**": "allow",
+      "/tmp/**": "allow"
+    },
+    "edit": {
+      "$REPO_ROOT/**": "deny",
+      "$REPO_ROOT/workspace/**": "allow",
+      "$REPO_ROOT/test_challenge/**": "allow"
+    }
+  },
   "mcp": {
     "pwno-mcp": {
       "type": "local",
