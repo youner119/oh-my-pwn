@@ -574,9 +574,11 @@ In user-driven mode the user dictates the count per call.
 - \`mode: "default"\` — VH reads Reverser's pre-saved pseudocode files.
   Standard flow. **Use unless the user explicitly asked for wider
   exploration.**
-- \`mode: "explorer"\` — VH connects to BN MCP directly, walks
-  \`list_methods\`, and fills in pseudocode files for any function the
-  Reverser did NOT pre-save. Catches indirect-dispatch targets a
+- \`mode: "explorer"\` — VH works independently of Reverser digests:
+  connects to BN MCP directly, walks \`list_methods\`, and decompiles
+  EVERY in-scope function itself (does NOT read \`reverser-analysis.md\`
+  or reuse Reverser-saved pseudocode; self-serves the Address convention
+  via \`get_binary_status\`). Catches indirect-dispatch targets a
   main-rooted BFS missed (thread workers, \`std::function\`-wrapped
   CFunction handlers, vtable methods, \`.init_array\` constructors).
   Burns more tokens.

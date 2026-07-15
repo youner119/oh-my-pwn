@@ -26,15 +26,20 @@ const OMP_REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..")
  *     pre-saved `pseudocode_dir/<name>.txt` files. Trust the Reverser's
  *     coverage. Standard flow.
  *
- *   - `mode: "explorer"` — wider scan. Connect to BN MCP read-only,
- *     walk `list_methods` directly, decompile any function the Reverser
- *     did not pre-save, and write the fetched HLIL to
- *     `<pseudocode_dir>/<name>.txt` so SA / Exploiter can read it like
- *     Reverser-saved files. Use when the Reverser's coverage looks
- *     partial (e.g. main-rooted BFS missed thread workers,
- *     `std::function`-wrapped CFunction handlers, vtable methods,
- *     `.init_array` constructors) or when the user explicitly asks for
- *     wider exploration.
+ *   - `mode: "explorer"` — independent wide scan. Connect to BN MCP
+ *     read-only, walk `list_methods` directly, and decompile EVERY
+ *     in-scope function yourself via `decompile_function`. Explorer does
+ *     NOT read `reverser-analysis.md` and does NOT reuse Reverser-saved
+ *     pseudocode — it finds everything through BN directly. Write the
+ *     fetched HLIL to `<pseudocode_dir>/<name>.txt` so SA / Exploiter can
+ *     read it like Reverser-saved files. The Address convention is
+ *     self-served via `get_binary_status`. The `.bndb` view is still used
+ *     so BN's factual types / function boundaries (heap size classes)
+ *     survive, but VH consumes none of the Reverser's digests. Use when
+ *     the Reverser's coverage looks partial (main-rooted BFS missed
+ *     thread workers, `std::function`-wrapped CFunction handlers, vtable
+ *     methods, `.init_array` constructors) or when the user asks VH to
+ *     explore / find things independently.
  *
  * Both modes obey the read-only BN MCP policy — no mutation tools
  * (`rename_*`, `set_comment`, `retype_*`, `set_function_prototype`,
@@ -87,7 +92,7 @@ treat it as \`"default"\`.
 | \`mode\`        | What you do                                                                                                                                                                                |
 | ------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | \`"default"\`  | Read \`reverser-analysis.md\` + every pre-saved \`pseudocode_dir/<name>.txt\`. Trust the Reverser's coverage. Step 5 — default branch (5a).                                                |
-| \`"explorer"\` | Connect to BN MCP read-only, walk \`list_methods\` directly. For functions the Reverser did NOT pre-save pseudocode for, fetch HLIL via \`decompile_function\` and write it to disk so SA / Exploiter can read it just like Reverser-saved files. Step 5 — explorer branch (5b). |
+| \`"explorer"\` | Independent scan. Connect to BN MCP read-only, walk \`list_methods\`, and decompile EVERY in-scope function yourself via \`decompile_function\`. Do NOT read \`reverser-analysis.md\` and do NOT reuse Reverser-saved pseudocode; self-serve the Address convention via \`get_binary_status\`. Write each HLIL to disk so SA / Exploiter can read it just like Reverser-saved files. Step 5 — explorer branch (5b). |
 
 **When to use explorer mode.** Orchestrator chooses based on user
 intent or evidence that Reverser coverage is partial — e.g. the
@@ -165,8 +170,13 @@ are unchanged.
    - If \`source_present === true\`: read each C source file in \`source_paths\`.
      Source analysis is primary — Reverser output and pseudocode are
      supplementary context.
-   - If \`source_present === false\`: read the file at \`reverser_summary_path\`
-     (\`reverser-analysis.md\`). This is your structural overview input.
+   - If \`source_present === false\`:
+     - **Default mode** — read the file at \`reverser_summary_path\`
+       (\`reverser-analysis.md\`). This is your structural overview input.
+     - **Explorer mode** — do NOT read \`reverser-analysis.md\`; explorer
+       takes no Reverser digest. You build your structural picture yourself
+       by walking the binary in 5b, and self-serve the Address convention
+       via \`get_binary_status\` (5b Step 1e).
 
 5. **Read raw pseudocode (CRITICAL).** Branch by \`mode\`.
 
@@ -211,8 +221,18 @@ are unchanged.
    c. On 409 (alias taken or filepath already loaded under another alias):
       \`list_view\` again, find the existing alias, use that.
    d. On total failure (no view, binary won't load): record the failure
-      in your output rationale and proceed with whatever pseudocode files
-      already exist on disk.
+      in your output rationale. Explorer cannot proceed without BN — do
+      NOT silently substitute Reverser-saved pseudocode as if it were your
+      own analysis; return whatever candidates static reasoning supports
+      and flag the degraded coverage.
+   e. **Address convention (self-served — explorer takes no Reverser
+      digest).** Once \`view_id\` is set, call \`get_binary_status(view_id)\`
+      → record \`image_base\` / \`original_image_base\` / \`relocatable\`.
+      Build the convention yourself: \`RVA = BN_VA − image_base\`,
+      \`runtime = pie_base + RVA\`. Fallback if a field is absent:
+      \`image_base = 0x400000\`, \`relocatable = state.mitigations.pie\`.
+      This replaces \`reverser-analysis.md\` as your address-convention
+      source.
 
    **Step 2 — Walk \`list_methods\` (paginated) and apply skip rules:**
 
@@ -237,12 +257,12 @@ are unchanged.
      filename — strip / replace any character that is not filesystem-safe
      (spaces, slashes, angle brackets from C++ templates → underscores).
      Keep a name → save_path mapping in memory so you can reference it later.
-   - If \`<save_path>\` already exists on disk: **read** it (Reverser
-     already saved this function, do NOT re-decompile).
-   - If \`<save_path>\` does NOT exist: call
-     \`decompile_function(view_id, name)\` (default \`lang="hlil"\` —
-     preserves intrinsics like \`sbb.q\`). Write the returned HLIL to
-     \`<save_path>\` using the \`write\` tool. This file becomes
+   - **Always** call \`decompile_function(view_id, name)\` yourself
+     (default \`lang="hlil"\` — preserves intrinsics like \`sbb.q\`). Do NOT
+     short-circuit by reading a pre-existing \`<save_path>\`: explorer finds
+     every function through BN directly and does not trust Reverser-saved
+     pseudocode. Write the returned HLIL to \`<save_path>\` using the
+     \`write\` tool (overwrite if it already exists). This file becomes
      downstream-readable for SA / Exploiter (they read
      \`<pseudocode_dir>/<name>.txt\` the same way they read
      Reverser-saved files).
