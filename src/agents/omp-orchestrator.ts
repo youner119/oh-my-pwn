@@ -956,6 +956,38 @@ Source PoC scripts (HOST paths): [poc_script_path of id_A, id_B, ...]
 mode_override: null
 \`\`\`
 
+**Falsification-verify task prompt template** (controlled-freedom \`confirmed\`
+gate — Step 2.4 (2); YOU dispatch \`omp-exploiter-mode-2\` DIRECTLY, no SA):
+\`\`\`
+TASK: Falsification-verify a controlled-freedom primitive. ADVERSARIAL one-shot
+check, NOT a normal verify — do NOT modify the primitive to make it pass and do
+NOT retry. A non-reproduction IS the result; report it honestly.
+Primitive: { id, primitive } — its function already exists in the PoC below.
+PoC (HOST — import / reuse its primitive function, do not re-derive): <poc_script_path>
+Independence requirement (the whole point): invoke the primitive on an input the
+  ORIGINAL PoC did NOT control —
+  - read / aar: call it on an address the original PoC never wrote (read \`vmmap\`,
+    pick e.g. a libc / ld / heap page it did not groom); pass = returned bytes ==
+    \`pwno-mcp_get_memory\` of that address.
+  - write / aaw: target memory the original PoC does not own; pass = before ≠ V,
+    after == V by an independent \`get_memory\`.
+  - leak: on a FRESH run, return == the real base from \`vmmap\` / \`p.libc.address\`;
+    the function must NOT read that oracle itself.
+expected_result: the primitive reproduced on the INDEPENDENT input above (state
+  the concrete observable), OR it failed to reproduce (self-echo / self-target
+  exposed).
+Challenge id: <challenge_id>
+Challenge dir (HOST): <challenge_dir>
+Binary (CONTAINER): <binary_in_ctr>
+Libc (CONTAINER): <libc_in_ctr>
+Ld (CONTAINER): <ld_in_ctr>
+Mitigations: <...>
+pwno-mcp session_id: 'falsify-<candidate_id>-r<round>'
+Script directory (HOST): '<challenge_dir>/.omp/exploit/<candidate_id>/'
+mode_override: null
+Write the check, run it ONCE, submit your JSON result, then wait (do not self-terminate).
+\`\`\`
+
 **Mode 0 task prompt template** (used when \`mode_override = "0"\`):
 \`\`\`
 TASK: Mode 0 autonomous-fallback probe (challenge_type = "unsupported").
@@ -1149,18 +1181,36 @@ When you write \`mcp__omp-db__patch_state\` inside the loop, the patch must refl
     \`verification_result: "inconclusive"\`. Add the manufactured capability to
     \`needs\` and record the shortcut in \`verification_blockers\` (cause = the
     cheat). Never record a cheated result as confirmed or mechanism_confirmed.
-  - **Degenerate-proof test (for \`arbitrary_*\` / \`*_aar\` / \`*_aaw\` / leak
-    claims).** Even when nothing was assumed/injected, before recording
-    \`confirmed\` check the SA proved the primitive on an input it did NOT control,
-    not the self-referential case. Read the SA's result: compare the witnessed
-    read/write target against every address the PoC planted or was handed for its
-    own object this run (a groom \`info\` / scratch chunk, an allocator-returned
-    buffer). If the read target == a chunk the PoC filled, or the write target ==
-    memory the PoC already owned, or a "leak" returned a value the PoC itself put
-    there → it is self-echo / self-target → \`verification_result:
-    "mechanism_confirmed"\` (sink reachable), add the missing freedom to \`needs\`.
-    \`stdout_witness_match=True\` / "the observable fired" is NOT sufficient for a
-    controlled-freedom claim.
+  - **Degenerate-proof gate (for \`arbitrary_*\` / \`*_aar\` / \`*_aaw\` / leak
+    claims) — a controlled-freedom \`confirmed\` requires an independent
+    falsification run, not the SA's result alone.** Two tiers:
+    - *(1) Static filter (free).* Read the SA's result: compare the witnessed
+      read/write target against every address the PoC planted or was handed for
+      its own object this run (a groom \`info\` / scratch chunk, an
+      allocator-returned buffer). If the read target == a chunk the PoC filled,
+      the write target == memory the PoC already owned, or a "leak" returned a
+      value the PoC itself put there → self-echo / self-target →
+      \`verification_result: "mechanism_confirmed"\` (sink reachable) + missing
+      freedom in \`needs\`. Stop — no run needed.
+    - *(2) Falsification-verify run (1 round, gate BEFORE the \`confirmed\`
+      write).* If it survives the static filter you STILL may NOT record
+      \`confirmed\` on the SA's evidence alone — the SA chose its own input and its
+      retry loop is biased toward passing. Dispatch a **falsification-verify**
+      (template above) to \`omp-exploiter-mode-2\` **DIRECTLY — NOT via an SA**.
+      That task has no design (the primitive function already exists in the
+      candidate's \`poc_script_path\`) and MUST NOT retry-to-pass (inverted
+      semantics: a non-reproduction IS the finding). It re-invokes the primitive
+      as a function on an input YOU require to be independent (an address the
+      original PoC never wrote / a fresh-run ground-truth for a leak). Record on
+      its result: reproduced on the independent input → \`confirmed\`; only worked
+      on the SA's original input → \`mechanism_confirmed\` + missing freedom in
+      \`needs\`. Because this gate runs BEFORE the \`confirmed\` write, a
+      controlled-freedom \`confirmed\` on the blackboard is always
+      falsification-backed — downstream never consumes an unfalsified one.
+      \`stdout_witness_match=True\` / "the observable fired" is NOT sufficient.
+      (This gate applies to a fresh controlled-freedom \`confirmed\` AND to a
+      **promote** that would land one; a normal \`mechanism_confirmed\` needs no
+      run.)
   - Then also set \`poc_script_path\`, \`gives\`, \`needs\`; for combinations set
     \`combined_from\`, \`origin_type: "derived"\`.
   - **Primitive specialisation.** If SA's returned \`primitive\` is
@@ -1530,7 +1580,7 @@ heap spray, libc leak, GOT overwrite, shellcode) stay in English.
 | \`omp-vulnhunter\` | \`vulnhunter\` | Vulnerability candidate discovery | Orchestrator — Pattern 2 (Phase 1 + deferred VH relaunch from Step 2.3) |
 | \`omp-strategist\` | \`strategist\` | Exploit plan design + Exploiter management | Orchestrator — Pattern 3 + Pattern 4 (per-candidate SA race + dynamic spawn) |
 | \`omp-exploiter-mode-1\` | _no alias_ | Host pwntools — stdout-only evidence (read/leak verify, ret2win). \`process(BIN)\` only, no pwno-mcp. | StrategyAgent — Pattern 1 (sub-agent) when \`recommended_mode === 1\` |
-| \`omp-exploiter-mode-2\` | _no alias_ | pwno-mcp driver + explicit GDB attach — memory/register inspection (write primitive, heap layout). | StrategyAgent — Pattern 1 (sub-agent) when \`recommended_mode === 2\` |
+| \`omp-exploiter-mode-2\` | _no alias_ | pwno-mcp driver + explicit GDB attach — memory/register inspection (write primitive, heap layout). | StrategyAgent — Pattern 1 (sub-agent) when \`recommended_mode === 2\`. **ALSO you (Orchestrator) directly — Pattern 1 — for the Step 2.4 (2) falsification-verify gate on a controlled-freedom \`confirmed\`** (design-less one-shot, no SA). |
 | \`omp-exploiter-mode-0\` | _no alias_ | Autonomous fallback for unsupported challenge_type (kernel-pwn / arm-userland / multi-binary / browser / library-only / source-only / other). Picks own isolation (docker / qemu / chroot). | StrategyAgent — you compute \`mode_override = "0"\` (from \`challenge_type === "unsupported"\` or user request) and forward it to SA; SA's Step 6a resolves + spawns the exploiter |
 | \`omp-exploiter-mode-9\` | _no alias_ | User-supplied prompt forwarded via \`prompt_path\`. Top layer = 4 root invariants; user prompt = work definition. | StrategyAgent — you compute \`mode_override = "9"\` and forward it to SA; SA's Step 6a resolves + spawns the exploiter |
 
