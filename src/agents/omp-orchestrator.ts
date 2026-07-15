@@ -874,6 +874,19 @@ do not exceed them:
 - **GOAL + boundary** (always): what to prove/achieve, the success criterion, and
   where to STOP (e.g. "prove the raw write to a benign target under GDB — do NOT
   build RIP/FSOP/shell").
+- **Controlled-freedom primitive → author the goal as a FUNCTION CONTRACT, not
+  "prove X exists".** For \`arbitrary_*\` / AAR / AAW / leak claims, state the
+  deliverable as a signature + what a caller-chosen (or fresh-run) input must
+  yield: e.g. "implement \`once_aar(addr)\` — read_message discloses the bytes at a
+  caller-supplied \`addr\`; the verify harness will call it with an address the PoC
+  did not write and cross-check against the oracle" or "implement \`libc_leak()\` —
+  returns the real libc base; the harness compares it to \`p.libc.address\` on a
+  fresh run". A "value appeared in stdout" success criterion is degenerate — it is
+  satisfied by self-echo (reading back a buffer you wrote) / self-target /
+  leaking an injected value. You specify the CONTRACT (signature + the falsifiable
+  acceptance); the SA still designs the METHOD. A signature is the deliverable's
+  interface, NOT a method prescription — it does not bias which groom / handler /
+  route the SA picks.
 - **CONTEXT** (always): the confirmed source primitives with \`gives\` / \`needs\` +
   PoC script paths (the SA reads the code itself), known constraints /
   \`verification_blockers\`, the blackboard, address convention, mitigations, and
@@ -1129,6 +1142,18 @@ When you write \`mcp__omp-db__patch_state\` inside the loop, the patch must refl
     \`verification_result: "inconclusive"\`. Add the manufactured capability to
     \`needs\` and record the shortcut in \`verification_blockers\` (cause = the
     cheat). Never record a cheated result as confirmed or mechanism_confirmed.
+  - **Degenerate-proof test (for \`arbitrary_*\` / \`*_aar\` / \`*_aaw\` / leak
+    claims).** Even when nothing was assumed/injected, before recording
+    \`confirmed\` check the SA proved the primitive on an input it did NOT control,
+    not the self-referential case. Read the SA's result: compare the witnessed
+    read/write target against every address the PoC planted or was handed for its
+    own object this run (a groom \`info\` / scratch chunk, an allocator-returned
+    buffer). If the read target == a chunk the PoC filled, or the write target ==
+    memory the PoC already owned, or a "leak" returned a value the PoC itself put
+    there → it is self-echo / self-target → \`verification_result:
+    "mechanism_confirmed"\` (sink reachable), add the missing freedom to \`needs\`.
+    \`stdout_witness_match=True\` / "the observable fired" is NOT sufficient for a
+    controlled-freedom claim.
   - Then also set \`poc_script_path\`, \`gives\`, \`needs\`; for combinations set
     \`combined_from\`, \`origin_type: "derived"\`.
   - **Primitive specialisation.** If SA's returned \`primitive\` is

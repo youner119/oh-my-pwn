@@ -324,6 +324,45 @@ address, return value, memory dump diff) **what specific value**
 (hex prefix, function name, exact bytes). Forward this exact
 \`expected_result\` to Exploiter in the prompt (Step 6).
 
+#### Primitives that claim a controlled degree of freedom — the deliverable is a FUNCTION, not a one-off observation
+
+When the primitive's claim includes something the attacker is supposed to
+control (an address, index, or value — \`arbitrary_*\`, \`*_aar\`, \`*_aaw\`,
+\`arbitrary_free\`, "attacker-chosen", "controlled"), a "the value appeared in
+stdout" observable is NOT valid proof: it is satisfied by the degenerate
+self-referential case (reading back a buffer you just wrote; writing into
+scratch you already own; leaking a value you injected). Shape the deliverable
+as a callable primitive and prove it with a harness whose inputs YOU did not
+choose, or whose outputs are checked against ground truth you could not
+fabricate. Three shapes:
+
+- **Parameterised** (\`once_aar(io, addr, n) -> bytes\`, \`once_aaw(io, addr, data)\`,
+  \`arb_free(io, chunk)\`): the controlled input is a FORMAL PARAMETER.
+  \`expected_result\` = a harness contract: "harness calls \`once_aar(A)\` for an
+  address \`A\` the PoC did NOT write and could not predict (a program / libc /
+  heap-owned location, chosen by the harness, NOT baked into the groom); the
+  returned bytes == an independent read of \`A\` (Mode 2: \`pwno-mcp_get_memory\`)."
+  Writes: "harness calls \`once_aaw(T, V)\` for a target \`T\` the PoC does not
+  already own; the oracle shows \`T\` held ≠ V before and == V after."
+  **Falsifier:** if the function ignores its parameter, or only works for an
+  address/target the PoC itself wrote this run, it is self-echo → NOT confirmed.
+- **Niladic leak** (\`libc_leak(io) -> int\`, \`heap_leak\`, \`pie_leak\`,
+  \`canary_leak\`): no parameter. \`expected_result\` = "on a FRESH run,
+  \`leak_fn()\` return == the real base from an independent oracle (Mode 1:
+  \`p.libc.address\` / \`p.libs()\`; Mode 2: \`vmmap\`), and the derivation used no
+  injected / hardcoded / out-of-band value." The function must COMPUTE the base
+  at runtime — it must NOT call the oracle itself (\`return p.libc.address\` is a
+  cheat, the same rule as GDB-for-observing-only). **Falsifier:** a hardcoded /
+  prior-run / self-injected value, or a wrong-shape pointer, fails the fresh-run
+  ground-truth compare.
+- **Effect** (\`trigger_win(io)\`, control-flow): \`expected_result\` = "reach a
+  sink that would NOT fire absent the primitive (win() / shell / an observable
+  control-flow divergence)."
+
+For a primitive not listed, derive the analogue: name the trivial move that
+satisfies a naive observable but not the real capability, and make the harness
+exclude it.
+
 ### Step 5b: Recommend an execution mode (\`recommended_mode\`) — Mode 1/2 only
 
 **Skip this step entirely when \`mode_override\` is non-null** —
@@ -351,7 +390,12 @@ Concrete classifier:
 - **\`recommended_mode: 1\`** — stdout-only, and success does NOT hinge on a byte
   landing at an exact address. A quick host check.
   - Read/leak primitives (\`fmt_string_read\`, \`*_leak\`, \`bof_leak\`) — success is
-    the leaked value appearing in stdout.
+    a value the PoC did NOT write this run appearing in stdout AND matching an
+    independent ground-truth read (Mode 1: \`p.libc.address\`; Mode 2: \`vmmap\` /
+    \`get_memory\`); a value you planted and read back (self-echo) is NOT proof.
+    For an \`arbitrary_*\` / \`*_aar\` / \`*_aaw\` claim the deliverable is a FUNCTION
+    of a caller-chosen input — see "Primitives that claim a controlled degree of
+    freedom" under Step 5.
   - A step whose \`expected_result\` is purely something to grep from stdout and
     involves no exact-address write.
 - **\`recommended_mode: 2\`** — success hinges on memory/register state: a precise
@@ -485,7 +529,11 @@ pattern. Concrete observable (stdout substring / crash addr /
 return value / memory dump diff) + specific value (hex prefix /
 function name / exact bytes). e.g., "stdout contains '0x7f'
 prefix followed by 5 hex digits and a newline (libc leak)".
-NOT "leak works".>
+NOT "leak works".
+For an \`arbitrary_*\` / \`*_aar\` / \`*_aaw\` / leak claim, expected_result is the
+HARNESS CONTRACT (a callable primitive + a caller-chosen input the PoC did not
+write, or a fresh-run ground-truth compare for leaks), per Step 5 "Primitives
+that claim a controlled degree of freedom". "value appeared" is not enough.>
 
 recommended_mode: <1|2>  (informational — the agent name you spawned already encodes the mode)
 
@@ -686,6 +734,16 @@ are actually confirmed) — your job is to report HONESTLY so it can decide:
   \`verification_blockers\`, and stop. A cheated proof is worse than an honest
   inconclusive — it poisons the blackboard (the Orchestrator will downgrade a
   detected cheat to \`inconclusive\` anyway).
+- **Self-referential proof is not proof.** If your \`arbitrary\` read/write only
+  exercised an address/target you yourself wrote, or that the allocator handed
+  your own object this run (self-echo / self-target), you demonstrated only that
+  the SINK FIRES — not that it is arbitrary. Likewise a leak that returns a value
+  you injected or hardcoded is not a leak. Return \`status: "inconclusive"\` (or
+  clearly flag mechanism-only in \`verification_blockers\`) and name the missing
+  freedom in \`needs\` (e.g. "info pointer not yet set to a non-self-written
+  address"). Test: could a caller pass an address you never touched — or could a
+  fresh randomized run — and still yield the true value? If you did not show
+  that, it is not the primitive.
 
 ### Step 8: Submit result, then self-terminate
 
