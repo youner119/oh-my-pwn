@@ -104,6 +104,20 @@ describe("createOmpSetupAgent", () => {
     expect(p).toContain("setup_unsupported_reason")
   })
 
+  test("prompt requires submit + self-terminate at every exit (parent completion signal)", () => {
+    // omp-setup is a leaf sub-agent launched via omp_task_launch. The parent
+    // detects completion ONLY when the agent calls omp_task_terminate; a
+    // missing submission makes the parent mis-mark it crashed. Every leaf
+    // agent (VH/SA/reverser) carries this protocol — setup must too, or it
+    // never self-terminates. Guards against regressing that omission.
+    const agent = createOmpSetupAgent("test-model")
+    const p = agent.prompt ?? ""
+    expect(p).toContain("Termination protocol")
+    expect(p).toContain("omp_task_submit")
+    expect(p).toContain("omp_task_terminate")
+    expect(p).toContain("self")
+  })
+
   test("prompt forbids mutating binary_input_path + sudo + .omp deletion", () => {
     const agent = createOmpSetupAgent("test-model")
     const p = agent.prompt ?? ""

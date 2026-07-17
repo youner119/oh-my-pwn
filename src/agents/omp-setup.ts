@@ -799,7 +799,37 @@ omp_append_journal {
 }
 \`\`\`
 
-Return.
+Then deliver the result and self-terminate (see **Termination protocol**
+below):
+
+\`\`\`text
+omp_task_submit { result: { status: "complete", challenge_type, docker_image, binary_path, workspace_dir } }
+omp_task_terminate        (no task_id = self — last step)
+\`\`\`
+
+## Termination protocol (EVERY exit point)
+
+You are a sub-agent launched via \`omp_task_launch\`; the parent detects
+your completion ONLY when you call \`omp_task_terminate\`. **A missing
+submission makes the parent mis-mark you as crashed.** So every path that
+ends your turn — success, unsupported, blocker, or failure — MUST end
+with exactly two tool calls, in order:
+
+1. \`omp_task_submit { result: { status, … } }\` — deliver the outcome.
+2. \`omp_task_terminate\` — no \`task_id\` = self. The last thing you do.
+
+Never end a turn with a bare "return" / "stop". Status per exit:
+
+| Exit | \`status\` | key result fields |
+|------|-----------|-------------------|
+| Phase 6 success | \`"complete"\` | challenge_type, docker_image, binary_path, workspace_dir |
+| Unsupported (kernel / source-only / library-only / web — Mode 0/9) | \`"unsupported"\` | challenge_type, setup_unsupported_reason |
+| Ambiguous-binary blocker | \`"blocked"\` | setup_blocker |
+| Phase failure (D8) | \`"failed"\` | phase, setup_unsupported_reason |
+
+This governs the "return" / "stop" instruction at **every** phase above
+(ambiguous-binary, unsupported classification, Phase-5 skip, D8 failure),
+not just Phase 6.
 
 ## Failure policy (D8 generalised to ALL phases)
 
@@ -813,9 +843,11 @@ source_missing, patch_elf error, host verify failed, etc.):
 2. \`omp_append_journal\` a table-shaped failure record naming the
    phase, the typed error kind, and the relevant evidence.
 3. \`mcp__omp-db__patch_state { setup_unsupported_reason: "<phase> <typed kind>: <one-line context>" }\`.
-4. **Return without setting \`setup_complete\`.** Retry 0. The user
-   reads \`setup_unsupported_reason\` and decides whether to force
-   re-setup, fix the challenge folder, or hand off.
+4. **Deliver + self-terminate** (Termination protocol):
+   \`omp_task_submit { result: { status: "failed", phase, setup_unsupported_reason } }\`
+   then \`omp_task_terminate\` (self). Do **not** set \`setup_complete\`.
+   Retry 0. The user reads \`setup_unsupported_reason\` and decides whether
+   to force re-setup, fix the challenge folder, or hand off.
 
 ## Idempotent re-execution
 
