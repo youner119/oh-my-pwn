@@ -26,19 +26,15 @@ workspace/*
 # Manual test fixtures (local CTF binaries + run artifacts)
 test_challenge/
 
-# .omc/ — whitelist only the real OmP spec/state/research artifacts;
-# exclude ephemeral OMC tooling byproducts (test sessions, hud state, ralph
-# state, delegation audit logs, etc.) that leak in from other OMC usage.
-.omc/*
+# Local development artifacts — kept locally only, never tracked in the
+# public repo. Full history + these files live in the private oh-my-pwn-dev
+# backup. No whitelist: everything under .omc/ stays untracked.
+.omc/
 .omp
-!.omc/research/
-!.omc/specs/
-!.omc/state/
-!.omc/decisions.md
-.omc/state/*
-!.omc/state/current-task.md
-!.omc/state/prev-task.md
 .omx/
+CLAUDE.md
+research.md
+scripts/sync-release.sh
 
 # Test fixture leak guards.
 #
