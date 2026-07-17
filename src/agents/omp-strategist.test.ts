@@ -93,6 +93,19 @@ describe("createOmpStrategistAgent", () => {
     expect(p).not.toContain("run_in_background")
   })
 
+  test("prompt guards against re-waiting after a result (resumable-worker deadlock)", () => {
+    // wait_all consumes the Exploiter's submission; the Exploiter then stays
+    // running/idle (resumable) awaiting resume/terminate. A parent that re-waits
+    // "to reach terminal status" deadlocks: the submit is already consumed and
+    // the worker never self-terminates. The loop must act on the first result
+    // (terminate/resume/return) and only re-wait after a new resume command.
+    const agent = createOmpStrategistAgent("test-model")
+    const p = agent.prompt ?? ""
+    expect(p).toContain("never re-wait")
+    expect(p).toContain("consumes it")
+    expect(p).toContain("deadlock")
+  })
+
   test("prompt returns structured JSON with gives/needs/poc_script_path", () => {
     const agent = createOmpStrategistAgent("test-model")
     const p = agent.prompt ?? ""

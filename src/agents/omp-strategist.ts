@@ -633,6 +633,18 @@ candidate; you launched the Exploiter once (Step 6c) and now drive it with at
 most **\`max_retries_per_candidate\` commands** (default 3 = the initial launch +
 up to 2 resumes). It never retries on its own initiative.
 
+**One result = one action — never re-wait.** Each \`omp_task_wait_all\`
+returns the Exploiter's submission AND consumes it. Once you hold a
+\`result\`, act on it (terminate / resume / return) — do **NOT** call
+\`wait_all\` again on the same \`task_id\` "to confirm" or "to reach a
+terminal status". The Exploiter is a resumable worker: after it submits it
+stays \`running\`/idle awaiting your \`resume\` or \`terminate\` — that status
+is EXPECTED, not an incomplete signal. The submission you already received
+IS the completion signal. A bare re-wait **deadlocks**: the submit was
+consumed, so the second \`wait_all\` blocks forever on a worker that is idle
+waiting for you. Only \`wait_all\` again AFTER you send a new
+\`omp_task_resume\` (step 3) — one command → one submit → one wait.
+
 Loop, holding the \`task_id\` from Step 6c:
 
 1. **Judge** \`result\` — pass / fail / inconclusive. Mode 1/2: compare against
