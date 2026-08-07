@@ -26,10 +26,21 @@ sources/
 ├── phrack-67-tcache/                  ← 예: phrack 기사 mhtml + PDF
 ├── glibc-2.39-malloc-internals.pdf    ← 예: 직접 dump
 ├── kalmarctf-2024-mochi/              ← 예: writeup 의 binary + libc
+├── kernel-exploit-dojo/               ← 커널 pwn 도장 (아래 참조)
 └── ...
 ```
 
 각 dump 의 출처 / 라이선스는 *사용자 본인 책임*. 정돈해서 `notes/` 에 derived 만들면 본문에 출처 명시.
+
+## 편입된 대형 dump
+
+### `kernel-exploit-dojo/`
+
+- **출처:** [mito753/Kernel-Exploit-Dojo](https://github.com/mito753/Kernel-Exploit-Dojo) (라이선스 미선언 → **private local use 만**, 외부 공유·재배포 금지).
+- **무엇:** Linux 커널 exploitation CTF 100+ 챌린지 아카이브. 버그 클래스 / 기법 / 난이도로 교차 색인. 연도별(`2020`~`2026`) 폴더 + 문제당 `distribution/`(원본) · `exploit/`(익스 코드) · `writeup/`(분석). 루트 `TECHNIQUES.md` = 기법 네비게이션.
+- **크기:** ~1.8GB (대부분 `distribution/` 의 커널 이미지·rootfs 바이너리). `sources/*` gitignore 로 git 밖 — repo·release 용량 무영향.
+- **소비 대상:** 현재 OmP 는 kernel CTF 미지원(backlog #1 — pwno-mcp `qemu-system`/`vmlinux` first-class 미구현, agent 는 userland pwn 전용). **kernel 도메인 작업 진입 전까지 dormant.** 그때 agent 가 `writeup/`·`exploit/`·`TECHNIQUES.md` 를 lazy read 로 소비.
+- **동기화:** `cd knowledge/sources && git clone --depth 1 https://github.com/mito753/Kernel-Exploit-Dojo.git kernel-exploit-dojo` (머신마다 수동 — vendor sync 스크립트 대상 아님).
 
 ## Agent 의 lazy read
 
