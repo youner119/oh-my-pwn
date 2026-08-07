@@ -118,8 +118,8 @@ const OmpPlugin: Plugin = async (input) => {
 
   return {
     // chat.params — reasoning effort injection (P2 of variant-via-plugin).
-    // env `OMP_REASONING_EFFORT` (e.g. "xhigh" / "high" / "medium") gates this;
-    // unset → no-op (safe default). Applied only to OpenAI calls from OmP agents
+    // env `OMP_REASONING_EFFORT` (e.g. "xhigh" / "high" / "medium") overrides
+    // the default "high" effort. Applied only to OpenAI calls from OmP agents
     // (`omp-*`) so user-added agents or Anthropic providers stay untouched.
     //
     // The exact key opencode forwards to the SDK is undocumented for the
@@ -128,8 +128,7 @@ const OmpPlugin: Plugin = async (input) => {
     // `reasoningEffort` fallback. Unrecognized keys are ignored by the
     // downstream provider.
     "chat.params": async (input, output) => {
-      const effort = process.env["OMP_REASONING_EFFORT"]
-      if (!effort) return
+      const effort = process.env["OMP_REASONING_EFFORT"] ?? "high"
       // Defensive — opencode invokes chat.params from several code paths
       // (model call, summarize/compaction, internal probes). Some omit
       // provider / info / agent. Treat any missing field as not-applicable.

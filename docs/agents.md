@@ -82,8 +82,9 @@ TUI agent picker 에 나타나고 (mode: all), VH / SA / exploiter 는 subagent 
 - **`GPT_MODEL` (`openai/gpt-5.6-sol`)** — setup / exploiter (mode-0/1/2/9 +
   mode-1/2-gpt). envsetup atomic 흐름 + pwntools driver — structured tool 호출 정밀도.
 
-사용자가 TUI에서 per-session model 변경 가능. reasoning effort 는 `OMP_REASONING_EFFORT`
-env (`chat.params` hook) 로 조정. 향후 per-model prompt variant (`default.ts` /
+사용자가 TUI에서 per-session model 변경 가능. reasoning effort 기본값은
+`chat.params` hook에서 `high`로 지정하며, `OMP_REASONING_EFFORT` env로
+override 가능. 향후 per-model prompt variant (`default.ts` /
 `gpt.ts`) 확장 가능 (OmO 패턴) — 현재 mode-1/2 와 mode-1/2-gpt 가 그 variant 축.
 
 ---
