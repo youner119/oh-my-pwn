@@ -52,7 +52,7 @@ export function createOmpOrchestratorAgent(model: string): AgentConfig {
 
 ```ts
 const CLAUDE_MODEL = "anthropic/claude-opus-4-8"   // 분석/추론 agent
-const GPT_MODEL = "openai/gpt-5.5"                  // setup / exploiter
+const GPT_MODEL = "openai/gpt-5.6-sol"              // setup / exploiter
 
 export const ompAgentConfigs: Record<string, AgentConfig> = {
   "omp-orchestrator": createOmpOrchestratorAgent(CLAUDE_MODEL),
@@ -79,7 +79,7 @@ TUI agent picker 에 나타나고 (mode: all), VH / SA / exploiter 는 subagent 
 두 모델을 agent 성격에 따라 차등 배정:
 - **`CLAUDE_MODEL` (`anthropic/claude-opus-4-8`)** — orchestrator / reverser /
   vulnhunter / strategist. semantic 분석, 취약점 추론, 전략 판단.
-- **`GPT_MODEL` (`openai/gpt-5.5`)** — setup / exploiter (mode-0/1/2/9 +
+- **`GPT_MODEL` (`openai/gpt-5.6-sol`)** — setup / exploiter (mode-0/1/2/9 +
   mode-1/2-gpt). envsetup atomic 흐름 + pwntools driver — structured tool 호출 정밀도.
 
 사용자가 TUI에서 per-session model 변경 가능. reasoning effort 는 `OMP_REASONING_EFFORT`
@@ -191,7 +191,7 @@ fresh → `mcp__omp-db__register_challenge({dir, workspace_root, agent_id:"setup
 - `omp_append_journal`
 - bash (read-only image inspection — `docker run --rm <image> sh -c …` / `ldd` / `ldconfig -p`)
 
-**모델:** `GPT_MODEL` (`openai/gpt-5.5`) — atomic tool 흐름 제어.
+**모델:** `GPT_MODEL` (`openai/gpt-5.6-sol`) — atomic tool 흐름 제어.
 
 **파일:** `src/agents/omp-setup.ts`
 

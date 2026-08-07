@@ -34,7 +34,7 @@ import { createOmpSetupAgent } from "./omp-setup"
  *       arg (N=5 → 3 Claude, 2 GPT).
  */
 const CLAUDE_MODEL = "anthropic/claude-opus-4-8"
-const GPT_MODEL = "openai/gpt-5.5"
+const GPT_MODEL = "openai/gpt-5.6-sol"
 
 /**
  * agent name → AgentConfig 매핑.

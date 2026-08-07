@@ -226,12 +226,12 @@ describe("BackgroundManager", () => {
       agent: "omp-vulnhunter",
       description: "explicit model",
       prompt: "x",
-      modelSpec: "openai/gpt-5.5",
+      modelSpec: "openai/gpt-5.6-sol",
     })
 
     expect(client.sessions.get(r.session_id)!.model).toEqual({
       providerID: "openai",
-      modelID: "gpt-5.5",
+      modelID: "gpt-5.6-sol",
     })
     manager.shutdown()
   })

@@ -63,7 +63,7 @@ MCP rejects the call (\`state_not_found\` / \`acl_denied\`).
 | \`mcp__omp-db__patch_candidate\` | Apply \`{summary?, detail?}\` patch to one candidate (summary + detail columns in one DB transaction). Use after a sub-agent returns \`{candidate_id, summary_changes, detail_changes}\` (SA verify / Exploiter result). **Only you call this.** |
 | \`mcp__omp-db__delete_candidate\` | Remove a candidate (summary row + detail rows, by cascade). Use when a candidate is conclusively invalid and should be dropped. **Only you call this.** |
 | \`omp_append_journal\` | After every significant step — human-readable progress |
-| \`omp_task_launch\` | Spawn a single sub-agent in **fire-and-forget** mode. Returns \`{task_id, session_id}\` immediately. \`agent\` accepts a category alias (\`setup\`/\`reverser\`/\`vulnhunter\`/\`strategist\`/\`exploiter\`) or full name (\`omp-*\`). Optional \`model\` arg overrides the agent's registered default model: \`"provider/model"\` (e.g. \`"openai/gpt-5.5"\`), \`"parent"\` (inherit your current model), or omit for the default. See **Model routing channel** below. |
+| \`omp_task_launch\` | Spawn a single sub-agent in **fire-and-forget** mode. Returns \`{task_id, session_id}\` immediately. \`agent\` accepts a category alias (\`setup\`/\`reverser\`/\`vulnhunter\`/\`strategist\`/\`exploiter\`) or full name (\`omp-*\`). Optional \`model\` arg overrides the agent's registered default model: \`"provider/model"\` (e.g. \`"openai/gpt-5.6-sol"\`), \`"parent"\` (inherit your current model), or omit for the default. See **Model routing channel** below. |
 | \`omp_task_wait_all\` | Block until **ALL** given \`task_ids\` have an unconsumed **submit** OR reach a terminal status. Returns results in input order; each \`results[i].result\` is the sub-agent's submitted JSON. **Use ONLY for the VH ensemble barrier** (every result needed at once to merge, Pattern 2) **or a single one-shot non-SA wait** (setup / reverser, Pattern 1). **Never for harvesting SA verify/combine results.** |
 | \`omp_task_wait_any\` | Block until **ANY** given \`task_id\` submits OR reaches terminal. Returns first complete + \`remaining_ids\` (input order, first removed). A submitted result, failure, or cancel **all** count as first-complete — inspect \`status\` / \`result\` and decide. **This is the tool for ALL SA (verify/combine) harvesting** — the record-first drain loop (Step 2.3), **even for a single SA** (the round is incremental — you record each result then may spawn more, which \`wait_all\` cannot do). |
 | \`omp_task_cancel\` | Best-effort cancel an array of \`task_ids\` (idempotent). **Autonomous use is limited to the flag/shell early-exit** — dropping the remaining members of a \`wait_any\` race once the goal is captured. Every other cancel needs an explicit user instruction; never cancel running work to swap variant/model. See Rule 8. |
@@ -119,11 +119,11 @@ do NOT pass a \`model\` arg in the default case — the agent uses its own. Pass
 
 | Sub-agent | Default model | Notes |
 |---|---|---|
-| setup | \`openai/gpt-5.5\` | mechanical env work |
+| setup | \`openai/gpt-5.6-sol\` | mechanical env work |
 | reverser | \`anthropic/claude-opus-4-8\` | deep reasoning |
 | vulnhunter | Claude (default) | **ensemble split half-half** (Claude +1 on odd N) — see Phase 1 Step 1.1 |
 | strategist | \`anthropic/claude-opus-4-8\` | adversarial verify |
-| exploiter | \`openai/gpt-5.5\` | SA spawns it |
+| exploiter | \`openai/gpt-5.6-sol\` | SA spawns it |
 
 **User model override (parse the latest user message yourself — semantic, no
 rigid regex).** When the user names a model for an agent — "reverser를 gpt로",
@@ -595,7 +595,7 @@ Forward the same \`mode\` to every VH ensemble member in this round
 VulnHunter's registered default is Claude. To get ensemble *diversity* —
 different model families surface different vuln hypotheses — split the instances
 evenly between the two model families at launch via the \`model\` arg. Give GPT
-to \`floor(N / 2)\` members (\`model: "openai/gpt-5.5"\`) and leave the remaining
+to \`floor(N / 2)\` members (\`model: "openai/gpt-5.6-sol"\`) and leave the remaining
 \`ceil(N / 2)\` on the Claude default (omit \`model\`). N=5 → 2 GPT + 3 Claude;
 N=4 → 2 + 2; N=10 → 5 + 5; N=3 → 1 GPT + 2 Claude; N=1 → 1 Claude. This splits
 *models*, not *modes* — every member keeps the same \`mode\`. If the user
@@ -614,12 +614,12 @@ emission still parallelizes execution.
 // All within ONE response — emitted one omp_task_launch tool call at a
 // time, with thinking interleaved. NOT a parallel tool-call block.
 // Model split (half-half, Claude +1 on odd): N=3 → floor(3/2)=1 GPT + 2 Claude.
-// Omit model arg for the Claude members; pass model:"openai/gpt-5.5" for GPT ones.
+// Omit model arg for the Claude members; pass model:"openai/gpt-5.6-sol" for GPT ones.
 const v1 = omp_task_launch({ agent: "vulnhunter", prompt: "Challenge id: <challenge_id>. mode: <\"default\"|\"explorer\" — see VH mode dispatch above>. Analyze and find vulnerability candidates. Return JSON array of { id, primitive, location, confidence, rationale, libc_range }. Do NOT call mcp__omp-db__patch_state.", description: "VH-1" })  // Claude (default)
 // ... continue thinking about VH-2 ...
 const v2 = omp_task_launch({ agent: "vulnhunter", prompt: "<same context — same mode>", description: "VH-2" })  // Claude (default)
 // ... continue thinking about VH-3 ...
-const v3 = omp_task_launch({ agent: "vulnhunter", prompt: "<same context — same mode>", model: "openai/gpt-5.5", description: "VH-3" })  // GPT
+const v3 = omp_task_launch({ agent: "vulnhunter", prompt: "<same context — same mode>", model: "openai/gpt-5.6-sol", description: "VH-3" })  // GPT
 
 // Then wait_all on the collected task_ids
 const { results } = omp_task_wait_all({

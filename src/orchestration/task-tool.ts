@@ -45,7 +45,7 @@ Unknown names return an error.`,
           "Model for the sub-agent. Omit (or leave empty) → the agent's own " +
             "default model. 'parent' → inherit THIS (launching) session's " +
             "current model. Otherwise a 'providerID/modelID' string, e.g. " +
-            "'openai/gpt-5.5' or 'anthropic/claude-opus-4-8'.",
+            "'openai/gpt-5.6-sol' or 'anthropic/claude-opus-4-8'.",
         ),
     },
     async execute(

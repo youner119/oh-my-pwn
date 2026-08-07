@@ -137,7 +137,7 @@ export interface LaunchInput {
    *   - undefined / empty → leave `model` unset → child uses its own
    *     `agent.model` default.
    *   - "parent"          → inherit the parent session's current model.
-   *   - "providerID/modelID" (e.g. "openai/gpt-5.5") → that exact model.
+   *   - "providerID/modelID" (e.g. "openai/gpt-5.6-sol") → that exact model.
    */
   modelSpec?: string
 }

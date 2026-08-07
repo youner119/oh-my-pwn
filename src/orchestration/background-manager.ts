@@ -729,7 +729,7 @@ export class BackgroundManager {
     if (idx <= 0 || idx === trimmed.length - 1) {
       throw new Error(
         `invalid model spec "${spec}" — expected "providerID/modelID" ` +
-          `(e.g. "openai/gpt-5.5"), "parent", or empty for the agent default.`,
+          `(e.g. "openai/gpt-5.6-sol"), "parent", or empty for the agent default.`,
       )
     }
     return {
